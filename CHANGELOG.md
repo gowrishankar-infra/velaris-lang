@@ -1,5 +1,11 @@
 # Velaris changelog
 
+## 2.3 - Public launch polish
+New visual identity across the docs site, playground, and README:
+light professional design, verified-green brand, refined typography.
+Landing page rebuilt. Fixed minimal-mode CI: fail_proof_bad's bug is
+only findable by proof, so without z3 it is expected to run.
+
 ## 2.2 - Out-of-the-box readiness
 velaris doctor (self-diagnosing setup with exact fixes), velaris new
 (scaffold a project that runs), standalone executables for

@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """
-Velaris v2.2 — "The language where you can trust code you didn't write."
+Velaris v2.3 — "The language where you can trust code you didn't write."
+
+New in v2.3: launch polish - a professional visual identity for the
+    docs site, playground, and README, plus a CI fix for minimal-mode
+    proof-only test expectations.
 
 New in v2.2: out-of-the-box readiness.
     velaris doctor          check your setup, with exact fixes
@@ -232,7 +236,7 @@ Usage:
 import json
 import os
 
-VERSION = "2.2.0"
+VERSION = "2.3.0"
 import re
 import sys
 from dataclasses import dataclass, field

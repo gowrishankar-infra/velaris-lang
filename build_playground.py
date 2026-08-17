@@ -85,40 +85,59 @@ TEMPLATE = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Velaris Playground</title>
 <style>
-  :root { --bg:#14161a; --panel:#1d2026; --ink:#e8e6e3; --dim:#8a8f98;
-          --accent:#7aa2f7; --ok:#9ece6a; --err:#f7768e; }
-  * { box-sizing: border-box; }
-  body { margin:0; background:var(--bg); color:var(--ink);
-         font-family: system-ui, sans-serif; height:100vh;
-         display:flex; flex-direction:column; }
-  header { padding:10px 16px; display:flex; align-items:center; gap:14px;
-           border-bottom:1px solid #2a2e37; flex-wrap:wrap; }
-  header h1 { font-size:16px; margin:0; }
-  header .tag { color:var(--dim); font-size:12px; }
-  select, button { background:var(--panel); color:var(--ink);
-    border:1px solid #2a2e37; border-radius:6px; padding:6px 12px;
-    font-size:13px; cursor:pointer; }
-  button#run { background:var(--accent); color:#10121a; font-weight:600; }
-  button:disabled { opacity:.5; cursor:wait; }
+  :root { --paper:#ffffff; --alt:#f6f7f8; --line:#e6e8eb;
+          --ink:#0b1215; --mut:#57606a; --brand:#0a7d5a;
+          --term:#101418; --term-ink:#e6edf3; --term-mut:#8b949e;
+          --err:#e5484d; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--paper); color:var(--ink);
+         font-family:-apple-system,"Segoe UI",Inter,Roboto,Helvetica,
+         Arial,sans-serif; height:100vh; display:flex;
+         flex-direction:column; }
+  header { padding:12px 20px; display:flex; align-items:center;
+           gap:16px; border-bottom:1px solid var(--line);
+           flex-wrap:wrap; background:var(--paper); }
+  header .brand { font-size:16px; font-weight:700;
+    letter-spacing:-.02em; display:flex; gap:8px; align-items:center;
+    color:var(--ink); text-decoration:none; }
+  .dot { width:8px; height:8px; border-radius:50%;
+         background:var(--brand); }
+  header .tag { color:var(--mut); font-size:13px; }
+  select { background:var(--paper); color:var(--ink);
+    border:1px solid var(--line); border-radius:8px; padding:7px 12px;
+    font-size:13.5px; }
+  button#run { background:var(--ink); color:#fff; border:none;
+    border-radius:8px; padding:8px 20px; font-size:14px;
+    font-weight:600; cursor:pointer; }
+  button#run:hover { background:#22292f; }
+  button:disabled { opacity:.45; cursor:wait; }
+  header a.gh { margin-left:auto; color:var(--mut); font-size:13px;
+    text-decoration:none; }
+  header a.gh:hover { color:var(--ink); }
   main { flex:1; display:flex; min-height:0; }
-  textarea { flex:1; background:var(--bg); color:var(--ink); border:none;
-    resize:none; padding:14px; font:13px/1.5 ui-monospace, Consolas,
-    monospace; outline:none; }
-  #out { flex:1; background:var(--panel); margin:0; padding:14px;
-    overflow:auto; font:13px/1.5 ui-monospace, Consolas, monospace;
-    white-space:pre-wrap; border-left:1px solid #2a2e37; }
-  .err { color: var(--err); } .note { color: var(--dim); }
-  @media (max-width: 800px) { main { flex-direction:column; }
-    #out { border-left:none; border-top:1px solid #2a2e37; } }
+  textarea { flex:1; background:var(--paper); color:var(--ink);
+    border:none; resize:none; padding:18px 20px;
+    font:13.5px/1.65 ui-monospace,"SF Mono",Consolas,monospace;
+    outline:none; }
+  #out { flex:1; background:var(--term); color:var(--term-ink);
+    margin:0; padding:18px 20px; overflow:auto;
+    font:13.5px/1.65 ui-monospace,"SF Mono",Consolas,monospace;
+    white-space:pre-wrap; border-left:1px solid var(--line); }
+  .err { color:var(--err); } .note { color:var(--term-mut); }
+  @media (max-width:800px) { main { flex-direction:column; }
+    #out { border-left:none; border-top:1px solid var(--line); } }
 </style>
 </head>
 <body>
 <header>
-  <h1>Velaris</h1>
-  <span class="tag">the language where you can trust code you didn't
-  write &mdash; running entirely in your browser</span>
+  <a class="brand" href="index.html"><span class="dot"></span>Velaris
+  Playground</a>
+  <span class="tag">the real compiler, running in your browser</span>
   <select id="examples"></select>
   <button id="run" disabled>loading&hellip;</button>
+  <a class="gh"
+  href="https://github.com/gowrishankar-infra/velaris-lang">GitHub
+  &rarr;</a>
 </header>
 <main>
   <textarea id="code" spellcheck="false"></textarea>

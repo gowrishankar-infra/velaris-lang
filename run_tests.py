@@ -77,8 +77,10 @@ def main() -> int:
         # years > 30, which its main deliberately never calls - that IS
         # the demo's point. It runs clean under runtime checks.
         expect["proof_catch.vel"] = "RUNS"
-        print("note: z3-solver absent - proof_catch.vel expected to RUN "
-              "(its bug is only findable by proof)")
+        expect["fail_proof_bad.vel"] = "RUNS"
+        print("note: z3-solver absent - proof_catch.vel and "
+              "fail_proof_bad.vel expected to RUN "
+              "(their bugs are only findable by proof)")
     failed = 0
     for name, want in expect.items():
         path = examples / name
