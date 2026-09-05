@@ -192,6 +192,36 @@ def main() -> int:
 
     ok("card returns the language", len(velaris.card()) > 2000)
 
+    FOREVER = ("fn main() uses io {\n    let i = 0\n    while i >= 0 {\n"
+               "        i = i + 1\n        if i > 1000000 {\n"
+               "            i = 0\n        }\n    }\n    print(1)\n}\n")
+    r = velaris.run(FOREVER, allow={"io"}, timeout=2)
+    ok("a timeout STOPS a program that never ends",
+       r.timed_out and not r.ok
+       and any(p.code == "E610" for p in r.problems), str(r.as_dict())[:120])
+
+    DOUBLING = ("fn main() uses io {\n    let s = \"xxxxxxxxxxxxxxxx\"\n"
+                "    let i = 0\n    while i < 40 {\n        s = s + s\n"
+                "        i = i + 1\n    }\n    print(length(s))\n}\n")
+    r = velaris.run(DOUBLING, allow={"io"}, max_memory_mb=150, timeout=60)
+    if sys.platform == "win32":
+        skip("a memory cap stops a program that eats memory (not on "
+             "Windows)")
+    else:
+        ok("a memory cap STOPS a program that eats memory",
+           r.out_of_memory and not r.ok
+           and any(p.code == "E611" for p in r.problems),
+           str(r.as_dict())[:120])
+
+    r = velaris.run(READS_A_FILE, allow={"io"}, timeout=30)
+    ok("the budget still holds inside the bounded child process",
+       not r.ok and r.refused_effect == "fs" and "READ IT" not in r.output,
+       str(r.as_dict())[:120])
+
+    r = velaris.run(PURE, allow={"io"}, timeout=30)
+    ok("an honest program is unaffected by limits",
+       r.ok and r.output.strip() == "42", repr(r.output))
+
     print()
     print("the MCP server")
     print("-" * 62)

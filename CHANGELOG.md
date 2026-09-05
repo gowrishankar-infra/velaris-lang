@@ -1,5 +1,29 @@
 # Velaris changelog
 
+## 2.59 - Time and memory limits, prompted by a review bot
+The CrewAI pull request's automated reviewer flagged what three human
+reviews had also noted and this project kept deferring: the effect
+budget bounds what a program may touch, but nothing bounded how long
+it could run or how much memory it could take. For an agent framework
+calling `run` in a loop, that is the first thing that goes wrong.
+
+`velaris.run(source, allow={"io"}, timeout=30, max_memory_mb=512)`.
+With either limit set the program runs in a separate, killable
+process. A program that never ends is stopped at the deadline (E610,
+`timed_out=True`); one that eats memory is stopped at the cap (E611,
+`out_of_memory=True`, caught in 0.4 seconds in the test). The effect
+budget still holds inside that child - verified - and an honest program
+is unaffected.
+
+Memory caps use the OS address-space limit, so they apply on Linux and
+macOS; on Windows the timeout applies and the cap is recorded but not
+enforced, which the docs say plainly rather than implying otherwise.
+
+The MCP server and the HTTP door now default to 30 seconds and 512 MB.
+The CrewAI tool does too, reports STOPPED with the limit it hit, and
+gained the assertion the reviewer asked for: a refused effect must not
+reach the program's own fail branch either.
+
 ## 2.58 - Ready to submit to the frameworks
 Three integrations in `integrations/`, each written to the target's
 own conventions and each with tests that assert the effect budget

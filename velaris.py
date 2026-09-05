@@ -255,7 +255,7 @@ Usage:
 import json
 import os
 
-VERSION = "2.58.0"
+VERSION = "2.59.0"
 import re
 import sys
 from dataclasses import dataclass, field
@@ -6649,9 +6649,13 @@ def main() -> int:
                                 "error": "this server does not grant "
                                          + ", ".join(sorted(refused)),
                                 "max_allow": sorted(max_allow)})
-                        out = _self.run(source, allow=asked,
-                                        stdin=body.get("stdin", ""),
-                                        args=body.get("args") or [])
+                        out = _self.run(
+                            source, allow=asked,
+                            stdin=body.get("stdin", ""),
+                            args=body.get("args") or [],
+                            timeout=float(body.get("timeout") or 30),
+                            max_memory_mb=int(body.get("max_memory_mb")
+                                              or 512))
                         payload = out.as_dict()
                         payload["allowed"] = sorted(asked)
                         return self.answer(200, payload)
@@ -7181,19 +7185,23 @@ class AuditResult:
 
 class RunResult:
     __slots__ = ("ok", "output", "logs", "problems", "refused_effect",
-                 "exit_code")
+                 "exit_code", "timed_out", "out_of_memory")
 
     def __init__(self, ok, output, logs, problems, refused_effect,
-                 exit_code):
+                 exit_code, timed_out=False, out_of_memory=False):
         self.ok, self.output, self.logs = ok, output, logs
         self.problems, self.refused_effect = problems, refused_effect
         self.exit_code = exit_code
+        self.timed_out = timed_out
+        self.out_of_memory = out_of_memory
 
     def as_dict(self) -> dict:
         return {"ok": self.ok, "output": self.output, "logs": self.logs,
                 "problems": [p.as_dict() for p in self.problems],
                 "refused_effect": self.refused_effect,
-                "exit_code": self.exit_code}
+                "exit_code": self.exit_code,
+                "timed_out": self.timed_out,
+                "out_of_memory": self.out_of_memory}
 
 
 def _as_problem(e, where) -> Problem:
@@ -7290,16 +7298,31 @@ def audit(source: str, *, path: str | None = None) -> AuditResult:
 def run(source: str, *, path: str | None = None,
         allow: set | None = None, deny: set | None = None,
         args: list | None = None, stdin: str = "",
-        native: bool = True) -> RunResult:
+        native: bool = True, timeout: float | None = None,
+        max_memory_mb: int | None = None) -> RunResult:
     """Run a program under an effect budget and capture what it did.
 
     allow={"io"} means it cannot read files, reach the network, call
     Python, ask the clock or use randomness - whatever its source says
     about itself. A refused effect stops the program and is reported in
     refused_effect; it cannot be caught by the program.
+
+    timeout (seconds) and max_memory_mb bound the OTHER two things a
+    program can do to the machine that runs it: spin forever, or eat
+    memory. With either set, the program runs in a separate process
+    that is killed on breach, and the result says which limit it hit.
+    An agent framework calling this ten thousand times needs both.
+
+    Memory limits use the OS's address-space limit and are enforced on
+    Linux and macOS; on Windows the limit is recorded but not enforced,
+    and out_of_memory stays False. The timeout is enforced everywhere.
     """
     import io as _io
     import contextlib
+    if timeout is not None or max_memory_mb is not None:
+        return _run_bounded(source, path=path, allow=allow, deny=deny,
+                            args=args, stdin=stdin, native=native,
+                            timeout=timeout, max_memory_mb=max_memory_mb)
     where, temp = _source_to_file(source, path)
     budget = set(ALL_EFFECTS) if allow is None else set(allow)
     for name in (deny or ()):
@@ -7353,6 +7376,96 @@ def run(source: str, *, path: str | None = None,
             os.unlink(temp)
     return RunResult(code == 0 and not problems, out.getvalue(),
                      err.getvalue(), problems, refused, code)
+
+
+def _run_bounded(source, *, path, allow, deny, args, stdin, native,
+                 timeout, max_memory_mb) -> RunResult:
+    """run() in a child process that can be killed."""
+    import subprocess
+    where, temp = _source_to_file(source, path)
+    budget = set(ALL_EFFECTS) if allow is None else set(allow)
+    for name in (deny or ()):
+        budget.discard(name)
+    unknown = (budget | set(deny or ())) - set(ALL_EFFECTS)
+    if unknown:
+        if temp:
+            os.unlink(temp)
+        raise ValueError(f"not an effect: {', '.join(sorted(unknown))}; "
+                         f"they are {', '.join(ALL_EFFECTS)}")
+
+    # compile first, in this process: a program that does not compile
+    # never needs a child, and the problems come back the normal way
+    result = check(source, path=path)
+    if not result.ok:
+        if temp:
+            os.unlink(temp)
+        return RunResult(False, "", "", result.problems, None, 1)
+
+    cmd = [sys.executable, os.path.abspath(__file__), where,
+           "--allow", ",".join(sorted(budget)) or "''"]
+    if not native:
+        cmd.append("--no-native")
+    cmd += list(args or [])
+
+    def limit_memory():                    # runs inside the child
+        if max_memory_mb is None:
+            return
+        try:
+            import resource
+            cap = int(max_memory_mb) * 1024 * 1024
+            resource.setrlimit(resource.RLIMIT_AS, (cap, cap))
+        except Exception:
+            pass                           # not this platform
+
+    timed_out = False
+    out, err, code = "", "", 0
+    try:
+        done = subprocess.run(
+            cmd, input=stdin, capture_output=True, text=True,
+            timeout=timeout,
+            preexec_fn=limit_memory if os.name != "nt" else None)
+        out, err, code = done.stdout, done.stderr, done.returncode
+    except subprocess.TimeoutExpired as e:
+        timed_out = True
+        out = (e.stdout or b"").decode("utf-8", "replace") \
+            if isinstance(e.stdout, bytes) else (e.stdout or "")
+        err = (e.stderr or b"").decode("utf-8", "replace") \
+            if isinstance(e.stderr, bytes) else (e.stderr or "")
+        code = 124
+    finally:
+        if temp:
+            os.unlink(temp)
+
+    problems, refused = [], None
+    out_of_memory = False
+    if timed_out:
+        problems.append(Problem(
+            "E610", f"the program ran longer than {timeout} second(s) "
+                    f"and was stopped", 0, where,
+            ["give it more time, or fix the loop that never ends"]))
+    elif code != 0:
+        text = err.strip()
+        m = re.search(r"error\[(E\d{3})\] (.+)", text)
+        if m:
+            problems.append(Problem(m.group(1), m.group(2).strip(), 0,
+                                    where, []))
+            if m.group(1) == "E310":
+                q = re.search(r"needs the '(\w+)' effect", m.group(2))
+                refused = q.group(1) if q else None
+        elif "MemoryError" in text or code in (-9, 137) or \
+                "Cannot allocate" in text:
+            out_of_memory = True
+            problems.append(Problem(
+                "E611", f"the program used more than {max_memory_mb} MB "
+                        f"and was stopped", 0, where,
+                ["give it more memory, or find what is growing"]))
+        else:
+            problems.append(Problem("E000", text.splitlines()[0][:200]
+                                    if text else f"exit code {code}",
+                                    0, where, []))
+    ok = code == 0 and not problems
+    return RunResult(ok, out, err if not problems else "", problems,
+                     refused, code, timed_out, out_of_memory)
 
 
 def card() -> str:

@@ -41,6 +41,33 @@ def test_run_refuses_an_effect_outside_the_budget():
     out = VelarisRunTool(allow=["io"])._run(READS_A_FILE)
     assert "REFUSED" in out and "'fs'" in out
     assert "READ IT" not in out
+    # a refusal is not a failure the program can catch: the fail branch
+    # must not run either
+    assert "failed" not in out
+
+
+FOREVER = """
+fn main() uses io {
+    let i = 0
+    while i >= 0 {
+        i = i + 1
+        if i > 1000000 {
+            i = 0
+        }
+    }
+    print("never")
+}
+"""
+
+
+def test_run_stops_a_program_that_never_ends():
+    out = VelarisRunTool(allow=["io"], timeout=2)._run(FOREVER)
+    assert "STOPPED" in out and "never" not in out
+
+
+def test_the_default_limits_are_set():
+    tool = VelarisRunTool()
+    assert tool.timeout == 30.0 and tool.max_memory_mb == 512
 
 
 def test_run_permits_what_the_budget_allows():

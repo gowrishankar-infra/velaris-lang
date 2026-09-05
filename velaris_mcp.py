@@ -103,6 +103,16 @@ TOOLS = [
                 },
                 "stdin": {"type": "string"},
                 "args": {"type": "array", "items": {"type": "string"}},
+                "timeout": {
+                    "type": "number",
+                    "description": ("seconds before the program is "
+                                    "stopped. Default 30."),
+                },
+                "max_memory_mb": {
+                    "type": "integer",
+                    "description": ("memory cap in MB. Default 512. "
+                                    "Enforced on Linux and macOS."),
+                },
             },
             "required": ["source"],
         },
@@ -130,14 +140,21 @@ def handle_tool(name: str, args: dict) -> dict:
     if name == "velaris_run":
         allow = set(args.get("allow") or ["io"])
         try:
-            result = velaris.run(source, allow=allow,
-                                 stdin=args.get("stdin", ""),
-                                 args=args.get("args") or [])
+            result = velaris.run(
+                source, allow=allow,
+                stdin=args.get("stdin", ""),
+                args=args.get("args") or [],
+                timeout=float(args.get("timeout") or 30),
+                max_memory_mb=int(args.get("max_memory_mb") or 512))
         except ValueError as e:
             return as_text({"ok": False, "error": str(e)})
         payload = result.as_dict()
         payload["allowed"] = sorted(allow)
-        if result.refused_effect:
+        if result.timed_out:
+            payload["note"] = "the program ran too long and was stopped"
+        elif result.out_of_memory:
+            payload["note"] = "the program used too much memory and was stopped"
+        elif result.refused_effect:
             payload["note"] = (
                 f"the program tried to use '{result.refused_effect}', "
                 f"which this run did not allow")

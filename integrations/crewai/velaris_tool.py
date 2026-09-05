@@ -76,19 +76,34 @@ class VelarisRunTool(BaseTool):
         "Returns the program's output, or the problem that stopped it.")
     args_schema: Type[BaseModel] = _RunInput
     allow: List[str] = Field(default_factory=lambda: ["io"])
+    timeout: float = Field(30.0, description="seconds before it is stopped")
+    max_memory_mb: int = Field(512, description="memory cap in MB")
 
-    def __init__(self, allow: Optional[List[str]] = None, **kw):
+    def __init__(self, allow: Optional[List[str]] = None,
+                 timeout: float = 30.0, max_memory_mb: int = 512, **kw):
         super().__init__(**kw)
         if allow is not None:
             self.allow = list(allow)
+        self.timeout = timeout
+        self.max_memory_mb = max_memory_mb
 
     def _run(self, source: str, stdin: str = "",
              args: Optional[List[str]] = None) -> str:
+        # a separate, killable process: a program that never ends or
+        # eats memory is stopped, and the crew's worker survives it
         result = velaris.run(source, allow=set(self.allow),
-                             stdin=stdin, args=args or [])
+                             stdin=stdin, args=args or [],
+                             timeout=self.timeout,
+                             max_memory_mb=self.max_memory_mb)
         if result.ok:
             return result.output or "(the program printed nothing)"
         lines = []
+        if result.timed_out:
+            lines.append(f"STOPPED: the program ran longer than "
+                         f"{self.timeout} seconds.")
+        elif result.out_of_memory:
+            lines.append(f"STOPPED: the program used more than "
+                         f"{self.max_memory_mb} MB.")
         if result.refused_effect:
             lines.append(
                 f"REFUSED: the program tried to use "
