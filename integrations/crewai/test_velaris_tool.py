@@ -55,14 +55,16 @@ fn main() uses io {
             i = 0
         }
     }
-    print("never")
+    print("REACHED THE END")
 }
 """
 
 
 def test_run_stops_a_program_that_never_ends():
+    # the marker must not collide with velaris's own E610 fix hint,
+    # which says "fix the loop that never ends"
     out = VelarisRunTool(allow=["io"], timeout=2)._run(FOREVER)
-    assert "STOPPED" in out and "never" not in out
+    assert "STOPPED" in out and "REACHED THE END" not in out
 
 
 def test_the_default_limits_are_set():
