@@ -255,7 +255,7 @@ Usage:
 import json
 import os
 
-VERSION = "2.57.0"
+VERSION = "2.58.0"
 import re
 import sys
 from dataclasses import dataclass, field

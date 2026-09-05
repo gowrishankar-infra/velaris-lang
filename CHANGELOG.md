@@ -1,5 +1,29 @@
 # Velaris changelog
 
+## 2.58 - Ready to submit to the frameworks
+Three integrations in `integrations/`, each written to the target's
+own conventions and each with tests that assert the effect budget
+holds through the framework's tool interface - because a budget that
+leaks one layer up would be the worst kind of promise.
+
+**CrewAI** (`crewai/`): `VelarisAuditTool` and `VelarisRunTool(allow=
+["io"])`, five tests, a README, and the pull-request text ready to
+paste. `crewai-tools` accepts community tools; this goes first.
+
+**LangChain** (`langchain_velaris/`): a partner package,
+`langchain-velaris`, since LangChain lists packages rather than
+merging tools. Verified through `.invoke()` that a program granted
+only `io` is refused `fs`.
+
+**MCP registry** (`mcp_registry/`): the `server.json` for
+registry.modelcontextprotocol.io, which every MCP client reads. A form
+rather than a PR, and the highest reach of the three.
+
+`integrations/README.md` says what to submit, where, in what order,
+and what makes a maintainer say yes: a test that runs in their CI, a
+description of the problem rather than the product, no marketing
+words, and fast replies to review.
+
 ## 2.57 - --strict, from a question on r/Compilers
 Someone asked whether users could choose between strict and flexible
 proof modes rather than having leniency imposed on them. They were

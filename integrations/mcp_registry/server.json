@@ -1,0 +1,22 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-07-09/server.schema.json",
+  "name": "io.github.gowrishankar-infra/velaris",
+  "description": "Write Velaris, audit what it can touch, and run it under an effect budget. A language where signatures declare effects and promises a theorem prover checks before running.",
+  "version_detail": { "version": "2.58.0" },
+  "repository": {
+    "url": "https://github.com/gowrishankar-infra/velaris-lang",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registry_name": "pypi",
+      "name": "velaris-lang",
+      "version": "2.58.0",
+      "runtime_hint": "python",
+      "package_arguments": [
+        { "type": "positional", "value": "-m" },
+        { "type": "positional", "value": "velaris_mcp" }
+      ]
+    }
+  ]
+}
