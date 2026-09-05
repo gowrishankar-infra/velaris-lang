@@ -1,9 +1,0 @@
-// A function value cannot reach for variables around it. The compiler
-// says so plainly, and tells you to pass it in instead.
-
-import "std.vel"
-
-fn main() uses io {
-    let limit = 4
-    print(keep_if([1, 5, 9], fn(n: Int) -> Bool { return n > limit }))
-}
