@@ -1,0 +1,23 @@
+// The write sits three calls down: main -> report -> render -> store.
+fn store(path: Text, text: Text) uses fs {
+    write_file(path, text)  // DANGER
+}
+
+fn render(path: Text, total: Int) -> Text uses fs {
+    let text = format("total {}", total)
+    store(path, text)
+    return text
+}
+
+fn report(path: Text, amounts: List of Int) -> Text uses fs {
+    let total = 0
+    for a in amounts {
+        total = total + a
+    }
+    return render(path, total)
+}
+
+fn main() uses io, fs {
+    let path = read_line()
+    print(report(path, [2500, 45000, 12000]))
+}

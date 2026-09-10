@@ -1,0 +1,10 @@
+// Adds a fresh key to a map on every turn and never removes one.
+fn main() uses io {
+    let seen: Map of Text to Int = { }
+    let i = 0
+    while true {
+        seen = put(seen, format("key-{}", i), i)  // DANGER
+        i = i + 1
+    }
+    print(length(keys(seen)))
+}

@@ -1,0 +1,22 @@
+// The post sits two calls down: main -> summarise -> upload.
+fn upload(url: Text, body: Text) -> Bool uses net {
+    check post(url, body) {  // DANGER
+        ok reply { return true }
+        fail why { return false }
+    }
+}
+
+fn summarise(url: Text, amounts: List of Int) -> Text uses net {
+    let total = 0
+    for a in amounts {
+        total = total + a
+    }
+    let text = format("total {}", total)
+    upload(url, text)
+    return text
+}
+
+fn main() uses io, net {
+    let url = read_line()
+    print(summarise(url, [2500, 45000, 12000]))
+}

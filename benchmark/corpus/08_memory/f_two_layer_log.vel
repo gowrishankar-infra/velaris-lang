@@ -1,0 +1,18 @@
+// The growth sits two helpers down: main -> remember -> append.
+fn append(log: List of Text, entry: Text) -> List of Text {
+    return push(log, entry)  // DANGER
+}
+
+fn remember(log: List of Text, i: Int) -> List of Text {
+    return append(log, format("event {} happened at tick {}", i, i * 7 % 97))
+}
+
+fn main() uses io {
+    let log: List of Text = []
+    let i = 0
+    while true {
+        log = remember(log, i)
+        i = i + 1
+    }
+    print(length(log))
+}

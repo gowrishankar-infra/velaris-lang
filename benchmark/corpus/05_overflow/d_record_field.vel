@@ -1,0 +1,18 @@
+// Multiplies a balance held in a record field by a rate from input; the product leaves 64 bits.
+record Account {
+    owner: Text
+    balance: Int
+}
+
+fn apply_rate(acc: Account, rate: Int) -> Account {
+    return Account(owner: acc.owner, balance: acc.balance * rate)  // DANGER
+}
+
+fn main() uses io {
+    let line = read_line()
+    let acc = Account(owner: "g", balance: 1234567890123456)
+    check to_int(line) {
+        ok rate { print(apply_rate(acc, rate).balance) }
+        fail why { print("not a number: " + line) }
+    }
+}

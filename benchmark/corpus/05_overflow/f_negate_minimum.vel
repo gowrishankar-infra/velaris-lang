@@ -1,0 +1,15 @@
+// Takes the absolute value of the input; the most negative 64-bit number has none.
+fn magnitude(n: Int) -> Int {
+    if n < 0 {
+        return 0 - n  // DANGER
+    }
+    return n
+}
+
+fn main() uses io {
+    let line = read_line()
+    check to_int(line) {
+        ok n { print(magnitude(n)) }
+        fail why { print("not a number: " + line) }
+    }
+}

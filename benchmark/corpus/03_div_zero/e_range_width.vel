@@ -1,0 +1,21 @@
+// Divides by hi - lo; input gives the same number twice.
+fn density(total: Int, lo: Int, hi: Int) -> Int {
+    return total / (hi - lo)  // DANGER
+}
+
+fn main() uses io {
+    let parts = split(read_line(), ",")
+    if length(parts) != 2 {
+        print("need two numbers")
+        return
+    }
+    check to_int(get(parts, 0)) {
+        ok lo {
+            check to_int(get(parts, 1)) {
+                ok hi { print(format("density {}", density(1000, lo, hi))) }
+                fail why { print("bad hi") }
+            }
+        }
+        fail why { print("bad lo") }
+    }
+}

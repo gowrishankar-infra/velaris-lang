@@ -92,6 +92,9 @@ EXPECT = {
     "contract_impure.vel": "REJECTED",
     "list_mixed.vel": "REJECTED",   "list_oob.vel": "REJECTED",
     "proof_catch.vel": "REJECTED",  "callsite_bad.vel": "REJECTED",
+    # termination: both RUN; the _bad one is refused only by check --strict
+    "termination.vel": "RUNS",
+    "termination_bad.vel": "RUNS",
 }
 
 # scripted keyboard input for interactive examples

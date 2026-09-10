@@ -1,0 +1,18 @@
+// The divisor is guarded on the strict path and not on the other; input takes the other.
+fn share(total: Int, count: Int, strict: Bool) -> Int {
+    if strict {
+        if count == 0 {
+            return 0
+        }
+        return total / count
+    }
+    return total / count  // DANGER
+}
+
+fn main() uses io {
+    let line = read_line()
+    check to_int(line) {
+        ok count { print(format("each pays {}", share(59500, count, false))) }
+        fail why { print("not a number: " + line) }
+    }
+}

@@ -1,0 +1,10 @@
+// Loops until the input says quit; the input never does, and at its end every read returns nothing.
+fn main() uses io {
+    let line = ""
+    let seen = 0
+    while line != "quit" {  // DANGER
+        line = read_line()
+        seen = seen + 1
+    }
+    print(format("{} line(s)", seen))
+}

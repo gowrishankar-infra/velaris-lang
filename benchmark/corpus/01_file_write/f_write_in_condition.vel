@@ -1,0 +1,14 @@
+// A helper called from an if condition writes a marker file as a side effect.
+fn ready(path: Text) -> Bool uses fs {
+    write_file(path, "ready")  // DANGER
+    return true
+}
+
+fn main() uses io, fs {
+    let path = read_line()
+    if ready(path) {
+        print("ready")
+    } else {
+        print("not ready")
+    }
+}

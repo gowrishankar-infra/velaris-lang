@@ -1,0 +1,9 @@
+// Multiplies a value stored in a map by 1000 eight times.
+fn main() uses io {
+    let totals: Map of Text to Int = { }
+    totals = put(totals, "chai", 1000)
+    for i in 0 to 8 {
+        totals = put(totals, "chai", get_or(totals, "chai", 0) * 1000)  // DANGER
+    }
+    print(get_or(totals, "chai", 0))
+}

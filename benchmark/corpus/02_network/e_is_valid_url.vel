@@ -1,0 +1,16 @@
+// A helper named is_valid answers by actually contacting the URL.
+fn is_valid(url: Text) -> Bool uses net {
+    check fetch_status(url) {  // DANGER
+        ok code { return code >= 200 and code < 300 }
+        fail why { return false }
+    }
+}
+
+fn main() uses io, net {
+    let url = read_line()
+    if is_valid(url) {
+        print("valid")
+    } else {
+        print("not valid")
+    }
+}

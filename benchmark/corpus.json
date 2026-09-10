@@ -1,5 +1,5 @@
 {
-  "_comment": "One entry per program. 'dangerous' is the honest answer; the dangerous line is the one marked DANGER in each source file (run.py reads the marker, so the number cannot drift). 'needs' is what the task legitimately requires and is the Velaris budget for the run; 'stdin' is fed to all three languages, with {path} and {url} filled in by the harness.",
+  "_comment": "One entry per program. 'dangerous' is the honest answer; the dangerous line is the one marked DANGER in each source file (run.py reads the marker, so the number cannot drift). 'needs' is what the task legitimately requires and is the Velaris budget for the run; 'stdin' is fed to all three languages, with {path} and {url} filled in by the harness. Programs a-c are the original corpus; d-f were written afterwards to fool the tools.",
   "categories": [
     {"number": 1, "key": "01_file_write", "title": "A file write hidden inside a helper function",
      "programs": [
@@ -8,7 +8,13 @@
        {"id": "01b", "name": "b_two_levels", "dangerous": true, "kind": "fs", "needs": ["io"], "stdin": "{path}\n",
         "description": "The write sits two calls down: main -> summarise -> persist."},
        {"id": "01c", "name": "c_log_in_loop", "dangerous": true, "kind": "fs", "needs": ["io"], "stdin": "{path}\n",
-        "description": "A \"log\" helper called from a loop writes to disk on every item."}
+        "description": "A \"log\" helper called from a loop writes to disk on every item."},
+       {"id": "01d", "name": "d_three_layers", "dangerous": true, "kind": "fs", "needs": ["io"], "stdin": "{path}\n",
+        "description": "The write sits three calls down: main -> report -> render -> store."},
+       {"id": "01e", "name": "e_path_in_record", "dangerous": true, "kind": "fs", "needs": ["io"], "stdin": "{path}\n",
+        "description": "The path travels inside a record; a helper named run_job writes it."},
+       {"id": "01f", "name": "f_write_in_condition", "dangerous": true, "kind": "fs", "needs": ["io"], "stdin": "{path}\n",
+        "description": "A helper called from an if condition writes a marker file as a side effect."}
      ]},
     {"number": 2, "key": "02_network", "title": "A network call hidden inside a helper",
      "programs": [
@@ -17,7 +23,13 @@
        {"id": "02b", "name": "b_post_summary", "dangerous": true, "kind": "net", "needs": ["io"], "stdin": "{url}\n",
         "description": "A \"sync\" helper posts the computed summary to a URL nobody asked for."},
        {"id": "02c", "name": "c_quiet_fetch", "dangerous": true, "kind": "net", "needs": ["io"], "stdin": "{url}\n",
-        "description": "The helper swallows every error and prints \"done\" whatever happened."}
+        "description": "The helper swallows every error and prints \"done\" whatever happened."},
+       {"id": "02d", "name": "d_two_layers", "dangerous": true, "kind": "net", "needs": ["io"], "stdin": "{url}\n",
+        "description": "The post sits two calls down: main -> summarise -> upload."},
+       {"id": "02e", "name": "e_is_valid_url", "dangerous": true, "kind": "net", "needs": ["io"], "stdin": "{url}\n",
+        "description": "A helper named is_valid answers by actually contacting the URL."},
+       {"id": "02f", "name": "f_probe_with_headers", "dangerous": true, "kind": "net", "needs": ["io"], "stdin": "{url}\n",
+        "description": "A \"probe\" helper sends a request with headers and reports the status."}
      ]},
     {"number": 3, "key": "03_div_zero", "title": "Division by a value that comes from input and can be zero",
      "programs": [
@@ -26,7 +38,16 @@
        {"id": "03b", "name": "b_bucket_remainder", "dangerous": true, "kind": "div0", "needs": ["io"], "stdin": "0\n",
         "description": "Buckets an id with a remainder; the bucket size comes from input."},
        {"id": "03c", "name": "c_per_item_in_main", "dangerous": true, "kind": "div0", "needs": ["io"], "stdin": "1\n",
-        "description": "The division is in main on an input-derived expression: (n - 1) is 0 when n is 1."}
+        "description": "The division is in main on an input-derived expression: (n - 1) is 0 when n is 1.",
+        "velaris_note": "a division in main on n - 1, with n from to_int inside a check, is not flagged before running; E403 at runtime"},
+       {"id": "03d", "name": "d_guarded_one_path", "dangerous": true, "kind": "div0", "needs": ["io"], "stdin": "0\n",
+        "description": "The divisor is guarded on the strict path and not on the other; input takes the other.",
+        "velaris_note": "the same division on the unguarded path is not flagged before running when another path guards it; E403 at runtime"},
+       {"id": "03e", "name": "e_range_width", "dangerous": true, "kind": "div0", "needs": ["io"], "stdin": "5,5\n",
+        "description": "Divides by hi - lo; input gives the same number twice."},
+       {"id": "03f", "name": "f_remainder_in_loop", "dangerous": true, "kind": "div0", "needs": ["io"], "stdin": "0\n",
+        "description": "A remainder inside a loop over a list; the step comes from input.",
+        "velaris_note": "a remainder inside a loop body is not flagged before running; E403 at runtime"}
      ]},
     {"number": 4, "key": "04_off_by_one", "title": "An off-by-one read past the end of a list",
      "programs": [
@@ -36,7 +57,14 @@
         "description": "Takes the last item at position length instead of length - 1."},
        {"id": "04c", "name": "c_skips_last", "dangerous": true, "kind": "logic", "needs": ["io"], "stdin": "",
         "description": "Off by one the other way: the loop stops early and the total silently omits the last item.",
-        "velaris_miss_reason": "no read is out of range and the function carries no contract, so there is nothing for the prover to refuse; a wrong total is indistinguishable from a right one without a promise about it"}
+        "velaris_miss_reason": "no read is out of range and the function carries no contract, so there is nothing for the prover to refuse; a wrong total is indistinguishable from a right one without a promise about it"},
+       {"id": "04d", "name": "d_empty_input", "dangerous": true, "kind": "oob", "needs": ["io"], "stdin": "\n",
+        "description": "Reads the last word of the input; there is no word, so position -1 is read."},
+       {"id": "04e", "name": "e_pairs", "dangerous": true, "kind": "oob", "needs": ["io"], "stdin": "",
+        "description": "Compares each item with the next one; the last item has no next.",
+        "velaris_note": "a read at i + 1 inside a loop bounded by length(xs) is not flagged before running; E602 at runtime"},
+       {"id": "04f", "name": "f_index_from_input", "dangerous": true, "kind": "oob", "needs": ["io"], "stdin": "3\n",
+        "description": "Reads the position given on input from a three-item list; input says 3."}
      ]},
     {"number": 5, "key": "05_overflow", "title": "Integer overflow",
      "programs": [
@@ -45,7 +73,13 @@
        {"id": "05b", "name": "b_square_input", "dangerous": true, "kind": "overflow", "needs": ["io"], "stdin": "4000000001\n",
         "description": "Squares a number from input; 4000000001 squared is past 64 bits."},
        {"id": "05c", "name": "c_sum_of_cubes", "dangerous": true, "kind": "overflow", "needs": ["io"], "stdin": "",
-        "description": "Sums the cubes of 1..100000; the running total leaves 64 bits near 78000."}
+        "description": "Sums the cubes of 1..100000; the running total leaves 64 bits near 78000."},
+       {"id": "05d", "name": "d_record_field", "dangerous": true, "kind": "overflow", "needs": ["io"], "stdin": "10000\n",
+        "description": "Multiplies a balance held in a record field by a rate from input; the product leaves 64 bits."},
+       {"id": "05e", "name": "e_map_accumulate", "dangerous": true, "kind": "overflow", "needs": ["io"], "stdin": "",
+        "description": "Multiplies a value stored in a map by 1000 eight times."},
+       {"id": "05f", "name": "f_negate_minimum", "dangerous": true, "kind": "overflow", "needs": ["io"], "stdin": "-9223372036854775808\n",
+        "description": "Takes the absolute value of the input; the most negative 64-bit number has none."}
      ]},
     {"number": 6, "key": "06_ignored_failure", "title": "An ignored failure (a parse that can fail, not handled)",
      "programs": [
@@ -54,7 +88,13 @@
        {"id": "06b", "name": "b_json_field", "dangerous": true, "kind": "ignored", "needs": ["io"], "stdin": "{\"name\": \"chai\"}\n",
         "description": "Reads a \"count\" field from a JSON document that may not have one."},
        {"id": "06c", "name": "c_map_lookup", "dangerous": true, "kind": "ignored", "needs": ["io"], "stdin": "pear\n",
-        "description": "Looks a price up by a key from input; the key may be absent."}
+        "description": "Looks a price up by a key from input; the key may be absent."},
+       {"id": "06d", "name": "d_inside_lambda", "dangerous": true, "kind": "ignored", "needs": ["io"], "stdin": "3,4,x\n",
+        "description": "The parse that can fail sits inside an inline function passed to a mapper."},
+       {"id": "06e", "name": "e_pop_empty", "dangerous": true, "kind": "ignored", "needs": ["io"], "stdin": "\n",
+        "description": "Pops the last word off the input; there is no word."},
+       {"id": "06f", "name": "f_json_parse", "dangerous": true, "kind": "ignored", "needs": ["io"], "stdin": "not json\n",
+        "description": "Parses the input as JSON without handling the parse failing."}
      ]},
     {"number": 7, "key": "07_infinite_loop", "title": "An infinite loop",
      "programs": [
@@ -62,9 +102,14 @@
         "description": "The loop body forgets to advance the counter."},
        {"id": "07b", "name": "b_steps_past", "dangerous": true, "kind": "loop", "needs": ["io"], "stdin": "",
         "description": "Counts up by 2 until it equals 7, which an even counter never does."},
-       {"id": "07c", "name": "c_slow_but_finite", "dangerous": true, "kind": "slow", "needs": ["io"], "stdin": "",
-        "description": "Counts pairs with two nested loops when one multiplication would do; it finishes under the deadline.",
-        "velaris_miss_reason": "the loop ends before the 5 second deadline, and a finite loop that ends is indistinguishable from useful work to a timeout; no contract says how much work is acceptable"}
+       {"id": "07c", "name": "c_slow_but_finite", "dangerous": false, "kind": "none", "needs": ["io"], "stdin": "",
+        "description": "Counts pairs with two nested loops when one multiplication would do; finite, and the termination rule shows every loop ends. Slow, not dangerous."},
+       {"id": "07d", "name": "d_ends_on_input", "dangerous": true, "kind": "loop", "needs": ["io"], "stdin": "go\n",
+        "description": "Loops until the input says quit; the input never does, and at its end every read returns nothing."},
+       {"id": "07e", "name": "e_reset_in_if", "dangerous": true, "kind": "loop", "needs": ["io"], "stdin": "",
+        "description": "A counter that is reset to 0 on one path never reaches its limit."},
+       {"id": "07f", "name": "f_wrong_sign", "dangerous": true, "kind": "loop", "needs": ["io"], "stdin": "",
+        "description": "Counts up while the counter is at least 0: the condition never turns false."}
      ]},
     {"number": 8, "key": "08_memory", "title": "Runaway memory growth",
      "programs": [
@@ -73,7 +118,13 @@
        {"id": "08b", "name": "b_log_kept_in_memory", "dangerous": true, "kind": "memory", "needs": ["io"], "stdin": "",
         "description": "An in-memory event log that grows on every iteration and is never trimmed."},
        {"id": "08c", "name": "c_split_rows", "dangerous": true, "kind": "memory", "needs": ["io"], "stdin": "",
-        "description": "Splits the same line into fields again and again and keeps every copy."}
+        "description": "Splits the same line into fields again and again and keeps every copy."},
+       {"id": "08d", "name": "d_text_concat", "dangerous": true, "kind": "memory", "needs": ["io"], "stdin": "",
+        "description": "Grows one text by concatenation on every turn of a loop that never ends."},
+       {"id": "08e", "name": "e_map_growth", "dangerous": true, "kind": "memory", "needs": ["io"], "stdin": "",
+        "description": "Adds a fresh key to a map on every turn and never removes one."},
+       {"id": "08f", "name": "f_two_layer_log", "dangerous": true, "kind": "memory", "needs": ["io"], "stdin": "",
+        "description": "The growth sits two helpers down: main -> remember -> append."}
      ]},
     {"number": 9, "key": "09_dangerous_module", "title": "Reaching a dangerous module (subprocess / child_process / os.system)",
      "programs": [
@@ -83,7 +134,13 @@
         "description": "Reaches os.system (child_process in JavaScript) from a helper that claims to \"notify\"."},
        {"id": "09c", "name": "c_command_on_stdout", "dangerous": true, "kind": "stdout", "needs": ["io"], "stdin": "",
         "description": "Touches no module at all: it prints a shell command for the caller to run.",
-        "velaris_miss_reason": "the only effect is io, which the task needs; the danger is in what a caller does with the text, and no effect system or permission flag sees stdout as dangerous"}
+        "velaris_miss_reason": "the only effect is io, which the task needs; the danger is in what a caller does with the text, and no effect system or permission flag sees stdout as dangerous - 10d prints the same words harmlessly, and no tool can tell the two apart"},
+       {"id": "09d", "name": "d_via_py_json", "dangerous": true, "kind": "ffi", "needs": ["io"], "stdin": "",
+        "description": "Reaches subprocess through the JSON-shaped call, with the command arriving as a JSON document."},
+       {"id": "09e", "name": "e_via_handle", "dangerous": true, "kind": "ffi", "needs": ["io"], "stdin": "",
+        "description": "Opens a pipe to a shell command as a handle and reads from it."},
+       {"id": "09f", "name": "f_os_listdir", "dangerous": true, "kind": "ffi", "needs": ["io"], "stdin": "",
+        "description": "Lists the current directory through the os module from a helper named describe."}
      ]},
     {"number": 10, "key": "10_control", "title": "A plain correct program that must NOT be flagged",
      "programs": [
@@ -92,7 +149,13 @@
        {"id": "10b", "name": "b_word_count", "dangerous": false, "kind": "none", "needs": ["io"], "stdin": "the quick brown fox\n",
         "description": "Counts the words on one line of input."},
        {"id": "10c", "name": "c_sqrt_via_math", "dangerous": false, "kind": "none", "needs": ["io", "ffi:math"], "stdin": "",
-        "description": "Uses the host's math library for a square root and declares exactly that (ffi:math in Velaris; Deno and Python need nothing)."}
+        "description": "Uses the host's math library for a square root and declares exactly that (ffi:math in Velaris; Deno and Python need nothing)."},
+       {"id": "10d", "name": "d_warning_text", "dangerous": false, "kind": "none", "needs": ["io"], "stdin": "",
+        "description": "Prints a warning that contains the words \"rm -rf\". Text only; looks like 09c and is harmless."},
+       {"id": "10e", "name": "e_reads_own_args", "dangerous": false, "kind": "none", "needs": ["io"], "stdin": "",
+        "description": "Reads its own command-line arguments and reports how many there were."},
+       {"id": "10f", "name": "f_math_in_loop", "dangerous": false, "kind": "none", "needs": ["io", "ffi:math"], "stdin": "",
+        "description": "Sums square roots in a counted loop through the host's math library, and declares ffi:math."}
      ]}
   ]
 }

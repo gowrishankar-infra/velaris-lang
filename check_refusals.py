@@ -215,6 +215,23 @@ fn main() uses io {
 '''),
 ]
 
+# refused only by `velaris check --strict`; the same programs run normally
+STRICT_CASES = [
+    ("a loop whose end cannot be shown", "E612", True, '''
+fn by_twos(n: Int) -> Int {
+    let i = 0
+    while i < n {
+        i = i + 2
+    }
+    return i
+}
+
+fn main() uses io {
+    print(by_twos(7))
+}
+'''),
+]
+
 
 def main() -> int:
     work = Path(tempfile.mkdtemp(prefix="velaris-refusals-"))
@@ -246,6 +263,35 @@ def main() -> int:
                           if "error[" in ln), output.strip()[:70])
             print(f"  WRONG REASON {name}")
             print(f"               expected {want}, got: {first[:90]}")
+            failed += 1
+        path.unlink(missing_ok=True)
+    for name, want, needs_prover, source in STRICT_CASES:
+        if needs_prover and not HAVE_Z3:
+            print("  skip %-5s    %s (--strict needs the prover)"
+                  % (want, name))
+            skipped += 1
+            continue
+        path = HERE / "_refusal_check.vel"
+        path.write_text(source.lstrip(), encoding="utf-8")
+        plain = subprocess.run(
+            [sys.executable, str(VELARIS), str(path), "--no-cache"],
+            capture_output=True, text=True, timeout=300, cwd=HERE)
+        run = subprocess.run(
+            [sys.executable, str(VELARIS), "check", str(path), "--strict"],
+            capture_output=True, text=True, timeout=300, cwd=HERE)
+        output = (run.stderr or "") + (run.stdout or "")
+        if plain.returncode != 0:
+            print(f"  WRONG        {name}: refused WITHOUT --strict too")
+            failed += 1
+        elif run.returncode == 0:
+            print(f"  NOT REFUSED  {name} (under --strict)")
+            failed += 1
+        elif want in output:
+            print(f"  ok {want:<5}    {name} (--strict only)")
+            passed += 1
+        else:
+            print(f"  WRONG REASON {name}: expected {want}, got: "
+                  f"{output.strip()[:90]}")
             failed += 1
         path.unlink(missing_ok=True)
     print("-" * 62)

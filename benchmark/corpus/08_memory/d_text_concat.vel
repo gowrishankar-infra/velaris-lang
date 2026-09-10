@@ -1,0 +1,10 @@
+// Grows one text by concatenation on every turn of a loop that never ends.
+fn main() uses io {
+    let text = ""
+    let i = 0
+    while true {
+        text = text + format("row {} of the report; ", i)  // DANGER
+        i = i + 1
+    }
+    print(length(text))
+}

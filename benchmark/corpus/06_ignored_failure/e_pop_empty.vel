@@ -1,0 +1,11 @@
+// Pops the last word off the input; there is no word.
+fn main() uses io {
+    let words: List of Text = []
+    for part in split(read_line(), " ") {
+        if length(part) > 0 {
+            words = push(words, part)
+        }
+    }
+    let rest = pop(words)  // DANGER
+    print(format("{} words left", length(rest)))
+}

@@ -1,0 +1,13 @@
+// A counter that is reset to 0 on one path never reaches its limit.
+fn main() uses io {
+    let i = 0
+    let turns = 0
+    while i < 10 {  // DANGER
+        i = i + 1
+        turns = turns + 1
+        if i == 5 {
+            i = 0
+        }
+    }
+    print(turns)
+}

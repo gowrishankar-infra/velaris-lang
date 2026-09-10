@@ -1,5 +1,80 @@
 # Velaris changelog
 
+## 2.62 - Loops that provably end, and a corpus built to fool it
+The 2.61 benchmark named three programs Velaris could not catch. Two
+stay misses, by construction: an off-by-one that stops early instead of
+reading past the end (no contract, so nothing to refuse), and a program
+that prints `rm -rf build` for its caller (the only effect is io, and a
+harmless warning prints the same words). The third - a loop that ends,
+slowly - is now shown to end before the program runs.
+
+**Termination.** Every loop gets one of two verdicts, by a syntactic
+rule that needs no solver and so answers the same with and without the
+prover. `terminates` is claimed for exactly one shape: the condition
+is, or has as an `and` conjunct, `v < E`, `v <= E`, `v > E` or `v >= E`,
+where E mentions nothing the body assigns and calls only pure
+functions, and every path through the body moves v by exactly one step
+toward E, with v assigned nowhere else. Everything else - a step of two,
+a step on one arm only, a counter reset on some path, a limit the body
+grows, a flag-only condition, an `or` - is `unshown`, whether or not it
+happens to end. A `for` loop goes through the same rule rather than
+being exempted: `for i in 0 to length(xs)` with a push inside does not
+end, and the rule says so. SPEC.md section 9.5 states it.
+
+It surfaces in three places. `velaris explain` prints "loops: 2
+terminate, 1 not shown" per function. `velaris audit` and
+`velaris.audit()` gain `loops_unshown` per function and a warning
+naming the functions, in schema velaris.audit/1 (added fields, not a
+change); they also gain `contract_coverage`, the functions that take or
+return a List, a Map or a record and promise nothing about it - a
+coverage note, not a defect. `velaris check --strict` refuses a loop
+whose end is not shown with E612; without `--strict` it is not an
+error, and the time limit in `velaris.run` remains the guard.
+
+**Stressed before trusted.** `check_termination.py` holds 44
+adversarial loops with their required verdicts: the wrong direction, a
+step of two, a step spelled `1 + i`, a reset on one path, a limit the
+body changes, a limit changed only inside a nested if, `length(xs)`
+with a push inside, nested loops where only the inner qualifies, a flag
+alone, a flag with `or`, a float counter, the step inside a `check` on
+both arms and on one, a return with and without a step, recursion
+instead of a loop. The analysis was wrong twice on the first attempt,
+both times in the same direction - refusing a loop that ends: it
+counted the standard library's loops when a program imported it (a
+scoping error in the report, fixed by carrying the file), and it did
+not accept a text literal or a pure builtin such as `split` inside a
+limit, so `for part in split(line, " ")` was `unshown` and a control
+program in the benchmark was a false positive. Both are fixed in the
+analysis, not the tests. No existing example changed proof status
+(`velaris proofs examples --json` before and after, diffed).
+`examples/termination.vel` and `examples/termination_bad.vel` join the
+suite; the latter runs and is refused only by `--strict`.
+
+**The benchmark, doubled.** Sixty programs now, thirty of them written
+against the tools: effects three helpers deep or inside a record, a
+division guarded on one path and not the other, an off-by-one only on
+empty input, an overflow inside a record field and inside a map, a
+failure ignored inside an inline function, a loop that ends only when
+input says so, growth by repeated text concatenation, subprocess
+reached through the JSON-shaped call and through a handle, and control
+programs that look suspicious - printing "rm -rf", reading their own
+arguments, importing math in a loop - and are harmless. Same three
+languages, same rules. On the machine that produced RESULTS.md
+(Windows, prover present, Deno 2.9.6): of 53 dangerous programs
+Velaris caught 51 - 41 before running, 10 while running - and missed
+the two above; Deno caught 29 (5 before, by its lint on a `while
+(true)`) and Python 28; no tool flagged any of the 7 control programs,
+the slow loop among them. Ten consecutive runs produce identical
+output. What the doubling found: the prover does not flag a division on
+an unguarded path when another path guards it, a remainder inside a
+loop, or a `get(xs, i + 1)` - all three are caught while running, not
+before, and the table says so.
+
+**args().** Under `--allow io` the program's `args()` used to contain
+`--allow` and `io`. It no longer contains `--allow`, `--deny`,
+`--timeout` or their values, from the command line or from
+`velaris.run`; `check_sandbox.py` has the case.
+
 ## 2.61 - A table anyone can rerun
 Every claim this project makes about catching what a model writes has
 been a claim. `benchmark/` turns it into a table that one command

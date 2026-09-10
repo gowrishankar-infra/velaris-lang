@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The Velaris comparison benchmark.
 
-    python benchmark/run.py            # all 30 programs -> RESULTS.md, results.json
+    python benchmark/run.py            # all 60 programs -> RESULTS.md, results.json
     python benchmark/run.py --quick    # one program per category, table on stdout
     python benchmark/run.py --check    # also compare verdicts with results.json
     python benchmark/run.py --only 03a,10c
@@ -40,6 +40,7 @@ CORPUS = os.path.join(HERE, "corpus")
 TIMEOUT = 5            # seconds, for every tool
 MEMORY_MB = 256        # for every tool, where the platform lets us
 SENTINEL = "spawned-child-ran"   # printed by the child a program spawns
+MODULE_MARK = "module-reached"   # printed when a module call came back
 TOOLS = ("velaris", "deno", "python")
 VERDICTS = ("caught-before-run", "caught-during-run", "missed",
             "not-applicable", "false-positive", "tool-absent")
@@ -318,7 +319,7 @@ def observed(kind, prog_id, tool, work_path, stdout):
         prefix = f"/{prog_id}/{tool}"
         return any(p.startswith(prefix) for p in Hits.paths)
     if kind == "ffi":
-        return SENTINEL in stdout
+        return SENTINEL in stdout or MODULE_MARK in stdout
     return None
 
 
@@ -366,10 +367,15 @@ def velaris_row(prog, stdin_text, work_path):
     modules = list(aud.ffi_modules or [])
     if "ffi" in aud.effects and "ffi" in need_effects and need_modules:
         beyond += [f"ffi:{m}" for m in modules if m not in need_modules]
+    # a loop whose end the termination rule cannot show (SPEC 9.5) is
+    # reported by the audit and is E612 under check --strict
+    unshown_in = [f["name"] for f in aud.functions if f.get("loops_unshown")]
     before = {"check": problems, "audit_effects": list(aud.effects),
               "audit_ffi_modules": modules, "beyond_needs": beyond,
+              "loops_unshown": aud.loops_unshown,
+              "loops_unshown_in": unshown_in,
               "proven_functions": list(chk.proven)}
-    flagged_before = bool(problems or beyond)
+    flagged_before = bool(problems or beyond or aud.loops_unshown)
 
     during = {"ran": False}
     stopped = False
@@ -397,6 +403,10 @@ def velaris_row(prog, stdin_text, work_path):
                                           for p in problems))
     if beyond:
         bits.append("audit: " + ", ".join(beyond))
+    if aud.loops_unshown:
+        bits.append("audit: loop not shown to end in "
+                    + ", ".join(unshown_in or ["an inline function"])
+                    + " (E612 under --strict)")
     if during.get("ran"):
         if r.refused_effect:
             bits.append(f"run: {r.problems[0].code} refused {r.refused_effect}")
@@ -541,6 +551,31 @@ def python_row(prog, stdin_text, work_path, port):
 
 # --------------------------------------------------------------- driver
 
+def settle_memory_row(prog, result):
+    """A memory-growth program is stopped by the 256 MB cap or by the
+    5 s deadline, and which one fires first depends on how loaded the
+    machine is - it changed from run to run. Both are the same verdict;
+    the evidence records only that it stopped, so two runs on the same
+    machine produce the same file. The Velaris column is left alone:
+    its child process reports E610 or E611, and that is stable."""
+    if prog["kind"] != "memory" or result["verdict"] == "tool-absent":
+        return result
+    during = result["during"]
+    if during is None or not (during.get("timed_out")
+                              or during.get("exit") not in (0, None)):
+        return result                  # it ran to the end: nothing to settle
+    during["exit"] = "stopped"
+    during["timed_out"] = None
+    during["stderr"] = ("stopped by the memory cap or by the 5 s deadline, "
+                        "whichever came first")
+    bits = [b for b in result["evidence"].split("; ")
+            if not b.startswith("run: ")]
+    bits.append("run: stopped (memory cap or 5 s deadline, whichever "
+                "came first)")
+    result["evidence"] = "; ".join(bits)
+    return result
+
+
 def run_program(prog, deno, port, workdir):
     row = {k: prog[k] for k in ("id", "category", "category_title", "name",
                                 "description", "dangerous", "kind", "needs")}
@@ -558,10 +593,11 @@ def run_program(prog, deno, port, workdir):
         if tool == "velaris":
             row["tools"][tool] = velaris_row(prog, stdin_text, work_path)
         elif tool == "deno":
-            row["tools"][tool] = deno_row(prog, stdin_text, work_path, deno,
-                                          port)
+            row["tools"][tool] = settle_memory_row(
+                prog, deno_row(prog, stdin_text, work_path, deno, port))
         else:
-            row["tools"][tool] = python_row(prog, stdin_text, work_path, port)
+            row["tools"][tool] = settle_memory_row(
+                prog, python_row(prog, stdin_text, work_path, port))
         if os.path.exists(work_path):
             os.remove(work_path)
     return row
@@ -614,10 +650,13 @@ KIND_WHY = {
                 "rounds to a double, so both print a value without comment",
     "ignored": "a call that can fail must be handled or passed up; leaving "
                "it bare is E520 before running, whatever the input",
-    "loop": "the run was bounded by timeout=5 in velaris.run and stopped "
-            "with E610",
-    "memory": "the run was bounded by max_memory_mb=256 and timeout=5; "
-              "whichever limit fired first stopped it",
+    "loop": "the audit reports a loop whose end the termination rule "
+            "cannot show - no counter moving one step toward an "
+            "unchanging limit (E612 under check --strict); the run was "
+            "also bounded by timeout=5 and stopped with E610",
+    "memory": "the growth sits in a loop whose end cannot be shown, which "
+              "the audit reports before running; the run was bounded by "
+              "max_memory_mb=256 and timeout=5",
 }
 
 
@@ -691,9 +730,12 @@ def results_markdown(meta, categories, rows, summary, tot):
                 cells.append(f"{c['not-applicable']} clean / "
                              f"{c['false-positive']} false-positive")
             else:
-                cells.append(f"{c['caught-before-run']} / "
-                             f"{c['caught-during-run']} / {c['missed']} / "
-                             f"{c['false-positive']}")
+                cell = (f"{c['caught-before-run']} / "
+                        f"{c['caught-during-run']} / {c['missed']} / "
+                        f"{c['false-positive']}")
+                if c["not-applicable"]:
+                    cell += f" (+{c['not-applicable']} clean)"
+                cells.append(cell)
         L.append(f"| {s['number']}. {s['title']} | " + " | ".join(cells) + " |")
     L.append("")
     dangerous = [r for r in rows if r["dangerous"]]
@@ -762,9 +804,37 @@ def narrative(meta, rows, tot):
             s += f"{', '.join(lst)}: {KIND_WHY.get(kind, '')}. "
         P.append(s.strip())
         P.append("")
+    by_rule = [r for r in dangerous if r["kind"] in ("loop", "memory")
+               and v(r, "velaris") == "caught-before-run"]
+    if by_rule:
+        P.append("Flagged by Velaris before running through the "
+                 "termination rule (SPEC.md 9.5), not through an effect: "
+                 + ids(by_rule) + ". `velaris audit` reports "
+                 "`loops_unshown` for a loop whose condition has no "
+                 "counter moving one step toward an unchanging limit, and "
+                 "`check --strict` makes it E612. The rule claims nothing "
+                 "about whether such a loop actually ends; every one of "
+                 "these happens not to, and the run confirmed it.")
+        P.append("")
+    runtime_only = [r for r in dangerous if r["kind"] in ("div0", "oob")
+                    and v(r, "velaris") == "caught-during-run"]
+    if runtime_only:
+        s = ("Caught by Velaris only while running, where a sibling "
+             "program was caught before: " + ids(runtime_only) + ". ")
+        for r in runtime_only:
+            if r.get("velaris_note"):
+                s += f"{r['id']}: {r['velaris_note']}. "
+        s += ("The runtime check (E403 for a zero divisor, E602 for a read "
+              "out of range) stopped each of them; the prover did not "
+              "settle the obligation before running. These are the "
+              "prover's limits as of this version, recorded rather than "
+              "worked around.")
+        P.append(s)
+        P.append("")
     if not deno_absent:
         earlier = [r for r in dangerous if v(r, "velaris") == "caught-before-run"
-                   and v(r, "deno") == "caught-during-run"]
+                   and v(r, "deno") == "caught-during-run"
+                   and r["kind"] not in ("loop", "memory")]
         if earlier:
             P.append("Caught by both, but by Velaris before running and by "
                      "Deno only once the program reached the call: "
@@ -856,16 +926,18 @@ def narrative(meta, rows, tot):
                  f"{MEMORY_MB} MB"
                  + (", and on Windows the cap is recorded but not enforced "
                     "in any case" if not meta["velaris_memory_cap"] else "")
-                 + ". Deno's V8 heap limit and Python's "
-                 f"{meta['python_memory_cap']} did stop the same programs "
-                 "on memory where the evidence says so.")
+                 + ". For Deno and Python the cap and the deadline race, "
+                 "and which fires first varies with the machine's load, "
+                 "so those cells record only that the program was "
+                 "stopped.")
     overflow_rows = [r for r in dangerous if r["kind"] == "overflow"]
     if overflow_rows:
         C.append("Category 5 is a judgement call for Python: its integers do "
                  "not overflow, so the printed value is arithmetically "
                  "right and only wrong for a 64-bit consumer downstream. It "
                  "is recorded as missed because nothing was flagged; a "
-                 "reader who disagrees can discount those three rows.")
+                 f"reader who disagrees can discount those "
+                 f"{len(overflow_rows)} rows.")
     for c in C:
         P.append(c)
         P.append("")
@@ -970,8 +1042,9 @@ def main(argv=None):
                 print("\ncorpus error:", e, file=sys.stderr)
                 return 2
             row["category_key"] = prog["category_key"] + "/"
-            if prog.get("velaris_miss_reason"):
-                row["velaris_miss_reason"] = prog["velaris_miss_reason"]
+            for key in ("velaris_miss_reason", "velaris_note"):
+                if prog.get(key):
+                    row[key] = prog[key]
             rows.append(row)
             print("  ".join(f"{t}={row['tools'][t]['verdict']}"
                             for t in TOOLS), file=sys.stderr)

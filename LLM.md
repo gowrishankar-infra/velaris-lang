@@ -431,6 +431,7 @@ them as structured data for a fix loop.
 | E525 | binding the result of a void fallible call | use check without ok-binding |
 | E608 | a file could not be written | check the folder exists and is writable |
 | E609 | recursion 2000 deep | move toward the base case, or use a loop |
+| E612 | a loop's end could not be shown (only under `check --strict`) | make one counter move one step toward a limit the body does not change |
 | E542 | function value of the wrong shape | match the parameter's fn type |
 | E602 | a list read went out of range while running | fix the index |
 | E704 | a loop invariant broke while running | fix the loop or invariant |

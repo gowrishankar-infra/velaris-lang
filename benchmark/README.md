@@ -1,6 +1,6 @@
 # The comparison benchmark
 
-Thirty small programs, each written three times with the same behaviour -
+Sixty small programs, each written three times with the same behaviour -
 in Velaris, in JavaScript for Deno, and in Python - and one harness that
 runs every program through every tool and records what was caught before
 running, what was caught while running, and what was missed. The result
@@ -17,13 +17,13 @@ command that produced it are all here; change one and rerun.
 
 | Tool | Before running | While running |
 |---|---|---|
-| Velaris 2.61 | `velaris check` (types, effects, unhandled failures, and the prover's E705/E706) and `velaris audit` (which effects and which Python modules the program reaches) | `velaris.run(source, allow=needs, timeout=5, max_memory_mb=256)` - the effect budget refuses anything the task does not need (E310/E311); the limits stop a runaway (E610/E611) |
+| Velaris 2.62 | `velaris check` (types, effects, unhandled failures, and the prover's E705/E706) and `velaris audit` (which effects and which Python modules the program reaches, and which loops the termination rule cannot show to end - `loops_unshown`, E612 under `--strict`) | `velaris.run(source, allow=needs, timeout=5, max_memory_mb=256)` - the effect budget refuses anything the task does not need (E310/E311); the limits stop a runaway (E610/E611) |
 | Deno 2.x | `deno check` and `deno lint --json` | `deno run --no-prompt --v8-flags=--max-old-space-size=256 file.js` with no `--allow-*` flag at all, because no program in this corpus legitimately needs one |
 | Plain Python | nothing, by construction | `python file.py` in a subprocess with the same 5 second timeout and, where the platform allows, the same 256 MB cap |
 
 "Needs" is the effect set the task legitimately requires, stated per
-program in `corpus.json`. It is `io` for 29 programs and `io, ffi:math`
-for the one control program that calls the host's `sqrt`. That is the
+program in `corpus.json`. It is `io` for 58 programs and `io, ffi:math`
+for the two control programs that call the host's `sqrt`. That is the
 Velaris budget for the run; it is also the standard the audit is held to
 (see the rules below).
 
@@ -41,39 +41,49 @@ records which applied on the machine that produced it.
 
 ## The corpus
 
-Ten categories, three programs each. Every program has one dangerous
+Ten categories, six programs each. Programs `a` to `c` were written
+first; `d` to `f` were written afterwards, against the tools, to hide
+the same defects better. Every dangerous program has one dangerous
 line, marked `DANGER` in a trailing comment in all three source files;
 the harness reads the marker, so the line numbers in the results cannot
 drift from the sources. Control programs have no marker.
 
 | # | Category | Programs |
 |---|---|---|
-| 1 | a file write hidden inside a helper function | `a_save_report`, `b_two_levels` (two calls deep), `c_log_in_loop` |
-| 2 | a network call hidden inside a helper | `a_fetch_helper`, `b_post_summary` (sends data out), `c_quiet_fetch` (swallows every error) |
-| 3 | division by a value from input that can be zero | `a_share_per_person` (`/` in a helper), `b_bucket_remainder` (`%` in a helper), `c_per_item_in_main` (`/` in main on `n - 1`) |
-| 4 | an off-by-one read past the end of a list | `a_sum_inclusive` (`<=` for `<`), `b_last_item` (`xs[len]`), `c_skips_last` (stops one early - a logic error, see below) |
-| 5 | integer overflow | `a_factorial_25`, `b_square_input` (4000000001²), `c_sum_of_cubes` |
-| 6 | an ignored failure | `a_to_int_unhandled`, `b_json_field` (missing key), `c_map_lookup` (missing key) |
-| 7 | an infinite loop | `a_never_advances`, `b_steps_past` (even counter, odd target), `c_slow_but_finite` (see below) |
-| 8 | runaway memory growth | `a_rows_forever`, `b_log_kept_in_memory`, `c_split_rows` |
-| 9 | reaching a dangerous module | `a_subprocess_helper`, `b_os_system` (`child_process` in JavaScript), `c_command_on_stdout` (see below) |
-| 10 | a plain correct program that must not be flagged | `a_expense_total`, `b_word_count`, `c_sqrt_via_math` (declares `ffi:math`) |
+| 1 | a file write hidden inside a helper function | `a_save_report`, `b_two_levels`, `c_log_in_loop`; `d_three_layers`, `e_path_in_record` (the path travels in a record), `f_write_in_condition` (the helper is called from an `if`) |
+| 2 | a network call hidden inside a helper | `a_fetch_helper`, `b_post_summary`, `c_quiet_fetch` (swallows every error); `d_two_layers`, `e_is_valid_url` (a predicate that contacts the URL), `f_probe_with_headers` |
+| 3 | division by a value from input that can be zero | `a_share_per_person`, `b_bucket_remainder`, `c_per_item_in_main` (in main, on `n - 1`); `d_guarded_one_path` (guarded on one path only), `e_range_width` (`hi - lo`), `f_remainder_in_loop` |
+| 4 | an off-by-one read past the end of a list | `a_sum_inclusive`, `b_last_item`, `c_skips_last` (a logic error, see below); `d_empty_input` (only on empty input), `e_pairs` (item and next), `f_index_from_input` |
+| 5 | integer overflow | `a_factorial_25`, `b_square_input`, `c_sum_of_cubes`; `d_record_field` (inside a record), `e_map_accumulate` (inside a map), `f_negate_minimum` |
+| 6 | an ignored failure | `a_to_int_unhandled`, `b_json_field`, `c_map_lookup`; `d_inside_lambda` (inside an inline function), `e_pop_empty`, `f_json_parse` |
+| 7 | an infinite loop | `a_never_advances`, `b_steps_past`, `c_slow_but_finite` (finite - a control row, see below); `d_ends_on_input` (ends only when input says so), `e_reset_in_if`, `f_wrong_sign` |
+| 8 | runaway memory growth | `a_rows_forever`, `b_log_kept_in_memory`, `c_split_rows`; `d_text_concat` (repeated concatenation), `e_map_growth`, `f_two_layer_log` |
+| 9 | reaching a dangerous module | `a_subprocess_helper`, `b_os_system`, `c_command_on_stdout` (see below); `d_via_py_json` (through the JSON-shaped call), `e_via_handle`, `f_os_listdir` |
+| 10 | a plain correct program that must not be flagged | `a_expense_total`, `b_word_count`, `c_sqrt_via_math`; `d_warning_text` (prints "rm -rf" harmlessly), `e_reads_own_args`, `f_math_in_loop` (a counted loop and `ffi:math`) |
 
-Three programs are there because Velaris cannot catch them, so that the
+Two programs are there because Velaris cannot catch them, so that the
 table is not a list of things the language was built to do:
 
 - `04c c_skips_last` - the loop stops one item early. No read is out of
   range and there is no contract, so a wrong total looks like a right
   one.
-- `07c c_slow_but_finite` - two nested loops where one multiplication
-  would do. It ends before the deadline, and a finite loop that ends is
-  indistinguishable from useful work to a timeout.
 - `09c c_command_on_stdout` - prints `rm -rf build` as a hint for the
   caller and touches nothing. The only effect is `io`, which the task
   needs. A caller that pipes stdout into a shell runs it, and nothing
-  in the program can know that.
+  in the program can know that. `10d d_warning_text` prints the same
+  words in a warning and is harmless; no tool can tell the two apart
+  from the outside, which is why 09c should not be caught by any of
+  them.
 
-Category 10 is there so that a tool that flags everything scores badly.
+A third, `07c c_slow_but_finite`, was a miss in the first version of
+this benchmark: two nested loops where one multiplication would do,
+finishing under the deadline. Velaris 2.62 shows before running that
+every loop in it ends (SPEC.md section 9.5), so it is now recorded as a
+control row inside category 7 - slow, not dangerous - and a tool that
+flags it scores a false positive.
+
+Category 10, and the control row in category 7, are there so that a
+tool that flags everything scores badly.
 
 The inputs are chosen to trigger the defect: `0` for the divisors, `1`
 where the divisor is `n - 1`, `12a` for the parse, a document without
@@ -114,9 +124,12 @@ other line is a corpus error and the harness exits 2 - a program that
 does not compile for an unrelated reason is a bug in this benchmark,
 not a data point. Then `velaris.audit(source)`: if it lists an effect
 that `needs` does not include, or (when `needs` grants `ffi:` for named
-modules) a module outside that list, the audit counts as flagging the
-program. For a control program, any problem or any effect beyond its
-needs is a false positive.
+modules) a module outside that list, or reports `loops_unshown > 0` (a
+loop the termination rule cannot show to end; E612 under `check
+--strict`), the audit counts as flagging the program. For a control
+program, any problem, any effect beyond its needs, or any loop not
+shown to end is a false positive - so a control program with a loop
+must write it in the one shape the rule accepts, and 07c and 10f do.
 
 **Velaris, while running.** Only when check passed:
 `velaris.run(source, allow=needs, stdin=..., timeout=5, max_memory_mb=256)`.
@@ -145,8 +158,10 @@ or the harness timeout counts as stopped.
 **Observation.** After every run the harness checks whether the
 dangerous effect actually happened: for a file write, whether the file
 exists; for a network call, whether its listener received a request on
-the path that names the program and the tool; for a spawned process,
-whether the child's sentinel line reached stdout. If it happened, the
+the path that names the program and the tool; for a module call,
+whether the child's sentinel line (`spawned-child-ran`) or the marker
+the program prints when the call came back (`module-reached`) reached
+stdout. If it happened, the
 verdict is `missed` whatever the exit status. If it did not happen and
 the process exited 0 anyway, the verdict is `caught-during-run` with the
 evidence saying the denial was swallowed - this is what happens in Deno
@@ -177,7 +192,7 @@ where winget puts it on Windows. If it is not found every Deno cell
 reads `tool-absent`, the header says so, and the run still completes.
 On Windows: `winget install DenoLand.Deno`. Elsewhere see deno.com.
 
-A full run takes two to four minutes; most of it is the 5 second
+A full run takes five to eight minutes; most of it is the 5 second
 timeouts in categories 7 and 8.
 
 Continuous integration runs `python benchmark/run.py --quick --check`
@@ -198,10 +213,12 @@ The command line has no `--timeout`; for that use the library:
 
     python -c "import velaris; print(velaris.run(open('benchmark/corpus/07_infinite_loop/a_never_advances.vel').read(), allow={'io'}, timeout=5).as_dict())"
 
-The programs read their input from stdin rather than from `args()`
-because under `--allow` the Velaris command line hands the budget words
-to `args()` as well (`['--allow', 'io', ...]` in 2.60); stdin behaves
-the same in all three languages.
+    velaris check benchmark/corpus/07_infinite_loop/a_never_advances.vel --strict   # E612
+
+The programs read their input from stdin rather than from `args()`;
+stdin behaves the same in all three languages. (Until 2.62 the Velaris
+command line also handed the budget words to `args()`; that is fixed,
+and 10e reads its arguments to show it.)
 
 ## Disputing a row
 
@@ -217,4 +234,10 @@ the same in all three languages.
 
 Both files are regenerated from scratch on every run and carry no
 timestamps, so two runs on the same machine should produce identical
-output; that is checked before each release.
+output; that is checked before each release (ten consecutive runs).
+One thing had to be normalised for that to hold: in category 8 the
+256 MB cap and the 5 second deadline race, and for Deno and Python
+which one fires first changes with the machine's load. The verdict is
+the same either way, so those cells record that the program was
+stopped and not by which limit. The Velaris cell keeps its code (E610
+or E611), which is stable because its child process reports it.

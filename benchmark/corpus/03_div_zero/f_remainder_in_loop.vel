@@ -1,0 +1,20 @@
+// A remainder inside a loop over a list; the step comes from input.
+fn bucket_all(xs: List of Int, step: Int) -> Int {
+    let hits = 0
+    let i = 0
+    while i < length(xs) {
+        if get(xs, i) % step == 0 {  // DANGER
+            hits = hits + 1
+        }
+        i = i + 1
+    }
+    return hits
+}
+
+fn main() uses io {
+    let line = read_line()
+    check to_int(line) {
+        ok step { print(format("{} hits", bucket_all([4, 8, 15, 16], step))) }
+        fail why { print("not a number: " + line) }
+    }
+}

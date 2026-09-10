@@ -1,0 +1,11 @@
+// Reaches subprocess through the JSON-shaped call, with the command arriving as a JSON document.
+fn run_spec(spec: Text) -> Text or fail uses ffi {
+    return try py_json("subprocess", "getoutput", spec)  // DANGER
+}
+
+fn main() uses io, ffi {
+    check run_spec("[\"echo spawned-child-ran\"]") {
+        ok out { print(out) }
+        fail why { print("could not run: " + why) }
+    }
+}

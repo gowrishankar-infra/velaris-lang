@@ -258,6 +258,19 @@ fn main() uses io, clock, rand {
     }
 }
 ''', "all fine"),
+    # until 2.62 `--allow io` leaked into args() as two extra words
+    ("args() carries the program's arguments, not the budget",
+     ["--allow", "io", "7", "eight"], '''
+fn main() uses io {
+    print(format("args: {}", args()))
+}
+''', "args: [7, eight]"),
+    ("args() is clean under --deny as well",
+     ["--deny", "fs,net", "only"], '''
+fn main() uses io {
+    print(format("args: {}", args()))
+}
+''', "args: [only]"),
 ]
 
 

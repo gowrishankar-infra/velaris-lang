@@ -1,0 +1,10 @@
+// The parse that can fail sits inside an inline function passed to a mapper.
+import "std.vel"
+
+fn main() uses io {
+    let items = split(read_line(), ",")
+    let numbers = map_to(items, fn(t: Text) -> Int {
+        return to_int(t)  // DANGER
+    })
+    print(format("{} numbers", length(numbers)))
+}

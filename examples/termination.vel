@@ -1,0 +1,155 @@
+// Every loop here is shown to end before the program runs: a counter
+// moves one step toward a limit the body does not change. `velaris
+// explain examples/termination.vel` says "loops: N terminate, 0 not
+// shown", and `velaris check --strict` accepts it.
+
+fn count_up(n: Int) -> Int {
+    let i = 0
+    let total = 0
+    while i < n {
+        total = total + i
+        i = i + 1
+    }
+    return total
+}
+
+fn count_up_inclusive(n: Int) -> Int {
+    let i = 0
+    let total = 0
+    while i <= n {
+        total = total + i
+        i = i + 1
+    }
+    return total
+}
+
+fn count_down(n: Int) -> Int {
+    let i = n
+    let total = 0
+    while i > 0 {
+        total = total + i
+        i = i - 1
+    }
+    return total
+}
+
+fn count_down_to_zero(n: Int) -> Int {
+    let i = n
+    let turns = 0
+    while i >= 0 {
+        turns = turns + 1
+        i = i - 1
+    }
+    return turns
+}
+
+// a flag can end the loop early; the counter still guarantees it ends
+fn find(xs: List of Int, wanted: Int) -> Int {
+    let i = 0
+    let found = false
+    let at = -1
+    while i < length(xs) and not found {
+        if get(xs, i) == wanted {
+            found = true
+            at = i
+        }
+        i = i + 1
+    }
+    return at
+}
+
+// the limit is on the right-hand side
+fn until_limit(limit: Int) -> Int {
+    let i = 0
+    while limit > i {
+        i = i + 1
+    }
+    return i
+}
+
+// the step sits on both arms of an if
+fn step_on_both_arms(n: Int) -> Int {
+    let i = 0
+    let odd = 0
+    while i < n {
+        if i % 2 == 1 {
+            odd = odd + 1
+            i = i + 1
+        } else {
+            i = i + 1
+        }
+    }
+    return odd
+}
+
+// the step sits on both arms of a check
+fn step_inside_check(words: List of Text) -> Int {
+    let i = 0
+    let sum = 0
+    while i < length(words) {
+        check to_int(get(words, i)) {
+            ok n {
+                sum = sum + n
+                i = i + 1
+            }
+            fail why {
+                i = i + 1
+            }
+        }
+    }
+    return sum
+}
+
+// a path that returns leaves the loop; it needs no step
+fn first_negative(xs: List of Int) -> Int {
+    let i = 0
+    while i < length(xs) {
+        if get(xs, i) < 0 {
+            return get(xs, i)
+        }
+        i = i + 1
+    }
+    return 0
+}
+
+// nested loops, each with its own counter
+fn pairs(n: Int) -> Int {
+    let i = 0
+    let count = 0
+    while i < n {
+        let j = 0
+        while j < n {
+            count = count + 1
+            j = j + 1
+        }
+        i = i + 1
+    }
+    return count
+}
+
+// for loops are while loops underneath and go through the same rule
+fn squares(n: Int) -> List of Int {
+    let out: List of Int = []
+    for i in 0 to n {
+        out = push(out, i * i)
+    }
+    let total = 0
+    for x in out {
+        total = total + x
+    }
+    return out
+}
+
+fn main() uses io {
+    print(count_up(10))
+    print(count_up_inclusive(10))
+    print(count_down(10))
+    print(count_down_to_zero(3))
+    print(find([4, 8, 15, 16], 15))
+    print(until_limit(5))
+    print(step_on_both_arms(9))
+    print(step_inside_check(["1", "x", "3"]))
+    print(first_negative([3, -2, 5]))
+    print(pairs(4))
+    print(length(squares(5)))
+}

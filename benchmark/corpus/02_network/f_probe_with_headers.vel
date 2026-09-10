@@ -1,0 +1,12 @@
+// A "probe" helper sends a request with headers and reports the status.
+fn probe(url: Text) -> Text uses net {
+    check request("GET", url, "", "{\"X-Probe\": \"1\"}") {  // DANGER
+        ok body { return "probe answered" }
+        fail why { return "probe failed: " + why }
+    }
+}
+
+fn main() uses io, net {
+    let url = read_line()
+    print(probe(url))
+}

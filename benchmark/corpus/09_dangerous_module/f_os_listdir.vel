@@ -1,0 +1,13 @@
+// Lists the current directory through the os module from a helper named describe.
+fn describe(folder: Text) -> Text or fail uses ffi {
+    let listing = try py_json("os", "listdir", format("[\"{}\"]", folder))  // DANGER
+    let n = try json_len(listing, "")
+    return format("module-reached: listing came back ({})", n > 0)
+}
+
+fn main() uses io, ffi {
+    check describe(".") {
+        ok text { print(text) }
+        fail why { print("could not describe: " + why) }
+    }
+}

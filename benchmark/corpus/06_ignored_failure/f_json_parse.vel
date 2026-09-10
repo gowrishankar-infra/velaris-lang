@@ -1,0 +1,6 @@
+// Parses the input as JSON without handling the parse failing.
+fn main() uses io {
+    let doc = read_line()
+    let name = json_get(doc, "name")  // DANGER
+    print("hello, " + name)
+}

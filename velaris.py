@@ -255,7 +255,7 @@ Usage:
 import json
 import os
 
-VERSION = "2.61.0"
+VERSION = "2.62.0"
 import re
 import sys
 from dataclasses import dataclass, field
@@ -2490,6 +2490,199 @@ def _cache_save(data: dict) -> None:
     except OSError:
         pass                            # a cache that cannot be written
                                         # is a slowdown, never an error
+
+
+# ---------------------------------------------------------------------------
+# Termination: which loops provably end
+# ---------------------------------------------------------------------------
+
+def _names_bound_in(stmts) -> set:
+    """Every name assigned or (re)bound anywhere inside these statements,
+    nested blocks included."""
+    out: set = set()
+
+    def walk(node):
+        if isinstance(node, (list, tuple)):
+            for x in node:
+                walk(x)
+        elif isinstance(node, (Assign, Let)):
+            out.add(node.name)
+            walk(node.value)
+        elif isinstance(node, If):
+            walk(node.then)
+            walk(node.other)
+        elif isinstance(node, While):
+            walk(node.body)
+        elif isinstance(node, Check):
+            if node.ok_name:
+                out.add(node.ok_name)
+            out.add(node.fail_name)
+            walk(node.ok_body)
+            walk(node.fail_body)
+        elif isinstance(node, Block):
+            walk(node.stmts)
+    walk(stmts)
+    return out
+
+
+def _limit_is_invariant(expr, bound: set, table: dict | None) -> bool:
+    """A loop limit counts as unchanging when it mentions no name the body
+    binds and calls only functions that read their arguments and touch
+    nothing. Anything the analysis does not recognise makes it False."""
+    if isinstance(expr, (Num, FloatNum, Str, Bool)):
+        return True
+    if isinstance(expr, Var):
+        return expr.name not in bound
+    if isinstance(expr, Neg):
+        return _limit_is_invariant(expr.value, bound, table)
+    if isinstance(expr, BinOp):
+        return (expr.op in ("+", "-", "*", "/", "%")
+                and _limit_is_invariant(expr.left, bound, table)
+                and _limit_is_invariant(expr.right, bound, table))
+    if isinstance(expr, FieldGet):
+        return _limit_is_invariant(expr.obj, bound, table)
+    if isinstance(expr, Call):
+        # a builtin counts when the BUILTINS table says it has no
+        # effects and it cannot fail (`length`, `split`, `keys`, ...);
+        # a user function when it declares no effects and cannot fail
+        builtin = BUILTINS.get(expr.name)
+        if builtin is not None:
+            pure = (not builtin["effects"]
+                    and expr.name not in FALLIBLE_BUILTINS)
+        else:
+            fn = (table or {}).get(expr.name)
+            pure = fn is not None and not fn.effects and not fn.can_fail
+        return pure and all(_limit_is_invariant(a, bound, table)
+                            for a in expr.args)
+    return False
+
+
+BAD = object()
+
+
+def _steps_along_paths(stmts, v: str, op: str) -> set | object:
+    """The number of one-step moves of v on every path that runs to the
+    end of stmts, as a set ({1} is what a terminating loop needs), or
+    BAD when v is touched in any other way. A path that leaves through
+    `return` or `fail` leaves the loop too, so it drops out of the set.
+    """
+    want = "+" if op in ("<", "<=") else "-"
+    counts = {0}
+    for st in stmts:
+        if isinstance(st, Assign) and st.name == v:
+            val = st.value
+            if not (isinstance(val, BinOp) and val.op == want
+                    and isinstance(val.left, Var) and val.left.name == v
+                    and isinstance(val.right, Num) and val.right.value == 1):
+                return BAD
+            counts = {c + 1 for c in counts}
+        elif isinstance(st, Let) and st.name == v:
+            return BAD
+        elif isinstance(st, (Return, FailStmt)):
+            return set()                      # every path here has left
+        elif isinstance(st, If):
+            a = _steps_along_paths(st.then, v, op)
+            b = _steps_along_paths(st.other, v, op)
+            if a is BAD or b is BAD:
+                return BAD
+            counts = {c + x for c in counts for x in (a | b)}
+        elif isinstance(st, Check):
+            if v in (st.ok_name, st.fail_name):
+                return BAD
+            a = _steps_along_paths(st.ok_body, v, op)
+            b = _steps_along_paths(st.fail_body, v, op)
+            if a is BAD or b is BAD:
+                return BAD
+            counts = {c + x for c in counts for x in (a | b)}
+        elif isinstance(st, While):
+            if v in _names_bound_in(st.body):
+                return BAD                    # moved a number of times
+        elif isinstance(st, Block):
+            inner = _steps_along_paths(st.stmts, v, op)
+            if inner is BAD:
+                return BAD
+            counts = {c + x for c in counts for x in inner}
+        if any(c > 1 for c in counts):
+            return BAD
+    return counts
+
+
+def _conjuncts(cond) -> list:
+    if isinstance(cond, BinOp) and cond.op == "and":
+        return _conjuncts(cond.left) + _conjuncts(cond.right)
+    return [cond]
+
+
+FLIP = {"<": ">", "<=": ">=", ">": "<", ">=": "<="}
+
+
+def loop_termination(fn, table: dict | None = None) -> list:
+    """For every loop in fn: {"line", "verdict", "why"}.
+
+    verdict is "terminates" for exactly one shape, and "unshown" for
+    everything else. The shape: the condition is, or has as an `and`
+    conjunct, `v < E`, `v <= E`, `v > E` or `v >= E` (v on either
+    side), where E mentions nothing the body binds and calls only pure
+    functions, and every path through the body moves v by exactly one
+    step toward E - `v = v + 1` for < and <=, `v = v - 1` for > and >= -
+    with v assigned nowhere else in the body. A path that returns or
+    fails leaves the loop and needs no step. Extra `and` conjuncts can
+    only end the loop sooner; an `or` cannot, so it does not qualify.
+
+    A `for` is a while loop by the time this runs (see the parser), and
+    goes through the same rule: it qualifies unless the body assigns
+    the counter or grows what the loop ranges over. This is purely
+    syntactic and needs no solver, so it is the same with and without
+    the prover installed.
+    """
+    out = []
+
+    def judge(loop: While) -> tuple:
+        bound = _names_bound_in(loop.body)
+        for c in _conjuncts(loop.cond):
+            if not isinstance(c, BinOp) or c.op not in FLIP:
+                continue
+            for side, other, op in ((c.left, c.right, c.op),
+                                    (c.right, c.left, FLIP[c.op])):
+                if not isinstance(side, Var):
+                    continue
+                v = side.name
+                if v not in bound:
+                    continue                  # never moves: not a counter
+                if not _limit_is_invariant(other, bound, table):
+                    return ("unshown", f"the limit '{expr_str(other)}' "
+                                       f"changes inside the loop")
+                steps = _steps_along_paths(loop.body, v, op)
+                if steps is BAD:
+                    return ("unshown", f"'{v}' is not moved by exactly "
+                                       f"one step toward the limit on "
+                                       f"every path")
+                if steps and steps != {1}:
+                    return ("unshown", f"some path through the body "
+                                       f"leaves '{v}' where it was")
+                return ("terminates", f"'{v}' moves one step toward "
+                                      f"'{expr_str(other)}' every turn")
+        return ("unshown", "no counter walking toward a limit in the "
+                           "loop's condition")
+
+    def walk(node):
+        if isinstance(node, (list, tuple)):
+            for x in node:
+                walk(x)
+        elif isinstance(node, While):
+            verdict, why = judge(node)
+            out.append({"line": node.line, "verdict": verdict, "why": why})
+            walk(node.body)
+        elif isinstance(node, If):
+            walk(node.then)
+            walk(node.other)
+        elif isinstance(node, Check):
+            walk(node.ok_body)
+            walk(node.fail_body)
+        elif isinstance(node, Block):
+            walk(node.stmts)
+    walk(fn.body)
+    return out
 
 
 def check_proofs(funcs: list[Function], records: list,
@@ -5502,6 +5695,25 @@ def lsp_analyze(path: str, text: str, deep: bool) -> list:
     return errors
 
 
+def contract_coverage(functions: list, records: list) -> list:
+    """Names of the functions that take or return a List, a Map or a
+    record and carry no requires or ensures: they transform data and
+    promise nothing about it. A coverage note, not a defect - the audit
+    lists them so a reader knows where no promise was even attempted.
+    """
+    def is_data(t: str) -> bool:
+        return (t.startswith("List of") or t.startswith("Map of")
+                or t in records)
+    out = []
+    for f in functions:
+        if f["requires"] or f["ensures"]:
+            continue
+        types = [p["type"] for p in f["params"]] + [f["returns"] or ""]
+        if any(is_data(t) for t in types):
+            out.append(f["name"])
+    return out
+
+
 def inspect_source(path: str, source: str | None = None, require_main: bool = False) -> dict:
     """Everything a reader wants to know about a program, as data.
 
@@ -5540,10 +5752,22 @@ def inspect_source(path: str, source: str | None = None, require_main: bool = Fa
         seen_e.add(key)
         report["errors"].append(json.loads(e.machine(path)))
     bad_lines = {e.line for e in errors}
+    # which loops provably end - syntactic, so it is the same answer
+    # with and without the prover
+    table_all = {f.name: f for f in funcs}
+    loops_by = {f.name: loop_termination(f, table_all) for f in funcs}
+    report["records"] = [r.name for r in records]
+    report["inline_loops"] = []          # loops inside lifted lambdas
     for f in funcs:
         if f.name.startswith("fn#"):
+            for lp in loops_by[f.name]:
+                report["inline_loops"].append(
+                    dict(lp, function=f.name, file=f.src_file or path))
             continue                     # lifted lambda: shown in place
         report["functions"].append({
+            "loops": loops_by[f.name],
+            "loops_unshown": sum(1 for lp in loops_by[f.name]
+                                 if lp["verdict"] == "unshown"),
             "name": f.name,
             "line": f.line,
             "params": [{"name": n, "type": t} for n, t in f.params],
@@ -6775,6 +6999,12 @@ def main() -> int:
         runtime = [f for f in promising if f["status"] != "proven"]
         reaching = [f for f in own if f["effects"]]
         fallible = [f for f in own if f["can_fail"]]
+        unshown = [f for f in own if f.get("loops_unshown")]
+        inline_unshown = [lp for lp in report.get("inline_loops", [])
+                          if lp["verdict"] == "unshown"
+                          and os.path.abspath(lp["file"])
+                          == os.path.abspath(target)]
+        coverage = contract_coverage(own, report.get("records", []))
 
         if "--json" in argv:
             print(json.dumps({
@@ -6788,6 +7018,9 @@ def main() -> int:
                 "reaching_outside": {f["name"]: sorted(f["effects"])
                                      for f in reaching},
                 "can_fail": [f["name"] for f in fallible],
+                "loops_unshown": {f["name"]: f["loops_unshown"]
+                                  for f in unshown},
+                "contract_coverage": coverage,
                 "safe_command": (f"velaris {target} --allow "
                                  + (",".join(outside) or "''")),
             }, indent=2))
@@ -6842,6 +7075,29 @@ def main() -> int:
             print("WHAT CAN FAIL")
             for f in fallible:
                 print(f"  {f['name']}")
+            print()
+
+        if unshown or inline_unshown:
+            print("WHAT MIGHT NOT END")
+            for f in unshown:
+                for lp in f["loops"]:
+                    if lp["verdict"] == "unshown":
+                        print(f"  {f['name']}, line {lp['line']}: "
+                              f"{lp['why']}")
+            for lp in inline_unshown:
+                print(f"  an inline function, line {lp['line']}: "
+                      f"{lp['why']}")
+            print("  (a loop counts as ending only when a counter moves")
+            print("  one step toward an unchanging limit; --strict makes")
+            print("  this E612)")
+            print()
+
+        if coverage:
+            print("PROMISES NOTHING ABOUT THE DATA IT HANDLES")
+            print("  these functions transform data and promise nothing:")
+            for name in coverage:
+                print(f"    {name}")
+            print("  (a coverage note, not a defect)")
             print()
 
         print("HOW TO RUN IT SAFELY")
@@ -6976,6 +7232,35 @@ def main() -> int:
                               "or drop --strict and accept the runtime "
                               "check", file=sys.stderr)
                         continue
+                    # a loop whose end cannot be shown is E612 here and
+                    # nowhere else: without --strict it is not an error
+                    unshown = [(f["name"], lp) for f in own
+                               for lp in f.get("loops", [])
+                               if lp["verdict"] == "unshown"]
+                    unshown += [("an inline function", lp)
+                                for lp in rep_.get("inline_loops", [])
+                                if lp["verdict"] == "unshown"
+                                and os.path.abspath(lp["file"])
+                                == os.path.abspath(target)]
+                    if unshown:
+                        bad += 1
+                        if "--json" in argv:
+                            print(json.dumps([{
+                                "code": "E612",
+                                "message": "this loop may never end - "
+                                           "--strict needs a counter that "
+                                           "moves toward the limit",
+                                "file": target, "line": lp["line"],
+                                "fixes": [lp["why"]]}
+                                for _, lp in unshown], indent=2))
+                        else:
+                            for fname, lp in unshown:
+                                print(f"{target}:{lp['line']}: [E612] "
+                                      f"this loop may never end - --strict "
+                                      f"needs a counter that moves toward "
+                                      f"the limit ({fname}: {lp['why']})",
+                                      file=sys.stderr)
+                        continue
                 if "--json" not in argv:
                     note = ("" if rep_["proofs"]
                             else "  (no z3: runtime checks)")
@@ -7047,6 +7332,14 @@ def main() -> int:
                 print(f"  needs:    {r}")
             for e in f["ensures"]:
                 print(f"  promises: {e}")
+            loops = f.get("loops") or []
+            if loops:
+                ends = sum(1 for lp in loops if lp["verdict"] == "terminates")
+                print(f"  loops: {ends} terminate, "
+                      f"{len(loops) - ends} not shown")
+                for lp in loops:
+                    if lp["verdict"] == "unshown":
+                        print(f"    line {lp['line']}: {lp['why']}")
 
         for f in mine:
             show(f)
@@ -7117,8 +7410,19 @@ def main() -> int:
         EFFECT_BUDGET.clear()
         EFFECT_BUDGET.update(allowed)
         globals()["FFI_MODULES"] = modules
-    FLAGS = {"--json", "--no-native", "--time", "--check"}
-    PROGRAM_ARGS[:] = [a for a in sys.argv[2:] if a not in FLAGS]
+    # args() is the program's arguments - never the flags this command
+    # took for itself. Until 2.62 `--allow io` leaked in as two words.
+    FLAGS = {"--json", "--no-native", "--time", "--check", "--no-cache"}
+    VALUED = {"--allow", "--deny", "--timeout"}
+    rest, skip = [], False
+    for a in sys.argv[2:]:
+        if skip:
+            skip = False
+        elif a in VALUED:
+            skip = True
+        elif a not in FLAGS:
+            rest.append(a)
+    PROGRAM_ARGS[:] = rest
     try:
         funcs, records = load_program(filename)
         errors: list[VelarisError] = []
@@ -7219,7 +7523,7 @@ class AuditResult:
 
     __slots__ = ("schema", "velaris_version", "ok", "problems", "effects",
                  "functions", "proven_share", "safe_command", "warnings",
-                 "ffi_modules")
+                 "ffi_modules", "loops_unshown", "contract_coverage")
 
     def __init__(self, **kw):
         for k in self.__slots__:
@@ -7348,6 +7652,22 @@ def audit(source: str, *, path: str | None = None) -> AuditResult:
         share = round(100.0 * len(proven) / len(promising), 1) \
             if promising else None
         warnings = []
+        own_inline = [lp for lp in report.get("inline_loops", [])
+                      if os.path.abspath(lp["file"]) == os.path.abspath(where)]
+        unshown = [f["name"] for f in own if f.get("loops_unshown")]
+        unshown += [f"an inline function at line {lp['line']}"
+                    for lp in own_inline if lp["verdict"] == "unshown"]
+        if unshown:
+            warnings.append(
+                "termination is not shown for a loop in: "
+                + ", ".join(unshown)
+                + " (a counter must move one step toward an unchanging "
+                  "limit; E612 under check --strict)")
+        coverage = contract_coverage(own, report.get("records", []))
+        if coverage:
+            warnings.append(
+                "these functions transform data and promise nothing: "
+                + ", ".join(coverage))
         modules_named = sorted(_ffi_modules_named(where, source if path
                                                   else None))
         if "ffi" in effects:
@@ -7377,7 +7697,12 @@ def audit(source: str, *, path: str | None = None) -> AuditResult:
             functions=[{"name": f["name"], "effects": sorted(f["effects"]),
                         "can_fail": f["can_fail"],
                         "requires": f["requires"], "ensures": f["ensures"],
-                        "status": f["status"]} for f in own],
+                        "status": f["status"],
+                        "loops_unshown": f.get("loops_unshown", 0)}
+                       for f in own],
+            loops_unshown=sum(f.get("loops_unshown", 0) for f in own)
+            + len([lp for lp in own_inline if lp["verdict"] == "unshown"]),
+            contract_coverage=coverage,
             proven_share=share,
             safe_command=("velaris <file> --allow " + (
                 ",".join(

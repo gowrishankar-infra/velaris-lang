@@ -1,0 +1,21 @@
+// Sums square roots in a counted loop through the host's math library, and declares ffi:math.
+fn root(x: Int) -> Float or fail uses ffi {
+    return try py_float("math", "sqrt", [to_text(x)])
+}
+
+fn sum_of_roots(n: Int) -> Float or fail uses ffi {
+    let total = 0.0
+    let i = 1
+    while i <= n {
+        total = total + try root(i)
+        i = i + 1
+    }
+    return total
+}
+
+fn main() uses io, ffi {
+    check sum_of_roots(10) {
+        ok total { print(format("about {}", round(total * 1000.0))) }
+        fail why { print("no sqrt: " + why) }
+    }
+}

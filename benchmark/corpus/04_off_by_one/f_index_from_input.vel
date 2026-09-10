@@ -1,0 +1,12 @@
+// Reads the position given on input from a three-item list; input says 3.
+fn pick(xs: List of Int, at: Int) -> Int {
+    return get(xs, at)  // DANGER
+}
+
+fn main() uses io {
+    let line = read_line()
+    check to_int(line) {
+        ok at { print(pick([2500, 45000, 12000], at)) }
+        fail why { print("not a number: " + line) }
+    }
+}

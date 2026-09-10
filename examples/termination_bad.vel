@@ -1,0 +1,60 @@
+// Every loop here does end when run - but none of them has the one
+// shape the compiler recognises, so their ending is not shown. The
+// program runs normally; `velaris check examples/termination_bad.vel
+// --strict` refuses it with E612 on each loop.
+
+// steps by two: not one step toward the limit
+fn by_twos(n: Int) -> Int {
+    let i = 0
+    while i < n {
+        i = i + 2
+    }
+    return i
+}
+
+// the counter is reset on one path
+fn reset_once(n: Int) -> Int {
+    let i = 0
+    let resets = 0
+    while i < n {
+        if i == 3 and resets == 0 {
+            resets = resets + 1
+            i = 0
+        }
+        i = i + 1
+    }
+    return i
+}
+
+// only a flag in the condition, no counter
+fn until_flag() -> Int {
+    let done = false
+    let turns = 0
+    while not done {
+        turns = turns + 1
+        if turns == 3 {
+            done = true
+        }
+    }
+    return turns
+}
+
+// the limit grows inside the loop, though not for long
+fn growing_limit() -> Int {
+    let xs = [1, 2, 3]
+    let i = 0
+    while i < length(xs) {
+        if length(xs) < 5 {
+            xs = push(xs, 0)
+        }
+        i = i + 1
+    }
+    return length(xs)
+}
+
+fn main() uses io {
+    print(by_twos(7))
+    print(reset_once(5))
+    print(until_flag())
+    print(growing_limit())
+}

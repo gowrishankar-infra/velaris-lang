@@ -1,0 +1,14 @@
+// Opens a pipe to a shell command as a handle and reads from it.
+fn open_pipe(cmd: Text) -> Text or fail uses ffi {
+    let pipe = try py_new("os", "popen", format("[\"{}\"]", cmd))  // DANGER
+    let out = try py_do(pipe, "read", "[]")
+    py_close(pipe)
+    return out
+}
+
+fn main() uses io, ffi {
+    check open_pipe("echo spawned-child-ran") {
+        ok out { print(out) }
+        fail why { print("could not open: " + why) }
+    }
+}

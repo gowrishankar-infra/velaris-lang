@@ -223,6 +223,43 @@ proof for that function is abandoned and its promises fall back to
 runtime checks. Proving with a dropped premise could manufacture a
 counterexample that is not real, so it is never done.
 
+### 9.5 Which loops are shown to end
+
+Every loop is given one of two verdicts, by a syntactic rule that
+needs no solver and so answers the same with and without the prover:
+
+**terminates** - the condition is, or contains as an `and` conjunct,
+`v < E`, `v <= E`, `v > E` or `v >= E` (the counter `v` may stand on
+either side), where
+
+- `E` mentions no name the body assigns or binds, and calls only
+  functions that read their arguments and touch nothing (`length` and
+  the like, or a user function with no effects that cannot fail); and
+- every path through the body that reaches its end moves `v` by exactly
+  one step toward `E` - `v = v + 1` for `<` and `<=`, `v = v - 1` for
+  `>` and `>=` - and `v` is assigned nowhere else in the body, nested
+  loops included. A path that leaves through `return` or `fail` leaves
+  the loop and needs no step.
+
+**unshown** - every other shape. A step of two, a step on one arm of an
+`if` only, a counter reset on some path, a limit the body changes, a
+condition with only a flag, an `or` in the condition, a counter moved
+inside a nested loop: all unshown, whether or not the loop happens to
+end when run.
+
+A `for` loop is a `while` loop by the time the rule runs (the parser
+rewrites it; ARCHITECTURE.md) and goes through it unchanged: `for i in a to b` is shown to end unless the body
+assigns `i` or changes `b`, and `for x in xs` unless the body assigns
+`xs`.
+
+The verdict is reported by `velaris explain` ("loops: 2 terminate, 1 not
+shown") and by `velaris audit` (`loops_unshown` per function, and a
+warning naming the functions). It is an error only under
+`velaris check --strict`, as E612; without the flag a loop whose end is
+not shown is not a problem, and the time limit in `velaris.run` remains
+the guard against a loop that never ends. The compiler never reports
+`terminates` for a shape outside the rule above.
+
 ## 10. Modules
 
     import "std.vel"                 // names merge into this file

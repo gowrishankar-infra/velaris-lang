@@ -1,0 +1,16 @@
+// The path travels inside a record; a helper named run_job writes it.
+record Job {
+    path: Text
+    text: Text
+}
+
+fn run_job(job: Job) -> Int uses fs {
+    write_file(job.path, job.text)  // DANGER
+    return length(job.text)
+}
+
+fn main() uses io, fs {
+    let path = read_line()
+    let job = Job(path: path, text: "3 expenses, total 59500")
+    print(format("wrote {} characters", run_job(job)))
+}
