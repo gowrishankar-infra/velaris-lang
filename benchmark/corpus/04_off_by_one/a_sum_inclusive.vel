@@ -1,0 +1,14 @@
+// Sums a list with "<=" where "<" was meant, reading one past the end.
+fn total(xs: List of Int) -> Int {
+    let sum = 0
+    let i = 0
+    while i <= length(xs) {
+        sum = sum + get(xs, i)  // DANGER
+        i = i + 1
+    }
+    return sum
+}
+
+fn main() uses io {
+    print(total([2500, 45000, 12000]))
+}

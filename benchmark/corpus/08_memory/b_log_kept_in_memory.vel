@@ -1,0 +1,15 @@
+// An in-memory event log that grows on every iteration and is never trimmed.
+record Event {
+    id: Int
+    text: Text
+}
+
+fn main() uses io {
+    let log: List of Event = []
+    let i = 0
+    while true {
+        log = push(log, Event(id: i, text: format("event {} at {}", i, i * 7 % 97)))  // DANGER
+        i = i + 1
+    }
+    print(length(log))
+}

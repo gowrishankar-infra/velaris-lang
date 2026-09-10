@@ -1,0 +1,12 @@
+// Splits the same line into fields again and again and keeps every copy.
+fn main() uses io {
+    let line = "1,2,3,4,5,6,7,8,9,10"
+    for k in 0 to 2 {
+        line = line + "," + line
+    }
+    let rows: List of List of Text = []
+    while true {
+        rows = push(rows, split(line, ","))  // DANGER
+    }
+    print(length(rows))
+}

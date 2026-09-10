@@ -1,0 +1,13 @@
+// A "log" helper called from a loop writes to disk on every item.
+fn log_line(path: Text, line: Text) uses fs {
+    write_file(path, line)  // DANGER
+}
+
+fn main() uses io, fs {
+    let path = read_line()
+    let items = ["chai", "book", "auto"]
+    for item in items {
+        log_line(path, "processed " + item)
+    }
+    print(format("{} items", length(items)))
+}

@@ -1,5 +1,51 @@
 # Velaris changelog
 
+## 2.61 - A table anyone can rerun
+Every claim this project makes about catching what a model writes has
+been a claim. `benchmark/` turns it into a table that one command
+regenerates: `python benchmark/run.py`. Thirty programs in ten
+categories - a file write hidden in a helper, a network call hidden in
+a helper, division by input, an off-by-one read, integer overflow, an
+ignored failure, an infinite loop, runaway memory, reaching subprocess
+or os.system, and three correct programs that must not be flagged -
+each written three times with the same behaviour, in Velaris, in
+JavaScript for Deno and in plain Python. The harness runs every program
+through `check` + `audit` + `run` under the budget the task needs (io,
+plus `ffi:math` for one control program, with timeout 5 and
+max_memory_mb 256), through `deno run --no-prompt` with no flags, and
+through a Python subprocess with the same timeout, and records
+caught-before-run, caught-during-run, missed, not-applicable,
+false-positive or tool-absent, with the evidence in the cell.
+
+On the machine that produced the committed RESULTS.md (Windows, prover
+present, Deno 2.9.6): of 27 dangerous programs Velaris caught 24 - 15
+before running and 9 while running - and missed 3; Deno caught 13 and
+Python 13; no tool flagged a control program. The three misses are in
+the corpus on purpose and are named in the results: an off-by-one that
+stops early instead of reading past the end (no contract, so nothing
+to refuse), a slow but finite loop (ends before the deadline), and a
+program that prints `rm -rf build` for its caller (the only effect is
+io). Deno's `no-unreachable` lint flags the three memory-growth
+programs before running, where Velaris only stops them while running;
+and on Windows it stops them with the timeout, not the memory cap,
+because the cap is not enforced there and the interpreter allocates
+slowly. Both are in the table.
+
+Two things learned while building it. Under `--allow`, `args()` hands
+the budget words to the program as well (`['--allow', 'io', ...]`), so
+the corpus reads its input from stdin; that is a compiler bug to fix in
+its own release, not here. And a Deno permission denial is an ordinary
+exception, so a `fetch` inside `try/catch` exits 0 - the harness had to
+watch the socket rather than trust the exit status. A Velaris refusal
+cannot be caught by the program, which is the difference the benchmark
+exists to show.
+
+`benchmark/README.md` has the rules and the exact commands so a
+stranger can rerun it and dispute a row. CI runs `run.py --quick
+--check` on the legs with the prover, with Deno absent there; a verdict
+that changes between compiler versions fails the build and names the
+row.
+
 ## 2.60 - The ffi cliff becomes a permission
 Every review of this project, from three model families and one
 automated reviewer, raised the same caveat: `allow ffi` grants

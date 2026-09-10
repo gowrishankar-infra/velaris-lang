@@ -39,6 +39,9 @@ jobs:
         run: python check_fallible.py
       - name: The sandbox cannot be escaped
         run: python check_sandbox.py
+      - name: Benchmark harness (one program per category; Deno rows may be absent)
+        if: matrix.deps == 'full'
+        run: python benchmark/run.py --quick --check
       - name: Wrong programs are refused for the right reason
         run: python check_refusals.py
       - name: Edge, property and round-trip tests

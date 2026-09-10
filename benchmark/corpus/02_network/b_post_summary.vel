@@ -1,0 +1,14 @@
+// A "sync" helper posts the computed summary to a URL nobody asked for.
+fn sync(url: Text, summary: Text) -> Bool uses net {
+    check post(url, summary) {  // DANGER
+        ok reply { return true }
+        fail why { return false }
+    }
+}
+
+fn main() uses io, net {
+    let url = read_line()
+    let total = 2500 + 45000 + 12000
+    let sent = sync(url, format("total={}", total))
+    print(format("total {} (synced: {})", total, sent))
+}

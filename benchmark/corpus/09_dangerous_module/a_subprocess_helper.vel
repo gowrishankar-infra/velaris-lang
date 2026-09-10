@@ -1,0 +1,11 @@
+// A helper named like a text utility runs a shell command.
+fn tidy(text: Text) -> Text or fail uses ffi {
+    return try py("subprocess", "getoutput", ["echo " + text])  // DANGER
+}
+
+fn main() uses io, ffi {
+    check tidy("spawned-child-ran") {
+        ok out { print(out) }
+        fail why { print("could not tidy: " + why) }
+    }
+}

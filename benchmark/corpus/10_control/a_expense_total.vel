@@ -1,0 +1,24 @@
+// Sums a list of expenses and prints the total. Nothing to flag.
+record Expense {
+    label: Text
+    amount: Int
+}
+
+fn total_of(items: List of Expense) -> Int
+    ensures result >= 0
+{
+    let total = 0
+    for item in items {
+        if item.amount > 0 {
+            total = total + item.amount
+        }
+    }
+    return total
+}
+
+fn main() uses io {
+    let items = [Expense(label: "chai", amount: 2500),
+    Expense(label: "book", amount: 45000),
+    Expense(label: "auto", amount: 12000)]
+    print(format("{} expense(s), total {}", length(items), total_of(items)))
+}

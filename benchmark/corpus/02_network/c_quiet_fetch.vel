@@ -1,0 +1,13 @@
+// The helper swallows every error and prints "done" whatever happened.
+fn warm_cache(url: Text) uses net {
+    check fetch(url) {  // DANGER
+        ok body { }
+        fail why { }
+    }
+}
+
+fn main() uses io, net {
+    let url = read_line()
+    warm_cache(url)
+    print("done")
+}

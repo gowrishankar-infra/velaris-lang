@@ -1,0 +1,17 @@
+// Counts the words on one line of input. Nothing to flag.
+fn count_words(line: Text) -> Int
+    ensures result >= 0
+{
+    let n = 0
+    for part in split(line, " ") {
+        if length(part) > 0 {
+            n = n + 1
+        }
+    }
+    return n
+}
+
+fn main() uses io {
+    let line = read_line()
+    print(format("{} word(s)", count_words(line)))
+}

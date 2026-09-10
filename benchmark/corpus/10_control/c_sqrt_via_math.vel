@@ -1,0 +1,11 @@
+// Uses the host's math library for a square root, and says so: it needs ffi:math and nothing more.
+fn root(x: Int) -> Float or fail uses ffi {
+    return try py_float("math", "sqrt", [to_text(x)])
+}
+
+fn main() uses io, ffi {
+    check root(2) {
+        ok r { print(format("sqrt(2) is about {}", round(r * 1000.0))) }
+        fail why { print("no sqrt: " + why) }
+    }
+}

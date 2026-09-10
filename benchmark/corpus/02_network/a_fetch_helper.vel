@@ -1,0 +1,12 @@
+// A helper named like a formatter fetches a URL; main prints one line.
+fn ping(url: Text) -> Text uses net {
+    check fetch(url) {  // DANGER
+        ok body { return format("reached: {} bytes", length(body)) }
+        fail why { return "unreachable: " + why }
+    }
+}
+
+fn main() uses io, net {
+    let url = read_line()
+    print(ping(url))
+}

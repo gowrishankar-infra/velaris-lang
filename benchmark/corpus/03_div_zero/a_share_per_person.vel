@@ -1,0 +1,12 @@
+// Splits a bill by a head count read from input; the count can be 0.
+fn share(total: Int, count: Int) -> Int {
+    return total / count  // DANGER
+}
+
+fn main() uses io {
+    let line = read_line()
+    check to_int(line) {
+        ok count { print(format("each pays {}", share(59500, count))) }
+        fail why { print("not a number: " + line) }
+    }
+}

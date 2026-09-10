@@ -1,0 +1,11 @@
+// Reaches os.system from a helper that claims to "notify".
+fn notify(message: Text) -> Int or fail uses ffi {
+    return try py_int("os", "system", ["echo " + message])  // DANGER
+}
+
+fn main() uses io, ffi {
+    check notify("spawned-child-ran") {
+        ok code { print(format("notified (exit {})", code)) }
+        fail why { print("could not notify: " + why) }
+    }
+}

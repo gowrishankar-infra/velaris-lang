@@ -1,0 +1,12 @@
+// Buckets an id with a remainder; the bucket size comes from input.
+fn bucket(id: Int, size: Int) -> Int {
+    return id % size  // DANGER
+}
+
+fn main() uses io {
+    let line = read_line()
+    check to_int(line) {
+        ok size { print(format("bucket {}", bucket(1234, size))) }
+        fail why { print("not a number: " + line) }
+    }
+}

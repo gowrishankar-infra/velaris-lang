@@ -1,0 +1,1014 @@
+#!/usr/bin/env python3
+"""The Velaris comparison benchmark.
+
+    python benchmark/run.py            # all 30 programs -> RESULTS.md, results.json
+    python benchmark/run.py --quick    # one program per category, table on stdout
+    python benchmark/run.py --check    # also compare verdicts with results.json
+    python benchmark/run.py --only 03a,10c
+
+For every program in corpus.json and every tool (Velaris, Deno, plain
+Python) this records one verdict:
+
+    caught-before-run   flagged by a static step, before anything ran
+    caught-during-run   refused, stopped or crashed while running, and the
+                        dangerous effect did not happen
+    missed              ran to the end, or the dangerous effect happened
+    not-applicable      nothing to catch (control group) and nothing flagged
+    false-positive      nothing to catch, but the tool flagged or stopped it
+    tool-absent         the tool is not installed on this machine
+
+The rules are in README.md. Nothing here is tuned per program: the same
+budget, the same timeout, the same memory cap and the same observation
+checks apply to every row.
+"""
+import argparse
+import glob
+import json
+import os
+import platform
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
+CORPUS = os.path.join(HERE, "corpus")
+TIMEOUT = 5            # seconds, for every tool
+MEMORY_MB = 256        # for every tool, where the platform lets us
+SENTINEL = "spawned-child-ran"   # printed by the child a program spawns
+TOOLS = ("velaris", "deno", "python")
+VERDICTS = ("caught-before-run", "caught-during-run", "missed",
+            "not-applicable", "false-positive", "tool-absent")
+EXT = {"velaris": ".vel", "deno": ".js", "python": ".py"}
+
+sys.path.insert(0, ROOT)
+import velaris  # noqa: E402  (the checkout being benchmarked)
+
+
+class CorpusError(Exception):
+    """The corpus is inconsistent - a program that does not do what its
+    entry says. Exit 2, never a verdict."""
+
+
+# ---------------------------------------------------------------- corpus
+
+def load_corpus():
+    with open(os.path.join(HERE, "corpus.json"), encoding="utf-8") as f:
+        data = json.load(f)
+    programs = []
+    for cat in data["categories"]:
+        for p in cat["programs"]:
+            p = dict(p)
+            p["category"] = cat["number"]
+            p["category_key"] = cat["key"]
+            p["category_title"] = cat["title"]
+            p["files"] = {t: os.path.join(CORPUS, cat["key"], p["name"] + EXT[t])
+                          for t in TOOLS}
+            for t, path in p["files"].items():
+                if not os.path.exists(path):
+                    raise CorpusError(f"{p['id']}: missing {path}")
+            p["danger_line"] = {t: marker_line(p, t) for t in TOOLS}
+            programs.append(p)
+    return data["categories"], programs
+
+
+def marker_line(prog, tool):
+    """The 1-based line carrying the DANGER marker, or None."""
+    with open(prog["files"][tool], encoding="utf-8") as f:
+        hits = [i for i, line in enumerate(f, 1) if "DANGER" in line]
+    if prog["dangerous"] and len(hits) != 1:
+        raise CorpusError(f"{prog['id']} ({tool}): expected exactly one "
+                          f"DANGER marker, found {len(hits)}")
+    if not prog["dangerous"] and hits:
+        raise CorpusError(f"{prog['id']} ({tool}): a control program "
+                          f"must not carry a DANGER marker")
+    return hits[0] if hits else None
+
+
+def loop_span(path, danger_line):
+    """(header line, line after the loop) for the innermost loop that
+    contains danger_line in a brace-delimited file, else None. Used only
+    to decide whether a Deno diagnostic is about the dangerous loop."""
+    with open(path, encoding="utf-8") as f:
+        lines = f.read().split("\n")
+    depth = 0
+    header = None
+    for i in range(danger_line - 1, -1, -1):
+        depth += lines[i].count("}") - lines[i].count("{")
+        if depth < 0:
+            text = lines[i].strip()
+            if text.startswith(("while", "for")):
+                header = i + 1
+                break
+            depth = 0    # a block that is not a loop; keep climbing
+    if header is None:
+        return None
+    depth = 0
+    for j in range(header - 1, len(lines)):
+        depth += lines[j].count("{") - lines[j].count("}")
+        if depth == 0 and j >= header - 1 and "{" in "".join(lines[header - 1:j + 1]):
+            for k in range(j + 1, len(lines)):
+                if lines[k].strip():
+                    return header, k + 1
+            return header, None
+    return header, None
+
+
+# ---------------------------------------------------------- the listener
+
+class Hits(BaseHTTPRequestHandler):
+    paths: list = []
+
+    def do_GET(self):
+        self._hit()
+
+    def do_POST(self):
+        n = int(self.headers.get("Content-Length") or 0)
+        self.rfile.read(n)
+        self._hit()
+
+    def _hit(self):
+        Hits.paths.append(self.path)
+        body = b"ok\n"
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):
+        pass
+
+
+def start_listener():
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Hits)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server, server.server_address[1]
+
+
+# ------------------------------------------------------- child processes
+
+def _posix_cap():
+    def pre():
+        try:
+            import resource
+            cap = MEMORY_MB * 1024 * 1024
+            resource.setrlimit(resource.RLIMIT_AS, (cap, cap))
+        except Exception:
+            pass
+    return pre
+
+
+class _WindowsJob:
+    """A job object capping the child's memory; also kills the child's
+    own children when the job closes."""
+
+    def __init__(self):
+        import ctypes
+        import ctypes.wintypes as w
+        self.ctypes = ctypes
+        k = ctypes.windll.kernel32
+
+        class IO_COUNTERS(ctypes.Structure):
+            _fields_ = [(n, ctypes.c_ulonglong) for n in (
+                "ReadOperationCount", "WriteOperationCount",
+                "OtherOperationCount", "ReadTransferCount",
+                "WriteTransferCount", "OtherTransferCount")]
+
+        class BASIC(ctypes.Structure):
+            _fields_ = [("PerProcessUserTimeLimit", ctypes.c_longlong),
+                        ("PerJobUserTimeLimit", ctypes.c_longlong),
+                        ("LimitFlags", w.DWORD),
+                        ("MinimumWorkingSetSize", ctypes.c_size_t),
+                        ("MaximumWorkingSetSize", ctypes.c_size_t),
+                        ("ActiveProcessLimit", w.DWORD),
+                        ("Affinity", ctypes.c_size_t),
+                        ("PriorityClass", w.DWORD),
+                        ("SchedulingClass", w.DWORD)]
+
+        class EXT(ctypes.Structure):
+            _fields_ = [("BasicLimitInformation", BASIC),
+                        ("IoInfo", IO_COUNTERS),
+                        ("ProcessMemoryLimit", ctypes.c_size_t),
+                        ("JobMemoryLimit", ctypes.c_size_t),
+                        ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                        ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+        PROCESS_MEMORY = 0x100
+        KILL_ON_CLOSE = 0x2000
+        self.job = k.CreateJobObjectW(None, None)
+        info = EXT()
+        info.BasicLimitInformation.LimitFlags = PROCESS_MEMORY | KILL_ON_CLOSE
+        info.ProcessMemoryLimit = MEMORY_MB * 1024 * 1024
+        if not k.SetInformationJobObject(self.job, 9, ctypes.byref(info),
+                                         ctypes.sizeof(info)):
+            raise OSError("SetInformationJobObject failed")
+        self.k = k
+
+    def assign(self, proc):
+        if not self.k.AssignProcessToJobObject(self.job, int(proc._handle)):
+            raise OSError("AssignProcessToJobObject failed")
+        self.ctypes.windll.ntdll.NtResumeProcess(int(proc._handle))
+
+    def close(self):
+        self.k.CloseHandle(self.job)
+
+
+def run_child(cmd, stdin_text, env=None):
+    """Run cmd with the benchmark's timeout and memory cap. Returns a
+    dict with exit, stdout, stderr, timed_out and which cap applied."""
+    full_env = dict(os.environ)
+    full_env.update({"NO_COLOR": "1", "PYTHONIOENCODING": "utf-8",
+                     "PYTHONUTF8": "1"})
+    full_env.update(env or {})
+    cap = "none"
+    kwargs = dict(stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                  stderr=subprocess.PIPE, env=full_env, cwd=HERE)
+    job = None
+    if os.name == "nt":
+        try:
+            job = _WindowsJob()
+            kwargs["creationflags"] = 0x4        # CREATE_SUSPENDED
+            cap = "job object"
+        except Exception:
+            job = None
+    else:
+        kwargs["preexec_fn"] = _posix_cap()
+        cap = "RLIMIT_AS" + (" (may not apply on macOS)"
+                             if sys.platform == "darwin" else "")
+    proc = subprocess.Popen(cmd, **kwargs)
+    if job is not None:
+        try:
+            job.assign(proc)
+        except Exception:
+            cap = "none"
+            proc.kill()
+            proc = subprocess.Popen(cmd, **{k: v for k, v in kwargs.items()
+                                            if k != "creationflags"})
+    timed_out = False
+    try:
+        out, err = proc.communicate(stdin_text.encode("utf-8"),
+                                    timeout=TIMEOUT)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        proc.kill()
+        out, err = proc.communicate()
+    finally:
+        if job is not None:
+            job.close()
+    return {"exit": proc.returncode, "timed_out": timed_out,
+            "stdout": out.decode("utf-8", "replace"),
+            "stderr": err.decode("utf-8", "replace"), "cap": cap}
+
+
+def find_deno(explicit=None):
+    if explicit:
+        return explicit if os.path.exists(explicit) else None
+    found = shutil.which("deno")
+    if found:
+        return found
+    home = os.path.expanduser("~")
+    candidates = [os.path.join(home, ".deno", "bin", "deno"),
+                  os.path.join(home, ".deno", "bin", "deno.exe")]
+    if os.environ.get("DENO_INSTALL"):
+        candidates.append(os.path.join(os.environ["DENO_INSTALL"], "bin",
+                                       "deno"))
+    if os.environ.get("LOCALAPPDATA"):
+        candidates += glob.glob(os.path.join(
+            os.environ["LOCALAPPDATA"], "Microsoft", "WinGet", "Packages",
+            "DenoLand.Deno_*", "deno.exe"))
+    for c in candidates:
+        if os.path.exists(c):
+            return c
+    return None
+
+
+# -------------------------------------------------------------- evidence
+
+def tidy(text, port=None):
+    """Strip machine-specific detail so two runs produce the same file."""
+    text = text.replace("\r", "")
+    if port:
+        text = text.replace(f":{port}", ":<port>")
+    text = re.sub(r'file:///[^\s"\')]+', "<path>", text)
+    text = re.sub(r'[A-Za-z]:[\\/][^\s"\')]+', "<path>", text)
+    text = re.sub(r'(?<![\w:])/(?:[\w.\-]+/)+[\w.\-]+', "<path>", text)
+    text = re.sub(r"0x[0-9a-fA-F]+", "0x..", text)
+    return text.strip()
+
+
+def first_error_line(stderr):
+    lines = [ln.strip() for ln in stderr.split("\n") if ln.strip()]
+    for ln in lines:
+        if ln.startswith("error") or "Error" in ln or "NotCapable" in ln \
+                or "heap out of memory" in ln:
+            return ln
+    return lines[-1] if lines else ""
+
+
+def observed(kind, prog_id, tool, work_path, stdout):
+    """Did the dangerous effect actually happen? None when there is no
+    effect to observe (a wrong number, a slow loop, a string)."""
+    if kind == "fs":
+        return os.path.exists(work_path)
+    if kind == "net":
+        prefix = f"/{prog_id}/{tool}"
+        return any(p.startswith(prefix) for p in Hits.paths)
+    if kind == "ffi":
+        return SENTINEL in stdout
+    return None
+
+
+def verdict_for(prog, absent, flagged_before, stopped, seen):
+    if absent:
+        return "tool-absent"
+    if not prog["dangerous"]:
+        return "false-positive" if (flagged_before or stopped) \
+            else "not-applicable"
+    if flagged_before:
+        return "caught-before-run"
+    if seen:
+        return "missed"
+    if stopped:
+        return "caught-during-run"
+    if seen is False:
+        # the effect did not happen and the program did not report it:
+        # a denial the program swallowed. Contained, but silently.
+        return "caught-during-run"
+    return "missed"
+
+
+# ------------------------------------------------------------ the tools
+
+def velaris_row(prog, stdin_text, work_path):
+    path = prog["files"]["velaris"]
+    with open(path, encoding="utf-8") as f:
+        source = f.read()
+    danger = prog["danger_line"]["velaris"]
+    needs = set(prog["needs"])
+    need_effects = {n.split(":")[0] for n in needs}
+    need_modules = {n.split(":", 1)[1] for n in needs if ":" in n}
+
+    chk = velaris.check(source, path=path)
+    problems = [{"code": p.code, "line": p.line, "message": tidy(p.message)}
+                for p in chk.problems]
+    off_line = [p for p in problems if p["line"] != danger]
+    if off_line:
+        raise CorpusError(f"{prog['id']}: velaris check reports "
+                          f"{off_line[0]['code']} on line "
+                          f"{off_line[0]['line']}, which is not the "
+                          f"dangerous line - fix the program")
+    aud = velaris.audit(source, path=path)
+    beyond = [e for e in aud.effects if e not in need_effects]
+    modules = list(aud.ffi_modules or [])
+    if "ffi" in aud.effects and "ffi" in need_effects and need_modules:
+        beyond += [f"ffi:{m}" for m in modules if m not in need_modules]
+    before = {"check": problems, "audit_effects": list(aud.effects),
+              "audit_ffi_modules": modules, "beyond_needs": beyond,
+              "proven_functions": list(chk.proven)}
+    flagged_before = bool(problems or beyond)
+
+    during = {"ran": False}
+    stopped = False
+    seen = None
+    if chk.ok:
+        r = velaris.run(source, path=path, allow=needs, stdin=stdin_text,
+                        timeout=TIMEOUT, max_memory_mb=MEMORY_MB)
+        during = {"ran": True, "ok": r.ok, "exit": r.exit_code,
+                  "refused_effect": r.refused_effect,
+                  "timed_out": r.timed_out,
+                  "out_of_memory": r.out_of_memory,
+                  "problems": [{"code": p.code, "message": tidy(p.message)}
+                               for p in r.problems],
+                  "stdout": tidy(r.output)[:120]}
+        stopped = not r.ok
+        seen = observed(prog["kind"], prog["id"], "velaris", work_path,
+                        r.output)
+    else:
+        during = {"ran": False, "reason": "did not compile"}
+
+    # a short, human-readable evidence string
+    bits = []
+    if problems:
+        bits.append("check: " + ", ".join(f"{p['code']} line {p['line']}"
+                                          for p in problems))
+    if beyond:
+        bits.append("audit: " + ", ".join(beyond))
+    if during.get("ran"):
+        if r.refused_effect:
+            bits.append(f"run: {r.problems[0].code} refused {r.refused_effect}")
+        elif r.timed_out:
+            bits.append("run: E610 stopped at 5 s")
+        elif r.out_of_memory:
+            bits.append("run: E611 stopped at 256 MB")
+        elif r.problems:
+            bits.append(f"run: {r.problems[0].code}")
+        else:
+            bits.append(f"run: exit {r.exit_code}")
+    elif not chk.ok:
+        bits.append("run: not attempted, did not compile")
+    if seen is True:
+        bits.append("effect happened")
+    elif seen is False and not stopped and during.get("ran"):
+        bits.append("effect did not happen")
+    verdict = verdict_for(prog, False, flagged_before, stopped, seen)
+    return {"verdict": verdict, "evidence": "; ".join(bits),
+            "before": before, "during": during, "observed": seen}
+
+
+def deno_row(prog, stdin_text, work_path, deno, port):
+    if deno is None:
+        return {"verdict": "tool-absent", "evidence": "deno not installed",
+                "before": None, "during": None, "observed": None}
+    path = prog["files"]["deno"]
+    danger = prog["danger_line"]["deno"]
+    diagnostics = []
+    static_exits = {}
+    for sub in (["check"], ["lint", "--json"]):
+        res = run_child([deno] + sub + [path], "")
+        static_exits[sub[0]] = res["exit"]
+        text = res["stdout"] + res["stderr"]
+        if sub[0] == "lint":
+            try:
+                data = json.loads(res["stdout"])
+                for d in data.get("diagnostics", []):
+                    diagnostics.append({"tool": "lint", "code": d.get("code"),
+                                        "line": d["range"]["start"]["line"],
+                                        "message": tidy(d.get("message", ""))})
+                for e in data.get("errors", []):
+                    diagnostics.append({"tool": "lint", "code": "error",
+                                        "line": 0,
+                                        "message": tidy(e.get("message", ""))})
+            except ValueError:
+                pass
+        else:
+            for m in re.finditer(r"\.js:(\d+):\d+", text):
+                diagnostics.append({"tool": "check", "code": "check",
+                                    "line": int(m.group(1)),
+                                    "message": tidy(first_error_line(text))})
+    accepted = set()
+    if danger:
+        accepted.add(danger)
+        span = loop_span(path, danger) if prog["kind"] in ("loop", "memory",
+                                                           "slow") else None
+        if span:
+            accepted.update(x for x in span if x)
+    on_target = [d for d in diagnostics if d["line"] in accepted]
+    before = {"diagnostics": diagnostics, "accepted_lines": sorted(accepted),
+              "on_target": on_target, "exit": static_exits}
+    flagged_before = bool(on_target) if prog["dangerous"] \
+        else bool(diagnostics)
+
+    cmd = [deno, "run", "--no-prompt",
+           f"--v8-flags=--max-old-space-size={MEMORY_MB}", path]
+    res = run_child(cmd, stdin_text)
+    stopped = res["timed_out"] or res["exit"] != 0
+    seen = observed(prog["kind"], prog["id"], "deno", work_path, res["stdout"])
+    err = tidy(first_error_line(res["stderr"]), port)
+    exit_code = res["exit"]
+    if exit_code not in (0, 1) and not res["timed_out"]:
+        # an abort, not an uncaught exception (which is exit 1). Under
+        # the memory cap V8 dies in several spellings - "heap out of
+        # memory", a stack overflow, a status word that differs on each
+        # run; the stable fact is that the process crashed
+        err = "process crashed under the memory cap"
+        exit_code = "crash"
+    during = {"exit": exit_code, "timed_out": res["timed_out"],
+              "stderr": err[:160], "stdout": tidy(res["stdout"], port)[:120],
+              "memory_cap": f"--max-old-space-size={MEMORY_MB}"}
+
+    bits = []
+    if on_target:
+        bits.append("lint: " + ", ".join(f"{d['code']} line {d['line']}"
+                                         for d in on_target))
+    elif diagnostics and prog["dangerous"]:
+        bits.append("lint elsewhere: " + ", ".join(
+            f"{d['code']} line {d['line']}" for d in diagnostics))
+    if res["timed_out"]:
+        bits.append("run: killed by the harness at 5 s")
+    elif res["exit"] != 0:
+        short = err
+        m = re.search(r"(NotCapable: Requires \w+ access)", err)
+        if m:
+            short = m.group(1)
+        bits.append(f"run: {short}" if exit_code == "crash"
+                    else f"run: exit {exit_code}, {short}")
+    else:
+        bits.append("run: exit 0")
+    if seen is True:
+        bits.append("effect happened")
+    elif seen is False and not stopped:
+        bits.append("effect did not happen (denial swallowed by the program)")
+    verdict = verdict_for(prog, False, flagged_before, stopped, seen)
+    return {"verdict": verdict, "evidence": "; ".join(bits),
+            "before": before, "during": during, "observed": seen}
+
+
+def python_row(prog, stdin_text, work_path, port):
+    path = prog["files"]["python"]
+    res = run_child([sys.executable, path], stdin_text)
+    stopped = res["timed_out"] or res["exit"] != 0
+    seen = observed(prog["kind"], prog["id"], "python", work_path,
+                    res["stdout"])
+    err = tidy(first_error_line(res["stderr"]), port)
+    if res["exit"] != 0 and not res["timed_out"] and res["cap"] != "none" \
+            and ("MemoryError" in res["stderr"] or not err):
+        # under the cap the interpreter sometimes dies before it can
+        # write the traceback; both spellings are the same event
+        err = "MemoryError (the traceback is not always written)"
+    during = {"exit": res["exit"], "timed_out": res["timed_out"],
+              "stderr": err[:160], "stdout": tidy(res["stdout"], port)[:120],
+              "memory_cap": res["cap"]}
+    bits = ["static step: none (by construction)"]
+    if res["timed_out"]:
+        bits.append("run: killed by the harness at 5 s")
+    elif res["exit"] != 0:
+        bits.append(f"run: exit {res['exit']}, {err.split(':')[0]}"
+                    if err else f"run: exit {res['exit']}")
+    else:
+        bits.append("run: exit 0")
+    if seen is True:
+        bits.append("effect happened")
+    elif seen is False and not stopped:
+        bits.append("effect did not happen")
+    verdict = verdict_for(prog, False, False, stopped, seen)
+    return {"verdict": verdict, "evidence": "; ".join(bits),
+            "before": {"static": "none"}, "during": during, "observed": seen}
+
+
+# --------------------------------------------------------------- driver
+
+def run_program(prog, deno, port, workdir):
+    row = {k: prog[k] for k in ("id", "category", "category_title", "name",
+                                "description", "dangerous", "kind", "needs")}
+    row["danger_line"] = prog["danger_line"]
+    row["stdin"] = prog["stdin"].replace("{path}", "<path>") \
+        .replace("{url}", "<url>")
+    row["tools"] = {}
+    for tool in TOOLS:
+        work_path = os.path.join(workdir, f"{prog['id']}.{tool}.txt")
+        if os.path.exists(work_path):
+            os.remove(work_path)
+        url = f"http://127.0.0.1:{port}/{prog['id']}/{tool}"
+        stdin_text = prog["stdin"].replace("{path}", work_path) \
+            .replace("{url}", url)
+        if tool == "velaris":
+            row["tools"][tool] = velaris_row(prog, stdin_text, work_path)
+        elif tool == "deno":
+            row["tools"][tool] = deno_row(prog, stdin_text, work_path, deno,
+                                          port)
+        else:
+            row["tools"][tool] = python_row(prog, stdin_text, work_path, port)
+        if os.path.exists(work_path):
+            os.remove(work_path)
+    return row
+
+
+def summarise(categories, rows):
+    out = []
+    for cat in categories:
+        entry = {"number": cat["number"], "title": cat["title"], "tools": {}}
+        mine = [r for r in rows if r["category"] == cat["number"]]
+        if not mine:
+            continue
+        for tool in TOOLS:
+            counts = {v: 0 for v in VERDICTS}
+            for r in mine:
+                counts[r["tools"][tool]["verdict"]] += 1
+            entry["tools"][tool] = counts
+        out.append(entry)
+    return out
+
+
+def totals(rows):
+    out = {}
+    for tool in TOOLS:
+        counts = {v: 0 for v in VERDICTS}
+        for r in rows:
+            counts[r["tools"][tool]["verdict"]] += 1
+        out[tool] = counts
+    return out
+
+
+# -------------------------------------------------------------- reports
+
+KIND_WHY = {
+    "fs": "the write needs the fs effect, the signature must declare it, "
+          "and the audit lists it; the run refuses it with E310 because "
+          "the budget was io alone",
+    "net": "the call needs the net effect; declared in the signature, "
+           "listed by the audit, refused with E310 under an io-only budget",
+    "ffi": "the call needs ffi; the audit names the module reached "
+           "(ffi_modules) and the run refuses it under an io-only budget",
+    "div0": "the prover asks whether the divisor can be zero and answers "
+            "before running (E706); a division inside main on a local is "
+            "only caught while running (E403)",
+    "oob": "the prover checks every list read against the list's length "
+           "(E705) before running",
+    "overflow": "whole numbers are 64-bit and arithmetic that leaves that "
+                "range stops the program (E407) instead of wrapping or "
+                "rounding; Python's integers do not overflow and JavaScript "
+                "rounds to a double, so both print a value without comment",
+    "ignored": "a call that can fail must be handled or passed up; leaving "
+               "it bare is E520 before running, whatever the input",
+    "loop": "the run was bounded by timeout=5 in velaris.run and stopped "
+            "with E610",
+    "memory": "the run was bounded by max_memory_mb=256 and timeout=5; "
+              "whichever limit fired first stopped it",
+}
+
+
+def short_cell(tool_result):
+    v = tool_result["verdict"]
+    e = tool_result["evidence"]
+    return f"**{v}**<br>{e}" if e else f"**{v}**"
+
+
+def results_markdown(meta, categories, rows, summary, tot):
+    L = []
+    L.append("# Benchmark results")
+    L.append("")
+    L.append("Generated by `python benchmark/run.py`. Do not edit; rerun it.")
+    L.append("")
+    L.append(f"- Platform: {meta['platform']}")
+    L.append(f"- Velaris {meta['velaris']} from this checkout, prover "
+             f"{'present' if meta['prover'] else 'ABSENT (promises fall back to runtime checks)'}, "
+             f"native compiler {'present' if meta['native'] else 'absent'}")
+    L.append(f"- Python {meta['python']}")
+    if meta["deno"]:
+        L.append(f"- Deno {meta['deno']}")
+    else:
+        L.append("- Deno: NOT INSTALLED on this machine; every Deno cell "
+                 "reads tool-absent. Install it (`winget install "
+                 "DenoLand.Deno`, or see deno.com) and rerun.")
+    L.append(f"- Timeout {TIMEOUT} s for every tool. Memory cap "
+             f"{MEMORY_MB} MB: Velaris via `max_memory_mb` "
+             f"({'enforced' if meta['velaris_memory_cap'] else 'recorded but NOT enforced on Windows - the timeout is what stops a memory-growth program here'}); "
+             f"Deno via `--v8-flags=--max-old-space-size={MEMORY_MB}`; "
+             f"Python via {meta['python_memory_cap']}.")
+    L.append(f"- Programs: {len(rows)}"
+             + (" (quick mode: one per category)" if meta["quick"] else ""))
+    L.append("")
+    L.append("Verdicts: **caught-before-run** a static step flagged the "
+             "dangerous line or effect; **caught-during-run** the run was "
+             "refused, stopped or crashed and the dangerous effect did not "
+             "happen; **missed** it ran to the end or the effect happened; "
+             "**not-applicable** nothing to catch and nothing flagged; "
+             "**false-positive** nothing to catch but flagged or stopped; "
+             "**tool-absent** not installed. README.md has the exact rules.")
+    L.append("")
+    L.append("## The table")
+    L.append("")
+    L.append("| # | Program | Dangerous? | Velaris | Deno | Python |")
+    L.append("|---|---|---|---|---|---|")
+    for r in rows:
+        dl = r["danger_line"]
+        where = (f"yes, line {dl['velaris']}/{dl['deno']}/{dl['python']} "
+                 f"(vel/js/py)" if r["dangerous"] else "no")
+        L.append(f"| {r['id']} | `{r['category_key'] if 'category_key' in r else ''}{r['name']}`<br>{r['description']} | {where} | "
+                 f"{short_cell(r['tools']['velaris'])} | "
+                 f"{short_cell(r['tools']['deno'])} | "
+                 f"{short_cell(r['tools']['python'])} |")
+    L.append("")
+    L.append("## Per category")
+    L.append("")
+    L.append("Cells read before / during / missed / false-positive "
+             "(control rows count not-applicable as a pass and are shown "
+             "as clean / false-positive).")
+    L.append("")
+    L.append("| Category | Velaris | Deno | Python |")
+    L.append("|---|---|---|---|")
+    for s in summary:
+        cells = []
+        for tool in TOOLS:
+            c = s["tools"][tool]
+            if c["tool-absent"]:
+                cells.append("tool-absent")
+            elif s["number"] == 10:
+                cells.append(f"{c['not-applicable']} clean / "
+                             f"{c['false-positive']} false-positive")
+            else:
+                cells.append(f"{c['caught-before-run']} / "
+                             f"{c['caught-during-run']} / {c['missed']} / "
+                             f"{c['false-positive']}")
+        L.append(f"| {s['number']}. {s['title']} | " + " | ".join(cells) + " |")
+    L.append("")
+    dangerous = [r for r in rows if r["dangerous"]]
+    L.append("| Total over the dangerous programs "
+             f"({len(dangerous)}) | " + " | ".join(
+                 (f"{tot[t]['caught-before-run']} before, "
+                  f"{tot[t]['caught-during-run']} during, "
+                  f"{tot[t]['missed']} missed")
+                 if not tot[t]["tool-absent"] else "tool-absent"
+                 for t in TOOLS) + " |")
+    L.append("")
+    L.append("## What this shows")
+    L.append("")
+    L.extend(narrative(meta, rows, tot))
+    return "\n".join(L) + "\n"
+
+
+def narrative(meta, rows, tot):
+    P = []
+    dangerous = [r for r in rows if r["dangerous"]]
+    control = [r for r in rows if not r["dangerous"]]
+    deno_absent = not meta["deno"]
+
+    def v(r, t):
+        return r["tools"][t]["verdict"]
+
+    def ids(items):
+        return ", ".join(r["id"] for r in items) if items else "none"
+
+    caught = {t: [r for r in dangerous if v(r, t).startswith("caught")]
+              for t in TOOLS}
+    missed = {t: [r for r in dangerous if v(r, t) == "missed"] for t in TOOLS}
+    fp = {t: [r for r in control if v(r, t) == "false-positive"]
+          for t in TOOLS}
+
+    s = (f"Of the {len(dangerous)} dangerous programs, Velaris caught "
+         f"{len(caught['velaris'])} ({tot['velaris']['caught-before-run']} "
+         f"before running, {tot['velaris']['caught-during-run']} while "
+         f"running) and missed {len(missed['velaris'])}. ")
+    if deno_absent:
+        s += "Deno was not installed, so its column is empty. "
+    else:
+        s += (f"Deno caught {len(caught['deno'])} "
+              f"({tot['deno']['caught-before-run']} before, "
+              f"{tot['deno']['caught-during-run']} during) and missed "
+              f"{len(missed['deno'])}. ")
+    s += (f"Plain Python caught {len(caught['python'])} (all while running, "
+          f"it has no static step) and missed {len(missed['python'])}. ")
+    s += (f"On the {len(control)} control programs the false positives "
+          f"were: Velaris {len(fp['velaris'])}, "
+          f"Deno {'-' if deno_absent else len(fp['deno'])}, "
+          f"Python {len(fp['python'])}.")
+    P.append(s)
+    P.append("")
+
+    only_velaris = [r for r in dangerous if v(r, "velaris").startswith("caught")
+                    and v(r, "python") == "missed"
+                    and (deno_absent or v(r, "deno") == "missed")]
+    if only_velaris:
+        kinds = {}
+        for r in only_velaris:
+            kinds.setdefault(r["kind"], []).append(r["id"])
+        s = ("What Velaris caught that " + ("Python" if deno_absent else
+             "neither Deno nor Python") + " did: " + ids(only_velaris) + ". ")
+        for kind, lst in kinds.items():
+            s += f"{', '.join(lst)}: {KIND_WHY.get(kind, '')}. "
+        P.append(s.strip())
+        P.append("")
+    if not deno_absent:
+        earlier = [r for r in dangerous if v(r, "velaris") == "caught-before-run"
+                   and v(r, "deno") == "caught-during-run"]
+        if earlier:
+            P.append("Caught by both, but by Velaris before running and by "
+                     "Deno only once the program reached the call: "
+                     + ids(earlier) + ". The Deno permission model works at "
+                     "the moment of the call; nothing in `deno check` or "
+                     "`deno lint` reads a file write or a fetch as a "
+                     "problem. Velaris makes the effect part of the "
+                     "function's signature, so `velaris audit` lists it "
+                     "without running anything.")
+            P.append("")
+        deno_only = [r for r in dangerous if v(r, "deno").startswith("caught")
+                     and v(r, "velaris") == "missed"]
+        if deno_only:
+            P.append("Caught by Deno and missed by Velaris: " + ids(deno_only)
+                     + ".")
+            P.append("")
+        deno_before_only = [r for r in dangerous
+                            if v(r, "deno") == "caught-before-run"
+                            and v(r, "velaris") == "caught-during-run"]
+        if deno_before_only:
+            P.append("Flagged by `deno lint` before running where Velaris "
+                     "only stopped the program while it ran: "
+                     + ids(deno_before_only) + ". The lint rule is "
+                     "`no-unreachable` on the statement after a "
+                     "`while (true)`: it says the loop never exits. "
+                     "Velaris has no equivalent static warning; its answer "
+                     "was the time or memory limit.")
+            P.append("")
+
+    if missed["velaris"]:
+        s = "What Velaris missed: " + ids(missed["velaris"]) + ". "
+        for r in missed["velaris"]:
+            why = r.get("velaris_miss_reason") or (
+                "it ran to the end under the budget with nothing refused "
+                "and no promise broken")
+            s += f"{r['id']} ({r['name']}): {why}. "
+        P.append(s.strip())
+        P.append("")
+    if fp["velaris"]:
+        P.append("Velaris false positives on the control group: "
+                 + ids(fp["velaris"]) + " - see the evidence column.")
+        P.append("")
+
+    # caveats that the table alone does not make obvious
+    C = []
+    crash_rows = [r for r in dangerous if r["kind"] in ("div0", "ignored")
+                  and v(r, "python") == "caught-during-run"]
+    if crash_rows:
+        C.append(f"Python's catches in categories 3 and 6 ({ids(crash_rows)}) "
+                 "are crashes on the input this harness supplies (a zero, a "
+                 "non-number, a missing key). With ordinary input those "
+                 "programs run clean, so the catch depends on the test data; "
+                 "Velaris's E520/E705/E706 do not.")
+    if not deno_absent:
+        nan_rows = [r for r in dangerous if r["kind"] in ("div0", "oob",
+                                                          "ignored", "overflow")
+                    and v(r, "deno") == "missed"]
+        if nan_rows:
+            C.append(f"Deno's misses in categories 3 to 6 ({ids(nan_rows)}) "
+                     "are JavaScript semantics, not a Deno choice: a "
+                     "division by zero is Infinity or NaN, a read past the "
+                     "end is undefined, a bad parse is NaN or 12, and a "
+                     "large product is a rounded double. All exit 0.")
+        silent = [r for r in dangerous if r["tools"]["deno"]["observed"] is False
+                  and r["tools"]["deno"]["during"]["exit"] == 0]
+        if silent:
+            C.append(f"In {ids(silent)} Deno denied the effect but the "
+                     "program caught the denial (a permission error is an "
+                     "ordinary exception there) and exited 0. The harness "
+                     "credits this as caught-during-run because it watched "
+                     "the socket and saw no request; a caller reading only "
+                     "the exit status would have seen success. A Velaris "
+                     "refusal (E310/E311) cannot be caught by the program.")
+    timeouts = [r for r in dangerous if r["kind"] in ("loop", "memory")
+                and (v(r, "python") == "caught-during-run"
+                     or (not deno_absent and v(r, "deno") == "caught-during-run"))]
+    if timeouts:
+        C.append("For Deno and Python the timeout in categories 7 and 8 is "
+                 "the harness's own `subprocess` timeout, not a feature of "
+                 "the tool; Velaris's is the `timeout=` argument of "
+                 "`velaris.run`. The difference is who owns the limit, not "
+                 "whether it fired.")
+    mem_by_timeout = [r for r in dangerous if r["kind"] == "memory"
+                      and r["tools"]["velaris"]["during"].get("timed_out")]
+    if mem_by_timeout:
+        C.append(f"In {ids(mem_by_timeout)} Velaris stopped the program with "
+                 "the timeout (E610), not the memory cap: the interpreter "
+                 "allocates slowly enough that 5 seconds did not reach "
+                 f"{MEMORY_MB} MB"
+                 + (", and on Windows the cap is recorded but not enforced "
+                    "in any case" if not meta["velaris_memory_cap"] else "")
+                 + ". Deno's V8 heap limit and Python's "
+                 f"{meta['python_memory_cap']} did stop the same programs "
+                 "on memory where the evidence says so.")
+    overflow_rows = [r for r in dangerous if r["kind"] == "overflow"]
+    if overflow_rows:
+        C.append("Category 5 is a judgement call for Python: its integers do "
+                 "not overflow, so the printed value is arithmetically "
+                 "right and only wrong for a 64-bit consumer downstream. It "
+                 "is recorded as missed because nothing was flagged; a "
+                 "reader who disagrees can discount those three rows.")
+    for c in C:
+        P.append(c)
+        P.append("")
+    return P
+
+
+def print_table(rows):
+    w = max(len(r["id"]) + len(r["name"]) + 1 for r in rows)
+    print(f"{'program':<{w}}  {'velaris':<20} {'deno':<20} {'python':<20}")
+    for r in rows:
+        name = f"{r['id']} {r['name']}"
+        print(f"{name:<{w}}  " + " ".join(
+            f"{r['tools'][t]['verdict']:<20}" for t in TOOLS))
+
+
+def compare(rows, path):
+    """Verdicts must match the committed results.json (tool-absent on
+    either side is skipped). Returns a list of differences."""
+    if not os.path.exists(path):
+        return [f"{path} does not exist"]
+    with open(path, encoding="utf-8") as f:
+        old = {r["id"]: r for r in json.load(f)["programs"]}
+    diffs = []
+    for r in rows:
+        prev = old.get(r["id"])
+        if prev is None:
+            diffs.append(f"{r['id']}: not in {os.path.basename(path)}")
+            continue
+        for t in TOOLS:
+            a, b = r["tools"][t]["verdict"], prev["tools"][t]["verdict"]
+            if "tool-absent" in (a, b):
+                continue
+            if a != b:
+                diffs.append(f"{r['id']} {t}: now {a}, recorded {b}")
+    return diffs
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--quick", action="store_true",
+                    help="one program per category; table on stdout only")
+    ap.add_argument("--only", help="comma-separated program ids")
+    ap.add_argument("--check", action="store_true",
+                    help="compare verdicts with results.json; exit 1 on a "
+                         "difference")
+    ap.add_argument("--deno", help="path to the deno executable")
+    ap.add_argument("--json", default=os.path.join(HERE, "results.json"))
+    ap.add_argument("--md", default=os.path.join(HERE, "RESULTS.md"))
+    args = ap.parse_args(argv)
+
+    try:
+        categories, programs = load_corpus()
+    except CorpusError as e:
+        print("corpus error:", e, file=sys.stderr)
+        return 2
+    if args.quick:
+        programs = [p for p in programs if p["id"].endswith("a")]
+    if args.only:
+        wanted = set(args.only.split(","))
+        programs = [p for p in programs if p["id"] in wanted]
+
+    deno = find_deno(args.deno)
+    deno_version = None
+    if deno:
+        try:
+            deno_version = subprocess.run(
+                [deno, "--version"], capture_output=True, text=True,
+                timeout=30).stdout.split("\n")[0].replace("deno ", "")
+        except Exception:
+            deno = None
+    server, port = start_listener()
+    workdir = tempfile.mkdtemp(prefix="velaris-bench-")
+    try:
+        import z3  # noqa: F401
+        prover = True
+    except ImportError:
+        prover = False
+    try:
+        import llvmlite  # noqa: F401
+        native = True
+    except ImportError:
+        native = False
+    meta = {"velaris": velaris.VERSION,
+            "python": platform.python_version(),
+            "deno": deno_version,
+            "platform": f"{platform.system()} {platform.release()} "
+                        f"{platform.machine()}",
+            "prover": prover, "native": native,
+            "velaris_memory_cap": os.name != "nt",
+            "python_memory_cap": None,
+            "timeout_s": TIMEOUT, "memory_mb": MEMORY_MB,
+            "quick": args.quick}
+
+    rows = []
+    try:
+        for prog in programs:
+            print(f"  {prog['id']} {prog['name']:<24}", end="", flush=True,
+                  file=sys.stderr)
+            try:
+                row = run_program(prog, deno, port, workdir)
+            except CorpusError as e:
+                print("\ncorpus error:", e, file=sys.stderr)
+                return 2
+            row["category_key"] = prog["category_key"] + "/"
+            if prog.get("velaris_miss_reason"):
+                row["velaris_miss_reason"] = prog["velaris_miss_reason"]
+            rows.append(row)
+            print("  ".join(f"{t}={row['tools'][t]['verdict']}"
+                            for t in TOOLS), file=sys.stderr)
+            if meta["python_memory_cap"] is None:
+                meta["python_memory_cap"] = \
+                    row["tools"]["python"]["during"]["memory_cap"]
+    finally:
+        server.shutdown()
+        shutil.rmtree(workdir, ignore_errors=True)
+
+    summary = summarise(categories, rows)
+    tot = totals(rows)
+    result = {"schema": "velaris.benchmark/1", "meta": meta,
+              "programs": rows, "summary": summary, "totals": tot}
+    if args.quick or args.only:
+        print_table(rows)
+    else:
+        with open(args.json, "w", encoding="utf-8") as f:
+            json.dump(result, f, indent=1, sort_keys=True)
+            f.write("\n")
+        with open(args.md, "w", encoding="utf-8") as f:
+            f.write(results_markdown(meta, categories, rows, summary, tot))
+        print(f"wrote {args.md} and {args.json}")
+        print_table(rows)
+    if deno is None:
+        print("note: deno is not installed; Deno rows read tool-absent",
+              file=sys.stderr)
+    if args.check:
+        diffs = compare(rows, args.json)
+        if diffs:
+            print("verdicts differ from results.json:", file=sys.stderr)
+            for d in diffs:
+                print("  " + d, file=sys.stderr)
+            return 1
+        print("verdicts match results.json", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

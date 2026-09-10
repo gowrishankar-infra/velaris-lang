@@ -1,0 +1,12 @@
+// Sums the cubes of 1..100000; the running total leaves 64 bits near 78000.
+fn sum_of_cubes(n: Int) -> Int {
+    let total = 0
+    for i in 1 to n + 1 {
+        total = total + i * i * i  // DANGER
+    }
+    return total
+}
+
+fn main() uses io {
+    print(sum_of_cubes(100000))
+}

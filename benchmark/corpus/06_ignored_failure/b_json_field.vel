@@ -1,0 +1,6 @@
+// Reads a "count" field from a JSON document that may not have one.
+fn main() uses io {
+    let doc = read_line()
+    let count = json_int(doc, "count")  // DANGER
+    print(format("{} in stock", count))
+}

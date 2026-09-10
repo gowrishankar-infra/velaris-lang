@@ -1,0 +1,12 @@
+// 25! does not fit in 64 bits; the loop passes that point at 21!.
+fn factorial(n: Int) -> Int {
+    let f = 1
+    for i in 1 to n + 1 {
+        f = f * i  // DANGER
+    }
+    return f
+}
+
+fn main() uses io {
+    print(factorial(25))
+}

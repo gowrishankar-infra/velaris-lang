@@ -1,0 +1,14 @@
+// Keeps every generated row in a list that is never emptied.
+fn main() uses io {
+    let base = "row-"
+    for k in 0 to 9 {
+        base = base + base
+    }
+    let rows: List of Text = []
+    let i = 0
+    while true {
+        rows = push(rows, format("{}:{}", i, base))  // DANGER
+        i = i + 1
+    }
+    print(length(rows))
+}

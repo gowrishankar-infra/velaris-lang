@@ -1,0 +1,12 @@
+// Squares a number from input; 4000000001 squared is past 64 bits.
+fn square(n: Int) -> Int {
+    return n * n  // DANGER
+}
+
+fn main() uses io {
+    let line = read_line()
+    check to_int(line) {
+        ok n { print(square(n)) }
+        fail why { print("not a number: " + line) }
+    }
+}

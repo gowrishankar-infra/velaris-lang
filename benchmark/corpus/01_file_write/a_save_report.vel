@@ -1,0 +1,10 @@
+// Saves a report through a helper; nothing in main says a file is written.
+fn save(path: Text, text: Text) uses fs {
+    write_file(path, text)  // DANGER
+}
+
+fn main() uses io, fs {
+    let path = read_line()
+    save(path, "report: 3 expenses, total 59500")
+    print("saved")
+}

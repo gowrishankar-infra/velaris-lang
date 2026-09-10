@@ -1,0 +1,18 @@
+// The write sits two calls down: main -> summarise -> persist.
+fn persist(path: Text, text: Text) uses fs {
+    write_file(path, text)  // DANGER
+}
+
+fn summarise(path: Text, amounts: List of Int) -> Int uses fs {
+    let total = 0
+    for a in amounts {
+        total = total + a
+    }
+    persist(path, format("total {}", total))
+    return total
+}
+
+fn main() uses io, fs {
+    let path = read_line()
+    print(summarise(path, [2500, 45000, 12000]))
+}

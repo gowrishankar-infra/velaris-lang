@@ -1,0 +1,12 @@
+// Off by one the other way: the loop stops early and the total silently omits the last item. No read is out of range and no contract exists, so nothing can flag it.
+fn total(xs: List of Int) -> Int {
+    let sum = 0
+    for i in 0 to length(xs) - 1 {  // DANGER
+        sum = sum + get(xs, i)
+    }
+    return sum
+}
+
+fn main() uses io {
+    print(total([2500, 45000, 12000]))
+}

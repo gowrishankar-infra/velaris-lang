@@ -1,0 +1,6 @@
+// Parses a quantity from input and never handles the parse failing.
+fn main() uses io {
+    let line = read_line()
+    let qty = to_int(line)  // DANGER
+    print(format("ordering {} units", qty))
+}

@@ -1,0 +1,12 @@
+// The division is in main on an input-derived expression: (n - 1) is 0 when n is 1.
+fn main() uses io {
+    let line = read_line()
+    let budget = 100
+    check to_int(line) {
+        ok n {
+            let each = budget / (n - 1)  // DANGER
+            print(format("each of the others gets {}", each))
+        }
+        fail why { print("not a number: " + line) }
+    }
+}

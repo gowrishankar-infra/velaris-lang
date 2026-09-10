@@ -1,0 +1,9 @@
+// Looks a price up by a key from input; the key may be absent.
+fn main() uses io {
+    let prices: Map of Text to Int = { }
+    prices = put(prices, "apple", 30)
+    prices = put(prices, "banana", 12)
+    let key = read_line()
+    let price = get(prices, key)  // DANGER
+    print(format("{} costs {}", key, price))
+}

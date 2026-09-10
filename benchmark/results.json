@@ -1,0 +1,3012 @@
+{
+ "meta": {
+  "deno": "2.9.6 (stable, release, x86_64-pc-windows-msvc)",
+  "memory_mb": 256,
+  "native": true,
+  "platform": "Windows 11 AMD64",
+  "prover": true,
+  "python": "3.13.13",
+  "python_memory_cap": "job object",
+  "quick": false,
+  "timeout_s": 5,
+  "velaris": "2.61.0",
+  "velaris_memory_cap": false
+ },
+ "programs": [
+  {
+   "category": 1,
+   "category_key": "01_file_write/",
+   "category_title": "A file write hidden inside a helper function",
+   "danger_line": {
+    "deno": 3,
+    "python": 6,
+    "velaris": 3
+   },
+   "dangerous": true,
+   "description": "Saves a report through a helper; nothing in main says a file is written.",
+   "id": "01a",
+   "kind": "fs",
+   "name": "a_save_report",
+   "needs": [
+    "io"
+   ],
+   "stdin": "<path>\n",
+   "tools": {
+    "deno": {
+     "before": {
+      "accepted_lines": [
+       3
+      ],
+      "diagnostics": [],
+      "exit": {
+       "check": 0,
+       "lint": 0
+      },
+      "on_target": []
+     },
+     "during": {
+      "exit": 1,
+      "memory_cap": "--max-old-space-size=256",
+      "stderr": "error: Uncaught (in promise) NotCapable: Requires write access to \"<path>\", run again with the --allow-write flag",
+      "stdout": "",
+      "timed_out": false
+     },
+     "evidence": "run: exit 1, NotCapable: Requires write access",
+     "observed": false,
+     "verdict": "caught-during-run"
+    },
+    "python": {
+     "before": {
+      "static": "none"
+     },
+     "during": {
+      "exit": 0,
+      "memory_cap": "job object",
+      "stderr": "",
+      "stdout": "saved",
+      "timed_out": false
+     },
+     "evidence": "static step: none (by construction); run: exit 0; effect happened",
+     "observed": true,
+     "verdict": "missed"
+    },
+    "velaris": {
+     "before": {
+      "audit_effects": [
+       "fs",
+       "io"
+      ],
+      "audit_ffi_modules": [],
+      "beyond_needs": [
+       "fs"
+      ],
+      "check": [],
+      "proven_functions": []
+     },
+     "during": {
+      "exit": 1,
+      "ok": false,
+      "out_of_memory": false,
+      "problems": [
+       {
+        "code": "E310",
+        "message": "'write_file' needs the 'fs' effect, which this run does not allow"
+       }
+      ],
+      "ran": true,
+      "refused_effect": "fs",
+      "stdout": "",
+      "timed_out": false
+     },
+     "evidence": "audit: fs; run: E310 refused fs",
+     "observed": false,
+     "verdict": "caught-before-run"
+    }
+   }
+  },
+  {
+   "category": 1,
+   "category_key": "01_file_write/",
+   "category_title": "A file write hidden inside a helper function",
+   "danger_line": {
+    "deno": 3,
+    "python": 6,
+    "velaris": 3
+   },
+   "dangerous": true,
+   "description": "The write sits two calls down: main -> summarise -> persist.",
+   "id": "01b",
+   "kind": "fs",
+   "name": "b_two_levels",
+   "needs": [
+    "io"
+   ],
+   "stdin": "<path>\n",
+   "tools": {
+    "deno": {
+     "before": {
+      "accepted_lines": [
+       3
+      ],
+      "diagnostics": [],
+      "exit": {
+       "check": 0,
+       "lint": 0
+      },
+      "on_target": []
+     },
+     "during": {
+      "exit": 1,
+      "memory_cap": "--max-old-space-size=256",
+      "stderr": "error: Uncaught (in promise) NotCapable: Requires write access to \"<path>\", run again with the --allow-write flag",
+      "stdout": "",
+      "timed_out": false
+     },
+     "evidence": "run: exit 1, NotCapable: Requires write access",
+     "observed": false,
+     "verdict": "caught-during-run"
+    },
+    "python": {
+     "before": {
+      "static": "none"
+     },
+     "during": {
+      "exit": 0,
+      "memory_cap": "job object",
+      "stderr": "",
+      "stdout": "59500",
+      "timed_out": false
+     },
+     "evidence": "static step: none (by construction); run: exit 0; effect happened",
+     "observed": true,
+     "verdict": "missed"
+    },
+    "velaris": {
+     "before": {
+      "audit_effects": [
+       "fs",
+       "io"
+      ],
+      "audit_ffi_modules": [],
+      "beyond_needs": [
+       "fs"
+      ],
+      "check": [],
+      "proven_functions": []
+     },
+     "during": {
+      "exit": 1,
+      "ok": false,
+      "out_of_memory": false,
+      "problems": [
+       {
+        "code": "E310",
+        "message": "'write_file' needs the 'fs' effect, which this run does not allow"
+       }
+      ],
+      "ran": true,
+      "refused_effect": "fs",
+      "stdout": "",
+      "timed_out": false
+     },
+     "evidence": "audit: fs; run: E310 refused fs",
+     "observed": false,
+     "verdict": "caught-before-run"
+    }
+   }
+  },
+  {
+   "category": 1,
+   "category_key": "01_file_write/",
+   "category_title": "A file write hidden inside a helper function",
+   "danger_line": {
+    "deno": 3,
+    "python": 6,
+    "velaris": 3
+   },
+   "dangerous": true,
+   "description": "A \"log\" helper called from a loop writes to disk on every item.",
+   "id": "01c",
+   "kind": "fs",
+   "name": "c_log_in_loop",
+   "needs": [
+    "io"
+   ],
+   "stdin": "<path>\n",
+   "tools": {
+    "deno": {
+     "before": {
+      "accepted_lines": [
+       3
+      ],
+      "diagnostics": [],
+      "exit": {
+       "check": 0,
+       "lint": 0
+      },
+      "on_target": []
+     },
+     "during": {
+      "exit": 1,
+      "memory_cap": "--max-old-space-size=256",
+      "stderr": "error: Uncaught (in promise) NotCapable: Requires write access to \"<path>\", run again with the --allow-write flag",
+      "stdout": "",
+      "timed_out": false
+     },
+     "evidence": "run: exit 1, NotCapable: Requires write access",
+     "observed": false,
+     "verdict": "caught-during-run"
+    },
+    "python": {
+     "before": {
+      "static": "none"
+     },
+     "during": {
+      "exit": 0,
+      "memory_cap": "job object",
+      "stderr": "",
+      "stdout": "3 items",
+      "timed_out": false
+     },
+     "evidence": "static step: none (by construction); run: exit 0; effect happened",
+     "observed": true,
+     "verdict": "missed"
+    },
+    "velaris": {
+     "before": {
+      "audit_effects": [
+       "fs",
+       "io"
+      ],
+      "audit_ffi_modules": [],
+      "beyond_needs": [
+       "fs"
+      ],
+      "check": [],
+      "proven_functions": []
+     },
+     "during": {
+      "exit": 1,
+      "ok": false,
+      "out_of_memory": false,
+      "problems": [
+       {
+        "code": "E310",
+        "message": "'write_file' needs the 'fs' effect, which this run does not allow"
+       }
+      ],
+      "ran": true,
+      "refused_effect": "fs",
+      "stdout": "",
+      "timed_out": false
+     },
+     "evidence": "audit: fs; run: E310 refused fs",
+     "observed": false,
+     "verdict": "caught-before-run"
+    }
+   }
+  },
+  {
+   "category": 2,
+   "category_key": "02_network/",
+   "category_title": "A network call hidden inside a helper",
+   "danger_line": {
+    "deno": 3,
+    "python": 7,
+    "velaris": 3
+   },
+   "dangerous": true,
+   "description": "A helper named like a formatter fetches a URL; main prints one line.",
+   "id": "02a",
+   "kind": "net",
+   "name": "a_fetch_helper",
+   "needs": [
+    "io"
+   ],
+   "stdin": "<url>\n",
+   "tools": {
+    "deno": {
+     "before": {
+      "accepted_lines": [
+       3
+      ],
+      "diagnostics": [],
+      "exit": {
+       "check": 0,
+       "lint": 0
+      },
+      "on_target": []
+     },
+     "during": {
+      "exit": 1,
+      "memory_cap": "--max-old-space-size=256",
+      "stderr": "error: Uncaught (in promise) NotCapable: Requires net access to \"127.0.0.1:<port>\", run again with the --allow-net flag",
+      "stdout": "",
+      "timed_out": false
+     },
+     "evidence": "run: exit 1, NotCapable: Requires net access",
+     "observed": false,
+     "verdict": "caught-during-run"
+    },
+    "python": {
+     "before": {
+      "static": "none"
+     },
+     "during": {
+      "exit": 0,
+      "memory_cap": "job object",
+      "stderr": "",
+      "stdout": "reached: 3 bytes",
+      "timed_out": false
+     },
+     "evidence": "static step: none (by construction); run: exit 0; effect happened",
+     "observed": true,
+     "verdict": "missed"
+    },
+    "velaris": {
+     "before": {
+      "audit_effects": [
+       "io",
+       "net"
+      ],
+      "audit_ffi_modules": [],
+      "beyond_needs": [
+       "net"
+      ],
+      "check": [],
+      "proven_functions": []
+     },
+     "during": {
+      "exit": 1,
+      "ok": false,
+      "out_of_memory": false,
+      "problems": [
+       {
+        "code": "E310",
+        "message": "'fetch' needs the 'net' effect, which this run does not allow"
+       }
+      ],
+      "ran": true,
+      "refused_effect": "net",
+      "stdout": "",
+      "timed_out": false
+     },
+     "evidence": "audit: net; run: E310 refused net",
+     "observed": false,
+     "verdict": "caught-before-run"
+    }
+   }
+  },
+  {
+   "category": 2,
+   "category_key": "02_network/",
+   "category_title": "A network call hidden inside a helper",
+   "danger_line": {
+    "deno": 3,
+    "python": 8,
+    "velaris": 3
+   },
+   "dangerous": true,
+   "description": "A \"sync\" helper posts the computed summary to a URL nobody asked for.",
+   "id": "02b",
+   "kind": "net",
+   "name": "b_post_summary",
+   "needs": [
+    "io"
+   ],
+   "stdin": "<url>\n",
+   "tools": {
+    "deno": {
+     "before": {
+      "accepted_lines": [
+       3
+      ],
+      "diagnostics": [],
+      "exit": {
+       "check": 0,
+       "lint": 0
+      },
+      "on_target": []
+     },
+     "during": {
+      "exit": 1,
+      "memory_cap": "--max-old-space-size=256",
+      "stderr": "error: Uncaught (in promise) NotCapable: Requires net access to \"127.0.0.1:<port>\", run again with the --allow-net flag",
+      "stdout": "",
+      "timed_out": false
+     },
+     "evidence": "run: exit 1, NotCapable: Requires net access",
+     "observed": false,
+     "verdict": "caught-during-run"
+    },
+    "python": {
+     "before": {
+      "static": "none"
+     },
+     "during": {
+      "exit": 0,
+      "memory_cap": "job object",
+      "stderr": "",
+      "stdout": "total 59500 (synced: true)",
+      "timed_out": false
+     },
+     "evidence": "static step: none (by construction); run: exit 0; effect happened",
+     "observed": true,
+     "verdict": "missed"
+    },
+    "velaris": {
+     "before": {
+      "audit_effects": [
+       "io",
+       "net"
+      ],
+      "audit_ffi_modules": [],
+      "beyond_needs": [
+       "net"
+      ],
+      "check": [],
+      "proven_functions": []
+     },
+     "during": {
+      "exit": 1,
+      "ok": false,
+      "out_of_memory": false,
+      "problems": [
+       {
+        "code": "E310",
+        "message": "'post' needs the 'net' effect, which this run does not allow"
+       }
+      ],
+      "ran": true,
+      "refused_effect": "net",
+      "stdout": "",
+      "timed_out": false
+     },
+     "evidence": "audit: net; run: E310 refused net",
+     "observed": false,
+     "verdict": "caught-before-run"
+    }
+   }
+  },
+  {
+   "category": 2,
+   "category_key": "02_network/",
+   "category_title": "A network call hidden inside a helper",
+   "danger_line": {
+    "deno": 4,
+    "python": 8,
+    "velaris": 3
+   },
+   "dangerous": true,
+   "description": "The helper swallows every error and prints \"done\" whatever happened.",
+   "id": "02c",
+   "kind": "net",
+   "name": "c_quiet_fetch",
+   "needs": [
+    "io"
+   ],
+   "stdin": "<url>\n",
+   "tools": {
+    "deno": {
+     "before": {
+      "accepted_lines": [
+       4
+      ],
+      "diagnostics": [],
+      "exit": {
+       "check": 0,
+       "lint": 0
+      },
+      "on_target": []
+     },
+     "during": {
+      "exit": 0,
+      "memory_cap": "--max-old-space-size=256",
+      "stderr": "",
+      "stdout": "done",
+      "timed_out": false
+     },
+     "evidence": "run: exit 0; effect did not happen (denial swallowed by the program)",
+     "observed": false,
+     "verdict": "caught-during-run"
+    },
+    "python": {
+     "before": {
+      "static": "none"
+     },
+     "during": {
+      "exit": 0,
+      "memory_cap": "job object",
+      "stderr": "",
+      "stdout": "done",
+      "timed_out": false
+     },
+     "evidence": "static step: none (by construction); run: exit 0; effect happened",
+     "observed": true,
+     "verdict": "missed"
+    },
+    "velaris": {
+     "before": {
+      "audit_effects": [
+       "io",
+       "net"
+      ],
+      "audit_ffi_modules": [],
+      "beyond_needs": [
+       "net"
+      ],
+      "check": [],
+      "proven_functions": []
+     },
+     "during": {
+      "exit": 1,
+      "ok": false,
+      "out_of_memory": false,
+      "problems": [
+       {
+        "code": "E310",
+        "message": "'fetch' needs the 'net' effect, which this run does not allow"
+       }
+      ],
+      "ran": true,
+      "refused_effect": "net",
+      "stdout": "",
+      "timed_out": false
+     },
+     "evidence": "audit: net; run: E310 refused net",
+     "observed": false,
+     "verdict": "caught-before-run"
+    }
+   }
+  },
+  {
+   "category": 3,
+   "category_key": "03_div_zero/",
+   "category_title": "Division by a value that comes from input and can be zero",
+   "danger_line": {
+    "deno": 3,
+    "python": 6,
+    "velaris": 3
+   },
+   "dangerous": true,
+   "description": "Splits a bill by a head count read from input; the count can be 0.",
+   "id": "03a",
+   "kind": "div0",
+   "name": "a_share_per_person",
+   "needs": [
+    "io"
+   ],
+   "stdin": "0\n",
+   "tools": {
+    "deno": {
+     "before": {
+      "accepted_lines": [
+       3
+      ],
+      "diagnostics": [],
+      "exit": {
+       "check": 0,
+       "lint": 0
+      },
+      "on_target": []
+     },
+     "during": {
+      "exit": 0,
+      "memory_cap": "--max-old-space-size=256",
+      "stderr": "",
+      "stdout": "each pays Infinity",
+      "timed_out": false
+     },
+     "evidence": "run: exit 0",
+     "observed": null,
+     "verdict": "missed"
+    },
+    "python": {
+     "before": {
+      "static": "none"
+     },
+     "during": {
+      "exit": 1,
+      "memory_cap": "job object",
+      "stderr": "ZeroDivisionError: integer division or modulo by zero",
+      "stdout": "",
+      "timed_out": false
+     },
+     "evidence": "static step: none (by construction); run: exit 1, ZeroDivisionError",
+     "observed": null,
+     "verdict": "caught-during-run"
+    },
+    "velaris": {
+     "before": {
+      "audit_effects": [
+       "io"
+      ],
+      "audit_ffi_modules": [],
+      "beyond_needs": [],
+      "check": [
+       {
+        "code": "E706",
+        "line": 3,
+        "message": "this can divide by zero: count = 0 - proven without running the program"
+       }
+      ],
+      "proven_functions": []
+     },
+     "during": {
+      "ran": false,
+      "reason": "did not compile"
+     },
+     "evidence": "check: E706 line 3; run: not attempted, did not compile",
+     "observed": null,
+     "verdict": "caught-before-run"
+    }
+   }
+  },
+  {
+   "category": 3,
+   "category_key": "03_div_zero/",
+   "category_title": "Division by a value that comes from input and can be zero",
+   "danger_line": {
+    "deno": 3,
+    "python": 6,
+    "velaris": 3
+   },
+   "dangerous": true,
+   "description": "Buckets an id with a remainder; the bucket size comes from input.",
+   "id": "03b",
+   "kind": "div0",
+   "name": "b_bucket_remainder",
+   "needs": [
+    "io"
+   ],
+   "stdin": "0\n",
+   "tools": {
+    "deno": {
+     "before": {
+      "accepted_lines": [
+       3
+      ],
+      "diagnostics": [],
+      "exit": {
+       "check": 0,
+       "lint": 0
+      },
+      "on_target": []
+     },
+     "during": {
+      "exit": 0,
+      "memory_cap": "--max-old-space-size=256",
+      "stderr": "",
+      "stdout": "bucket NaN",
+      "timed_out": false
+     },
+     "evidence": "run: exit 0",
+     "observed": null,
+     "verdict": "missed"
+    },
+    "python": {
+     "before": {
+      "static": "none"
+     },
+     "during": {
+      "exit": 1,
+      "memory_cap": "job object",
+      "stderr": "ZeroDivisionError: integer modulo by zero",
+      "stdout": "",
+      "timed_out": false
+     },
+     "evidence": "static step: none (by construction); run: exit 1, ZeroDivisionError",
+     "observed": null,
+     "verdict": "caught-during-run"
+    },
+    "velaris": {
+     "before": {
+      "audit_effects": [
+       "io"
+      ],
+      "audit_ffi_modules": [],
+      "beyond_needs": [],
+      "check": [
+       {
+        "code": "E706",
+        "line": 3,
+        "message": "this can take the remainder of zero: size = 0 - proven without running the program"
+       }
+      ],
+      "proven_functions": []
+     },
+     "during": {
+      "ran": false,
+      "reason": "did not compile"
+     },
+     "evidence": "check: E706 line 3; run: not attempted, did not compile",
+     "observed": null,
+     "verdict": "caught-before-run"
+    }
+   }
+  },
+  {
+   "category": 3,
+   "category_key": "03_div_zero/",
+   "category_title": "Division by a value that comes from input and can be zero",
+   "danger_line": {
+    "deno": 7,
+    "python": 11,
+    "velaris": 7
+   },
+   "dangerous": true,
+   "description": "The division is in main on an input-derived expression: (n - 1) is 0 when n is 1.",
+   "id": "03c",
+   "kind": "div0",
+   "name": "c_per_item_in_main",
+   "needs": [
+    "io"
+   ],
+   "stdin": "1\n",
+   "tools": {
+    "deno": {
+     "before": {
+      "accepted_lines": [
+       7
+      ],
+      "diagnostics": [],
+      "exit": {
+       "check": 0,
+       "lint": 0
+      },
+      "on_target": []
+     },
+     "during": {
+      "exit": 0,
+      "memory_cap": "--max-old-space-size=256",
+      "stderr": "",
+      "stdout": "each of the others gets Infinity",
+      "timed_out": false
+     },
+     "evidence": "run: exit 0",
+     "observed": null,
+     "verdict": "missed"
+    },
+    "python": {
+     "before": {
+      "static": "none"
+     },
+     "during": {
+      "exit": 1,
+      "memory_cap": "job object",
+      "stderr": "ZeroDivisionError: integer division or modulo by zero",
+      "stdout": "",
+      "timed_out": false
+     },
+     "evidence": "static step: none (by construction); run: exit 1, ZeroDivisionError",
+     "observed": null,
+     "verdict": "caught-during-run"
+    },
+    "velaris": {
+     "before": {
+      "audit_effects": [
+       "io"
+      ],
+      "audit_ffi_modules": [],
+      "beyond_needs": [],
+      "check": [],
+      "proven_functions": []
+     },
+     "during": {
+      "exit": 1,
+      "ok": false,
+      "out_of_memory": false,
+      "problems": [
+       {
+        "code": "E403",
+        "message": "division by zero"
+       }
+      ],
+      "ran": true,
+      "refused_effect": null,
+      "stdout": "",
+      "timed_out": false
+     },
+     "evidence": "run: E403",
+     "observed": null,
+     "verdict": "caught-during-run"
+    }
+   }
+  },
+  {
+   "category": 4,
+   "category_key": "04_off_by_one/",
+   "category_title": "An off-by-one read past the end of a list",
+   "danger_line": {
+    "deno": 6,
+    "python": 8,
+    "velaris": 6
+   },
+   "dangerous": true,
+   "description": "Sums a list with \"<=\" where \"<\" was meant, reading one past the end.",
+   "id": "04a",
+   "kind": "oob",
+   "name": "a_sum_inclusive",
+   "needs": [
+    "io"
+   ],
+   "stdin": "",
+   "tools": {
+    "deno": {
+     "before": {
+      "accepted_lines": [
+       6
+      ],
+      "diagnostics": [],
+      "exit": {
+       "check": 0,
+       "lint": 0
+      },
+      "on_target": []
+     },
+     "during": {
+      "exit": 0,
+      "memory_cap": "--max-old-space-size=256",
+      "stderr": "",
+      "stdout": "NaN",
+      "timed_out": false
+     },
+     "evidence": "run: exit 0",
+     "observed": null,
+     "verdict": "missed"
+    },
+    "python": {
+     "before": {
+      "static": "none"
+     },
+     "during": {
+      "exit": 1,
+      "memory_cap": "job object",
+      "stderr": "IndexError: list index out of range",
+      "stdout": "",
+      "timed_out": false
+     },
+     "evidence": "static step: none (by construction); run: exit 1, IndexError",
+     "observed": null,
+     "verdict": "caught-during-run"
+    },
+    "velaris": {
+     "before": {
+      "audit_effects": [
+       "io"
+      ],
+      "audit_ffi_modules": [],
+      "beyond_needs": [],
+      "check": [
+       {
+        "code": "E705",
+        "line": 6,
+        "message": "this 'get' can reach position 0, but the list has 0 item(s) - proven without running the program"
+       }
+      ],
+      "proven_functions": []
+     },
+     "during": {
+      "ran": false,
+      "reason": "did not compile"
+     },
+     "evidence": "check: E705 line 6; run: not attempted, did not compile",
+     "observed": null,
+     "verdict": "caught-before-run"
+    }
+   }
+  },
+  {
+   "category": 4,
+   "category_key": "04_off_by_one/",
+   "category_title": "An off-by-one read past the end of a list",
+   "danger_line": {
+    "deno": 3,
+    "python": 5,
+    "velaris": 3
+   },
+   "dangerous": true,
+   "description": "Takes the last item at position length instead of length - 1.",
+   "id": "04b",
+   "kind": "oob",
+   "name": "b_last_item",
+   "needs": [
+    "io"
+   ],
+   "stdin": "",
+   "tools": {
+    "deno": {
+     "before": {
+      "accepted_lines": [
+       3
+      ],
+      "diagnostics": [],
+      "exit": {
+       "check": 0,
+       "lint": 0
+      },
+      "on_target": []
+     },
+     "during": {
+      "exit": 0,
+      "memory_cap": "--max-old-space-size=256",
+      "stderr": "",
+      "stdout": "undefined",
+      "timed_out": false
+     },
+     "evidence": "run: exit 0",
+     "observed": null,
+     "verdict": "missed"
+    },
+    "python": {
+     "before": {
+      "static": "none"
+     },
+     "during": {
+      "exit": 1,
+      "memory_cap": "job object",
+      "stderr": "IndexError: list index out of range",
+      "stdout": "",
+      "timed_out": false
+     },
+     "evidence": "static step: none (by construction); run: exit 1, IndexError",
+     "observed": null,
+     "verdict": "caught-during-run"
+    },
+    "velaris": {
+     "before": {
+      "audit_effects": [
+       "io"
+      ],
+      "audit_ffi_modules": [],
+      "beyond_needs": [],
+      "check": [
+       {
+        "code": "E705",
+        "line": 3,
+        "message": "this 'get' can reach position 0, but the list has 0 item(s) - proven without running the program"
+       }
+      ],
+      "proven_functions": []
+     },
+     "during": {
+      "ran": false,
+      "reason": "did not compile"
+     },
+     "evidence": "check: E705 line 3; run: not attempted, did not compile",
+     "observed": null,
+     "verdict": "caught-before-run"
+    }
+   }
+  },
+  {
+   "category": 4,
+   "category_key": "04_off_by_one/",
+   "category_title": "An off-by-one read past the end of a list",
+   "danger_line": {
+    "deno": 4,
+    "python": 6,
+    "velaris": 4
+   },
+   "dangerous": true,
+   "description": "Off by one the other way: the loop stops early and the total silently omits the last item.",
+   "id": "04c",
+   "kind": "logic",
+   "name": "c_skips_last",
+   "needs": [
+    "io"
+   ],
+   "stdin": "",
+   "tools": {
+    "deno": {
+     "before": {
+      "accepted_lines": [
+       4
+      ],
+      "diagnostics": [],
+      "exit": {
+       "check": 0,
+       "lint": 0
+      },
+      "on_target": []
+     },
+     "during": {
+      "exit": 0,
+      "memory_cap": "--max-old-space-size=256",
+      "stderr": "",
+      "stdout": "47500",
+      "timed_out": false
+     },
+     "evidence": "run: exit 0",
+     "observed": null,
+     "verdict": "missed"
+    },
+    "python": {
+     "before": {
+      "static": "none"
+     },
+     "during": {
+      "exit": 0,
+      "memory_cap": "job object",
+      "stderr": "",
+      "stdout": "47500",
+      "timed_out": false
+     },
+     "evidence": "static step: none (by construction); run: exit 0",
+     "observed": null,
+     "verdict": "missed"
+    },
+    "velaris": {
+     "before": {
+      "audit_effects": [
+       "io"
+      ],
+      "audit_ffi_modules": [],
+      "beyond_needs": [],
+      "check": [],
+      "proven_functions": []
+     },
+     "during": {
+      "exit": 0,
+      "ok": true,
+      "out_of_memory": false,
+      "problems": [],
+      "ran": true,
+      "refused_effect": null,
+      "stdout": "47500",
+      "timed_out": false
+     },
+     "evidence": "run: exit 0",
+     "observed": null,
+     "verdict": "missed"
+    }
+   },
+   "velaris_miss_reason": "no read is out of range and the function carries no contract, so there is nothing for the prover to refuse; a wrong total is indistinguishable from a right one without a promise about it"
+  },
+  {
+   "category": 5,
+   "category_key": "05_overflow/",
+   "category_title": "Integer overflow",
+   "danger_line": {
+    "deno": 5,
+    "python": 7,
+    "velaris": 5
+   },
+   "dangerous": true,
+   "description": "25! does not fit in 64 bits; the loop passes that point at 21!.",
+   "id": "05a",
+   "kind": "overflow",
+   "name": "a_factorial_25",
+   "needs": [
+    "io"
+   ],
+   "stdin": "",
+   "tools": {
+    "deno": {
+     "before": {
+      "accepted_lines": [
+       5
+      ],
+      "diagnostics": [],
+      "exit": {
+       "check": 0,
+       "lint": 0
+      },
+      "on_target": []
+     },
+     "during": {
+      "exit": 0,
+      "memory_cap": "--max-old-space-size=256",
+      "stderr": "",
+      "stdout": "1.5511210043330986e+25",
+      "timed_out": false
+     },
+     "evidence": "run: exit 0",
+     "observed": null,
+     "verdict": "missed"
+    },
+    "python": {
+     "before": {
+      "static": "none"
+     },
+     "during": {
+      "exit": 0,
+      "memory_cap": "job object",
+      "stderr": "",
+      "stdout": "15511210043330985984000000",
+      "timed_out": false
+     },
+     "evidence": "static step: none (by construction); run: exit 0",
+     "observed": null,
+     "verdict": "missed"
+    },
+    "velaris": {
+     "before": {
+      "audit_effects": [
+       "io"
+      ],
+      "audit_ffi_modules": [],
+      "beyond_needs": [],
+      "check": [],
+      "proven_functions": []
+     },
+     "during": {
+      "exit": 1,
+      "ok": false,
+      "out_of_memory": false,
+      "problems": [
+       {
+        "code": "E407",
+        "message": "this arithmetic made a number too big to hold (whole numbers go from -9223372036854775808 to 9223372036854775807)"
+       }
+      ],
+      "ran": true,
+      "refused_effect": null,
+      "stdout": "",
+      "timed_out": false
+     },
+     "evidence": "run: E407",
+     "observed": null,
+     "verdict": "caught-during-run"
+    }
+   }
+  },
+  {
+   "category": 5,
+   "category_key": "05_overflow/",
+   "category_title": "Integer overflow",
+   "danger_line": {
+    "deno": 3,
+    "python": 6,
+    "velaris": 3
+   },
+   "dangerous": true,
+   "description": "Squares a number from input; 4000000001 squared is past 64 bits.",
+   "id": "05b",
+   "kind": "overflow",
+   "name": "b_square_input",
+   "needs": [
+    "io"
+   ],
+   "stdin": "4000000001\n",
+   "tools": {
+    "deno": {
+     "before": {
+      "accepted_lines": [
+       3
+      ],
+      "diagnostics": [],
+      "exit": {
+       "check": 0,
+       "lint": 0
+      },
+      "on_target": []
+     },
+     "during": {
+      "exit": 0,
+      "memory_cap": "--max-old-space-size=256",
+      "stderr": "",
+      "stdout": "16000000008000000000",
+      "timed_out": false
+     },
+     "evidence": "run: exit 0",
+     "observed": null,
+     "verdict": "missed"
+    },
+    "python": {
+     "before": {
+      "static": "none"
+     },
+     "during": {
+      "exit": 0,
+      "memory_cap": "job object",
+      "stderr": "",
+      "stdout": "16000000008000000001",
+      "timed_out": false
+     },
+     "evidence": "static step: none (by construction); run: exit 0",
+     "observed": null,
+     "verdict": "missed"
+    },
+    "velaris": {
+     "before": {
+      "audit_effects": [
+       "io"
+      ],
+      "audit_ffi_modules": [],
+      "beyond_needs": [],
+      "check": [],
+      "proven_functions": []
+     },
+     "during": {
+      "exit": 1,
+      "ok": false,
+      "out_of_memory": false,
+      "problems": [
+       {
+        "code": "E407",
+        "message": "this arithmetic made a number too big to hold (whole numbers go from -9223372036854775808 to 9223372036854775807)"
+       }
+      ],
+      "ran": true,
+      "refused_effect": null,
+      "stdout": "",
+      "timed_out": false
+     },
+     "evidence": "run: E407",
+     "observed": null,
+     "verdict": "caught-during-run"
+    }
+   }
+  },
+  {
+   "category": 5,
+   "category_key": "05_overflow/",
+   "category_title": "Integer overflow",
+   "danger_line": {
+    "deno": 5,
+    "python": 7,
+    "velaris": 5
+   },
+   "dangerous": true,
+   "description": "Sums the cubes of 1..100000; the running total leaves 64 bits near 78000.",
+   "id": "05c",
+   "kind": "overflow",
+   "name": "c_sum_of_cubes",
+   "needs": [
+    "io"
+   ],
+   "stdin": "",
+   "tools": {
+    "deno": {
+     "before": {
+      "accepted_lines": [
+       5
+      ],
+      "diagnostics": [],
+      "exit": {
+       "check": 0,
+       "lint": 0
+      },
+      "on_target": []
+     },
+     "during": {
+      "exit": 0,
+      "memory_cap": "--max-old-space-size=256",
+      "stderr": "",
+      "stdout": "25000500002500145000",
+      "timed_out": false
+     },
+     "evidence": "run: exit 0",
+     "observed": null,
+     "verdict": "missed"
+    },
+    "python": {
+     "before": {
+      "static": "none"
+     },
+     "during": {
+      "exit": 0,
+      "memory_cap": "job object",
+      "stderr": "",
+      "stdout": "25000500002500000000",
+      "timed_out": false
+     },
+     "evidence": "static step: none (by construction); run: exit 0",
+     "observed": null,
+     "verdict": "missed"
+    },
+    "velaris": {
+     "before": {
+      "audit_effects": [
+       "io"
+      ],
+      "audit_ffi_modules": [],
+      "beyond_needs": [],
+      "check": [],
+      "proven_functions": []
+     },
+     "during": {
+      "exit": 1,
+      "ok": false,
+      "out_of_memory": false,
+      "problems": [
+       {
+        "code": "E407",
+        "message": "this arithmetic made a number too big to hold (whole numbers go from -9223372036854775808 to 9223372036854775807)"
+       }
+      ],
+      "ran": true,
+      "refused_effect": null,
+      "stdout": "",
+      "timed_out": false
+     },
+     "evidence": "run: E407",
+     "observed": null,
+     "verdict": "caught-during-run"
+    }
+   }
+  },
+  {
+   "category": 6,
+   "category_key": "06_ignored_failure/",
+   "category_title": "An ignored failure (a parse that can fail, not handled)",
+   "danger_line": {
+    "deno": 3,
+    "python": 5,
+    "velaris": 4
+   },
+   "dangerous": true,
+   "description": "Parses a quantity from input and never handles the parse failing.",
+   "id": "06a",
+   "kind": "ignored",
+   "name": "a_to_int_unhandled",
+   "needs": [
+    "io"
+   ],
+   "stdin": "12a\n",
+   "tools": {
+    "deno": {
+     "before": {
+      "accepted_lines": [
+       3
+      ],
+      "diagnostics": [],
+      "exit": {
+       "check": 0,
+       "lint": 0
+      },
+      "on_target": []
+     },
+     "during": {
+      "exit": 0,
+      "memory_cap": "--max-old-space-size=256",
+      "stderr": "",
+      "stdout": "ordering 12 units",
+      "timed_out": false
+     },
+     "evidence": "run: exit 0",
+     "observed": null,
+     "verdict": "missed"
+    },
+    "python": {
+     "before": {
+      "static": "none"
+     },
+     "during": {
+      "exit": 1,
+      "memory_cap": "job object",
+      "stderr": "ValueError: invalid literal for int() with base 10: '12a'",
+      "stdout": "",
+      "timed_out": false
+     },
+     "evidence": "static step: none (by construction); run: exit 1, ValueError",
+     "observed": null,
+     "verdict": "caught-during-run"
+    },
+    "velaris": {
+     "before": {
+      "audit_effects": [
+       "io"
+      ],
+      "audit_ffi_modules": [],
+      "beyond_needs": [],
+      "check": [
+       {
+        "code": "E520",
+        "line": 4,
+        "message": "'to_int' can fail - that cannot be ignored"
+       }
+      ],
+      "proven_functions": []
+     },
+     "during": {
+      "ran": false,
+      "reason": "did not compile"
+     },
+     "evidence": "check: E520 line 4; run: not attempted, did not compile",
+     "observed": null,
+     "verdict": "caught-before-run"
+    }
+   }
+  },
+  {
+   "category": 6,
+   "category_key": "06_ignored_failure/",
+   "category_title": "An ignored failure (a parse that can fail, not handled)",
+   "danger_line": {
+    "deno": 3,
+    "python": 6,
+    "velaris": 4
+   },
+   "dangerous": true,
+   "description": "Reads a \"count\" field from a JSON document that may not have one.",
+   "id": "06b",
+   "kind": "ignored",
+   "name": "b_json_field",
+   "needs": [
+    "io"
+   ],
+   "stdin": "{\"name\": \"chai\"}\n",
+   "tools": {
+    "deno": {
+     "before": {
+      "accepted_lines": [
+       3
+      ],
+      "diagnostics": [],
+      "exit": {
+       "check": 0,
+       "lint": 0
+      },
+      "on_target": []
+     },
+     "during": {
+      "exit": 0,
+      "memory_cap": "--max-old-space-size=256",
+      "stderr": "",
+      "stdout": "undefined in stock",
+      "timed_out": false
+     },
+     "evidence": "run: exit 0",
+     "observed": null,
+     "verdict": "missed"
+    },
+    "python": {
+     "before": {
+      "static": "none"
+     },
+     "during": {
+      "exit": 1,
+      "memory_cap": "job object",
+      "stderr": "KeyError: 'count'",
+      "stdout": "",
+      "timed_out": false
+     },
+     "evidence": "static step: none (by construction); run: exit 1, KeyError",
+     "observed": null,
+     "verdict": "caught-during-run"
+    },
+    "velaris": {
+     "before": {
+      "audit_effects": [
+       "io"
+      ],
+      "audit_ffi_modules": [],
+      "beyond_needs": [],
+      "check": [
+       {
+        "code": "E520",
+        "line": 4,
+        "message": "'json_int' can fail - that cannot be ignored"
+       }
+      ],
+      "proven_functions": []
+     },
+     "during": {
+      "ran": false,
+      "reason": "did not compile"
+     },
+     "evidence": "check: E520 line 4; run: not attempted, did not compile",
+     "observed": null,
+     "verdict": "caught-before-run"
+    }
+   }
+  },
+  {
+   "category": 6,
+   "category_key": "06_ignored_failure/",
+   "category_title": "An ignored failure (a parse that can fail, not handled)",
+   "danger_line": {
+    "deno": 4,
+    "python": 6,
+    "velaris": 7
+   },
+   "dangerous": true,
+   "description": "Looks a price up by a key from input; the key may be absent.",
+   "id": "06c",
+   "kind": "ignored",
+   "name": "c_map_lookup",
+   "needs": [
+    "io"
+   ],
+   "stdin": "pear\n",
+   "tools": {
+    "deno": {
+     "before": {
+      "accepted_lines": [
+       4
+      ],
+      "diagnostics": [],
+      "exit": {
+       "check": 0,
+       "lint": 0
+      },
+      "on_target": []
+     },
+     "during": {
+      "exit": 0,
+      "memory_cap": "--max-old-space-size=256",
+      "stderr": "",
+      "stdout": "pear costs undefined",
+      "timed_out": false
+     },
+     "evidence": "run: exit 0",
+     "observed": null,
+     "verdict": "missed"
+    },
+    "python": {
+     "before": {
+      "static": "none"
+     },
+     "during": {
+      "exit": 1,
+      "memory_cap": "job object",
+      "stderr": "KeyError: 'pear'",
+      "stdout": "",
+      "timed_out": false
+     },
+     "evidence": "static step: none (by construction); run: exit 1, KeyError",
+     "observed": null,
+     "verdict": "caught-during-run"
+    },
+    "velaris": {
+     "before": {
+      "audit_effects": [
+       "io"
+      ],
+      "audit_ffi_modules": [],
+      "beyond_needs": [],
+      "check": [
+       {
+        "code": "E520",
+        "line": 7,
+        "message": "'get' on a map can fail - the key may be missing, and that cannot be ignored"
+       }
+      ],
+      "proven_functions": []
+     },
+     "during": {
+      "ran": false,
+      "reason": "did not compile"
+     },
+     "evidence": "check: E520 line 7; run: not attempted, did not compile",
+     "observed": null,
+     "verdict": "caught-before-run"
+    }
+   }
+  },
+  {
+   "category": 7,
+   "category_key": "07_infinite_loop/",
+   "category_title": "An infinite loop",
+   "danger_line": {
+    "deno": 4,
+    "python": 4,
+    "velaris": 5
+   },
+   "dangerous": true,
+   "description": "The loop body forgets to advance the counter.",
+   "id": "07a",
+   "kind": "loop",
+   "name": "a_never_advances",
+   "needs": [
+    "io"
+   ],
+   "stdin": "",
+   "tools": {
+    "deno": {
+     "before": {
+      "accepted_lines": [
+       4,
+       7
+      ],
+      "diagnostics": [
+       {
+        "code": "prefer-const",
+        "line": 3,
+        "message": "`i` is never reassigned",
+        "tool": "lint"
+       }
+      ],
+      "exit": {
+       "check": 0,
+       "lint": 1
+      },
+      "on_target": []
+     },
+     "during": {
+      "exit": 1,
+      "memory_cap": "--max-old-space-size=256",
+      "stderr": "",
+      "stdout": "",
+      "timed_out": true
+     },
+     "evidence": "lint elsewhere: prefer-const line 3; run: killed by the harness at 5 s",
+     "observed": null,
+     "verdict": "caught-during-run"
+    },
+    "python": {
+     "before": {
+      "static": "none"
+     },
+     "during": {
+      "exit": 1,
+      "memory_cap": "job object",
+      "stderr": "",
+      "stdout": "",
+      "timed_out": true
+     },
+     "evidence": "static step: none (by construction); run: killed by the harness at 5 s",
+     "observed": null,
+     "verdict": "caught-during-run"
+    },
+    "velaris": {
+     "before": {
+      "audit_effects": [
+       "io"
+      ],
+      "audit_ffi_modules": [],
+      "beyond_needs": [],
+      "check": [],
+      "proven_functions": []
+     },
+     "during": {
+      "exit": 124,
+      "ok": false,
+      "out_of_memory": false,
+      "problems": [
+       {
+        "code": "E610",
+        "message": "the program ran longer than 5 second(s) and was stopped"
+       }
+      ],
+      "ran": true,
+      "refused_effect": null,
+      "stdout": "",
+      "timed_out": true
+     },
+     "evidence": "run: E610 stopped at 5 s",
+     "observed": null,
+     "verdict": "caught-during-run"
+    }
+   }
+  },
+  {
+   "category": 7,
+   "category_key": "07_infinite_loop/",
+   "category_title": "An infinite loop",
+   "danger_line": {
+    "deno": 3,
+    "python": 3,
+    "velaris": 4
+   },
+   "dangerous": true,
+   "description": "Counts up by 2 until it equals 7, which an even counter never does.",
+   "id": "07b",
+   "kind": "loop",
+   "name": "b_steps_past",
+   "needs": [
+    "io"
+   ],
+   "stdin": "",
+   "tools": {
+    "deno": {
+     "before": {
+      "accepted_lines": [
+       3,
+       6
+      ],
+      "diagnostics": [],
+      "exit": {
+       "check": 0,
+       "lint": 0
+      },
+      "on_target": []
+     },
+     "during": {
+      "exit": 1,
+      "memory_cap": "--max-old-space-size=256",
+      "stderr": "",
+      "stdout": "",
+      "timed_out": true
+     },
+     "evidence": "run: killed by the harness at 5 s",
+     "observed": null,
+     "verdict": "caught-during-run"
+    },
+    "python": {
+     "before": {
+      "static": "none"
+     },
+     "during": {
+      "exit": 1,
+      "memory_cap": "job object",
+      "stderr": "",
+      "stdout": "",
+      "timed_out": true
+     },
+     "evidence": "static step: none (by construction); run: killed by the harness at 5 s",
+     "observed": null,
+     "verdict": "caught-during-run"
+    },
+    "velaris": {
+     "before": {
+      "audit_effects": [
+       "io"
+      ],
+      "audit_ffi_modules": [],
+      "beyond_needs": [],
+      "check": [],
+      "proven_functions": []
+     },
+     "during": {
+      "exit": 124,
+      "ok": false,
+      "out_of_memory": false,
+      "problems": [
+       {
+        "code": "E610",
+        "message": "the program ran longer than 5 second(s) and was stopped"
+       }
+      ],
+      "ran": true,
+      "refused_effect": null,
+      "stdout": "",
+      "timed_out": true
+     },
+     "evidence": "run: E610 stopped at 5 s",
+     "observed": null,
+     "verdict": "caught-during-run"
+    }
+   }
+  },
+  {
+   "category": 7,
+   "category_key": "07_infinite_loop/",
+   "category_title": "An infinite loop",
+   "danger_line": {
+    "deno": 4,
+    "python": 4,
+    "velaris": 5
+   },
+   "dangerous": true,
+   "description": "Counts pairs with two nested loops when one multiplication would do; it finishes under the deadline.",
+   "id": "07c",
+   "kind": "slow",
+   "name": "c_slow_but_finite",
+   "needs": [
+    "io"
+   ],
+   "stdin": "",
+   "tools": {
+    "deno": {
+     "before": {
+      "accepted_lines": [
+       4,
+       7
+      ],
+      "diagnostics": [],
+      "exit": {
+       "check": 0,
+       "lint": 0
+      },
+      "on_target": []
+     },
+     "during": {
+      "exit": 0,
+      "memory_cap": "--max-old-space-size=256",
+      "stderr": "",
+      "stdout": "90000",
+      "timed_out": false
+     },
+     "evidence": "run: exit 0",
+     "observed": null,
+     "verdict": "missed"
+    },
+    "python": {
+     "before": {
+      "static": "none"
+     },
+     "during": {
+      "exit": 0,
+      "memory_cap": "job object",
+      "stderr": "",
+      "stdout": "90000",
+      "timed_out": false
+     },
+     "evidence": "static step: none (by construction); run: exit 0",
+     "observed": null,
+     "verdict": "missed"
+    },
+    "velaris": {
+     "before": {
+      "audit_effects": [
+       "io"
+      ],
+      "audit_ffi_modules": [],
+      "beyond_needs": [],
+      "check": [],
+      "proven_functions": []
+     },
+     "during": {
+      "exit": 0,
+      "ok": true,
+      "out_of_memory": false,
+      "problems": [],
+      "ran": true,
+      "refused_effect": null,
+      "stdout": "90000",
+      "timed_out": false
+     },
+     "evidence": "run: exit 0",
+     "observed": null,
+     "verdict": "missed"
+    }
+   },
+   "velaris_miss_reason": "the loop ends before the 5 second deadline, and a finite loop that ends is indistinguishable from useful work to a timeout; no contract says how much work is acceptable"
+  },
+  {
+   "category": 8,
+   "category_key": "08_memory/",
+   "category_title": "Runaway memory growth",
+   "danger_line": {
+    "deno": 5,
+    "python": 5,
+    "velaris": 10
+   },
+   "dangerous": true,
+   "description": "Keeps every generated row in a list that is never emptied.",
+   "id": "08a",
+   "kind": "memory",
+   "name": "a_rows_forever",
+   "needs": [
+    "io"
+   ],
+   "stdin": "",
+   "tools": {
+    "deno": {
+     "before": {
+      "accepted_lines": [
+       4,
+       5,
+       8
+      ],
+      "diagnostics": [
+       {
+        "code": "no-unreachable",
+        "line": 8,
+        "message": "This statement is unreachable",
+        "tool": "lint"
+       }
+      ],
+      "exit": {
+       "check": 0,
+       "lint": 1
+      },
+      "on_target": [
+       {
+        "code": "no-unreachable",
+        "line": 8,
+        "message": "This statement is unreachable",
+        "tool": "lint"
+       }
+      ]
+     },
+     "during": {
+      "exit": 1,
+      "memory_cap": "--max-old-space-size=256",
+      "stderr": "",
+      "stdout": "",
+      "timed_out": true
+     },
+     "evidence": "lint: no-unreachable line 8; run: killed by the harness at 5 s",
+     "observed": null,
+     "verdict": "caught-before-run"
+    },
+    "python": {
+     "before": {
+      "static": "none"
+     },
+     "during": {
+      "exit": 1,
+      "memory_cap": "job object",
+      "stderr": "",
+      "stdout": "",
+      "timed_out": true
+     },
+     "evidence": "static step: none (by construction); run: killed by the harness at 5 s",
+     "observed": null,
+     "verdict": "caught-during-run"
+    },
+    "velaris": {
+     "before": {
+      "audit_effects": [
+       "io"
+      ],
+      "audit_ffi_modules": [],
+      "beyond_needs": [],
+      "check": [],
+      "proven_functions": []
+     },
+     "during": {
+      "exit": 124,
+      "ok": false,
+      "out_of_memory": false,
+      "problems": [
+       {
+        "code": "E610",
+        "message": "the program ran longer than 5 second(s) and was stopped"
+       }
+      ],
+      "ran": true,
+      "refused_effect": null,
+      "stdout": "",
+      "timed_out": true
+     },
+     "evidence": "run: E610 stopped at 5 s",
+     "observed": null,
+     "verdict": "caught-during-run"
+    }
+   }
+  },
+  {
+   "category": 8,
+   "category_key": "08_memory/",
+   "category_title": "Runaway memory growth",
+   "danger_line": {
+    "deno": 5,
+    "python": 5,
+    "velaris": 11
+   },
+   "dangerous": true,
+   "description": "An in-memory event log that grows on every iteration and is never trimmed.",
+   "id": "08b",
+   "kind": "memory",
+   "name": "b_log_kept_in_memory",
+   "needs": [
+    "io"
+   ],
+   "stdin": "",
+   "tools": {
+    "deno": {
+     "before": {
+      "accepted_lines": [
+       4,
+       5,
+       8
+      ],
+      "diagnostics": [
+       {
+        "code": "no-unreachable",
+        "line": 8,
+        "message": "This statement is unreachable",
+        "tool": "lint"
+       }
+      ],
+      "exit": {
+       "check": 0,
+       "lint": 1
+      },
+      "on_target": [
+       {
+        "code": "no-unreachable",
+        "line": 8,
+        "message": "This statement is unreachable",
+        "tool": "lint"
+       }
+      ]
+     },
+     "during": {
+      "exit": "crash",
+      "memory_cap": "--max-old-space-size=256",
+      "stderr": "process crashed under the memory cap",
+      "stdout": "",
+      "timed_out": false
+     },
+     "evidence": "lint: no-unreachable line 8; run: process crashed under the memory cap",
+     "observed": null,
+     "verdict": "caught-before-run"
+    },
+    "python": {
+     "before": {
+      "static": "none"
+     },
+     "during": {
+      "exit": 1,
+      "memory_cap": "job object",
+      "stderr": "MemoryError (the traceback is not always written)",
+      "stdout": "",
+      "timed_out": false
+     },
+     "evidence": "static step: none (by construction); run: exit 1, MemoryError (the traceback is not always written)",
+     "observed": null,
+     "verdict": "caught-during-run"
+    },
+    "velaris": {
+     "before": {
+      "audit_effects": [
+       "io"
+      ],
+      "audit_ffi_modules": [],
+      "beyond_needs": [],
+      "check": [],
+      "proven_functions": []
+     },
+     "during": {
+      "exit": 124,
+      "ok": false,
+      "out_of_memory": false,
+      "problems": [
+       {
+        "code": "E610",
+        "message": "the program ran longer than 5 second(s) and was stopped"
+       }
+      ],
+      "ran": true,
+      "refused_effect": null,
+      "stdout": "",
+      "timed_out": true
+     },
+     "evidence": "run: E610 stopped at 5 s",
+     "observed": null,
+     "verdict": "caught-during-run"
+    }
+   }
+  },
+  {
+   "category": 8,
+   "category_key": "08_memory/",
+   "category_title": "Runaway memory growth",
+   "danger_line": {
+    "deno": 5,
+    "python": 5,
+    "velaris": 9
+   },
+   "dangerous": true,
+   "description": "Splits the same line into fields again and again and keeps every copy.",
+   "id": "08c",
+   "kind": "memory",
+   "name": "c_split_rows",
+   "needs": [
+    "io"
+   ],
+   "stdin": "",
+   "tools": {
+    "deno": {
+     "before": {
+      "accepted_lines": [
+       4,
+       5,
+       7
+      ],
+      "diagnostics": [
+       {
+        "code": "no-unreachable",
+        "line": 7,
+        "message": "This statement is unreachable",
+        "tool": "lint"
+       }
+      ],
+      "exit": {
+       "check": 0,
+       "lint": 1
+      },
+      "on_target": [
+       {
+        "code": "no-unreachable",
+        "line": 7,
+        "message": "This statement is unreachable",
+        "tool": "lint"
+       }
+      ]
+     },
+     "during": {
+      "exit": "crash",
+      "memory_cap": "--max-old-space-size=256",
+      "stderr": "process crashed under the memory cap",
+      "stdout": "",
+      "timed_out": false
+     },
+     "evidence": "lint: no-unreachable line 7; run: process crashed under the memory cap",
+     "observed": null,
+     "verdict": "caught-before-run"
+    },
+    "python": {
+     "before": {
+      "static": "none"
+     },
+     "during": {
+      "exit": 1,
+      "memory_cap": "job object",
+      "stderr": "",
+      "stdout": "",
+      "timed_out": true
+     },
+     "evidence": "static step: none (by construction); run: killed by the harness at 5 s",
+     "observed": null,
+     "verdict": "caught-during-run"
+    },
+    "velaris": {
+     "before": {
+      "audit_effects": [
+       "io"
+      ],
+      "audit_ffi_modules": [],
+      "beyond_needs": [],
+      "check": [],
+      "proven_functions": []
+     },
+     "during": {
+      "exit": 124,
+      "ok": false,
+      "out_of_memory": false,
+      "problems": [
+       {
+        "code": "E610",
+        "message": "the program ran longer than 5 second(s) and was stopped"
+       }
+      ],
+      "ran": true,
+      "refused_effect": null,
+      "stdout": "",
+      "timed_out": true
+     },
+     "evidence": "run: E610 stopped at 5 s",
+     "observed": null,
+     "verdict": "caught-during-run"
+    }
+   }
+  },
+  {
+   "category": 9,
+   "category_key": "09_dangerous_module/",
+   "category_title": "Reaching a dangerous module (subprocess / child_process / os.system)",
+   "danger_line": {
+    "deno": 3,
+    "python": 6,
+    "velaris": 3
+   },
+   "dangerous": true,
+   "description": "A helper named like a text utility runs a shell command.",
+   "id": "09a",
+   "kind": "ffi",
+   "name": "a_subprocess_helper",
+   "needs": [
+    "io"
+   ],
+   "stdin": "",
+   "tools": {
+    "deno": {
+     "before": {
+      "accepted_lines": [
+       3
+      ],
+      "diagnostics": [],
+      "exit": {
+       "check": 0,
+       "lint": 0
+      },
+      "on_target": []
+     },
+     "during": {
+      "exit": 1,
+      "memory_cap": "--max-old-space-size=256",
+      "stderr": "error: Uncaught (in promise) NotCapable: Requires run access to \"<path>\", run again with the --allow-run flag",
+      "stdout": "",
+      "timed_out": false
+     },
+     "evidence": "run: exit 1, NotCapable: Requires run access",
+     "observed": false,
+     "verdict": "caught-during-run"
+    },
+    "python": {
+     "before": {
+      "static": "none"
+     },
+     "during": {
+      "exit": 0,
+      "memory_cap": "job object",
+      "stderr": "",
+      "stdout": "spawned-child-ran",
+      "timed_out": false
+     },
+     "evidence": "static step: none (by construction); run: exit 0; effect happened",
+     "observed": true,
+     "verdict": "missed"
+    },
+    "velaris": {
+     "before": {
+      "audit_effects": [
+       "ffi",
+       "io"
+      ],
+      "audit_ffi_modules": [
+       "subprocess"
+      ],
+      "beyond_needs": [
+       "ffi"
+      ],
+      "check": [],
+      "proven_functions": []
+     },
+     "during": {
+      "exit": 1,
+      "ok": false,
+      "out_of_memory": false,
+      "problems": [
+       {
+        "code": "E310",
+        "message": "'py' needs the 'ffi' effect, which this run does not allow"
+       }
+      ],
+      "ran": true,
+      "refused_effect": "ffi",
+      "stdout": "",
+      "timed_out": false
+     },
+     "evidence": "audit: ffi; run: E310 refused ffi",
+     "observed": false,
+     "verdict": "caught-before-run"
+    }
+   }
+  },
+  {
+   "category": 9,
+   "category_key": "09_dangerous_module/",
+   "category_title": "Reaching a dangerous module (subprocess / child_process / os.system)",
+   "danger_line": {
+    "deno": 5,
+    "python": 8,
+    "velaris": 3
+   },
+   "dangerous": true,
+   "description": "Reaches os.system (child_process in JavaScript) from a helper that claims to \"notify\".",
+   "id": "09b",
+   "kind": "ffi",
+   "name": "b_os_system",
+   "needs": [
+    "io"
+   ],
+   "stdin": "",
+   "tools": {
+    "deno": {
+     "before": {
+      "accepted_lines": [
+       5
+      ],
+      "diagnostics": [],
+      "exit": {
+       "check": 0,
+       "lint": 0
+      },
+      "on_target": []
+     },
+     "during": {
+      "exit": 1,
+      "memory_cap": "--max-old-space-size=256",
+      "stderr": "error: Uncaught (in promise) NotCapable: Requires env access to \"COMSPEC\", run again with the --allow-env flag",
+      "stdout": "",
+      "timed_out": false
+     },
+     "evidence": "run: exit 1, NotCapable: Requires env access",
+     "observed": false,
+     "verdict": "caught-during-run"
+    },
+    "python": {
+     "before": {
+      "static": "none"
+     },
+     "during": {
+      "exit": 0,
+      "memory_cap": "job object",
+      "stderr": "",
+      "stdout": "spawned-child-ran\nnotified (exit 0)",
+      "timed_out": false
+     },
+     "evidence": "static step: none (by construction); run: exit 0; effect happened",
+     "observed": true,
+     "verdict": "missed"
+    },
+    "velaris": {
+     "before": {
+      "audit_effects": [
+       "ffi",
+       "io"
+      ],
+      "audit_ffi_modules": [
+       "os"
+      ],
+      "beyond_needs": [
+       "ffi"
+      ],
+      "check": [],
+      "proven_functions": []
+     },
+     "during": {
+      "exit": 1,
+      "ok": false,
+      "out_of_memory": false,
+      "problems": [
+       {
+        "code": "E310",
+        "message": "'py_int' needs the 'ffi' effect, which this run does not allow"
+       }
+      ],
+      "ran": true,
+      "refused_effect": "ffi",
+      "stdout": "",
+      "timed_out": false
+     },
+     "evidence": "audit: ffi; run: E310 refused ffi",
+     "observed": false,
+     "verdict": "caught-before-run"
+    }
+   }
+  },
+  {
+   "category": 9,
+   "category_key": "09_dangerous_module/",
+   "category_title": "Reaching a dangerous module (subprocess / child_process / os.system)",
+   "danger_line": {
+    "deno": 7,
+    "python": 9,
+    "velaris": 8
+   },
+   "dangerous": true,
+   "description": "Touches no module at all: it prints a shell command for the caller to run.",
+   "id": "09c",
+   "kind": "stdout",
+   "name": "c_command_on_stdout",
+   "needs": [
+    "io"
+   ],
+   "stdin": "",
+   "tools": {
+    "deno": {
+     "before": {
+      "accepted_lines": [
+       7
+      ],
+      "diagnostics": [],
+      "exit": {
+       "check": 0,
+       "lint": 0
+      },
+      "on_target": []
+     },
+     "during": {
+      "exit": 0,
+      "memory_cap": "--max-old-space-size=256",
+      "stderr": "",
+      "stdout": "build finished\nto clean up, run: rm -rf build",
+      "timed_out": false
+     },
+     "evidence": "run: exit 0",
+     "observed": null,
+     "verdict": "missed"
+    },
+    "python": {
+     "before": {
+      "static": "none"
+     },
+     "during": {
+      "exit": 0,
+      "memory_cap": "job object",
+      "stderr": "",
+      "stdout": "build finished\nto clean up, run: rm -rf build",
+      "timed_out": false
+     },
+     "evidence": "static step: none (by construction); run: exit 0",
+     "observed": null,
+     "verdict": "missed"
+    },
+    "velaris": {
+     "before": {
+      "audit_effects": [
+       "io"
+      ],
+      "audit_ffi_modules": [],
+      "beyond_needs": [],
+      "check": [],
+      "proven_functions": []
+     },
+     "during": {
+      "exit": 0,
+      "ok": true,
+      "out_of_memory": false,
+      "problems": [],
+      "ran": true,
+      "refused_effect": null,
+      "stdout": "build finished\nto clean up, run: rm -rf build",
+      "timed_out": false
+     },
+     "evidence": "run: exit 0",
+     "observed": null,
+     "verdict": "missed"
+    }
+   },
+   "velaris_miss_reason": "the only effect is io, which the task needs; the danger is in what a caller does with the text, and no effect system or permission flag sees stdout as dangerous"
+  },
+  {
+   "category": 10,
+   "category_key": "10_control/",
+   "category_title": "A plain correct program that must NOT be flagged",
+   "danger_line": {
+    "deno": null,
+    "python": null,
+    "velaris": null
+   },
+   "dangerous": false,
+   "description": "Sums a list of expenses and prints the total.",
+   "id": "10a",
+   "kind": "none",
+   "name": "a_expense_total",
+   "needs": [
+    "io"
+   ],
+   "stdin": "",
+   "tools": {
+    "deno": {
+     "before": {
+      "accepted_lines": [],
+      "diagnostics": [],
+      "exit": {
+       "check": 0,
+       "lint": 0
+      },
+      "on_target": []
+     },
+     "during": {
+      "exit": 0,
+      "memory_cap": "--max-old-space-size=256",
+      "stderr": "",
+      "stdout": "3 expense(s), total 59500",
+      "timed_out": false
+     },
+     "evidence": "run: exit 0",
+     "observed": null,
+     "verdict": "not-applicable"
+    },
+    "python": {
+     "before": {
+      "static": "none"
+     },
+     "during": {
+      "exit": 0,
+      "memory_cap": "job object",
+      "stderr": "",
+      "stdout": "3 expense(s), total 59500",
+      "timed_out": false
+     },
+     "evidence": "static step: none (by construction); run: exit 0",
+     "observed": null,
+     "verdict": "not-applicable"
+    },
+    "velaris": {
+     "before": {
+      "audit_effects": [
+       "io"
+      ],
+      "audit_ffi_modules": [],
+      "beyond_needs": [],
+      "check": [],
+      "proven_functions": [
+       "total_of"
+      ]
+     },
+     "during": {
+      "exit": 0,
+      "ok": true,
+      "out_of_memory": false,
+      "problems": [],
+      "ran": true,
+      "refused_effect": null,
+      "stdout": "3 expense(s), total 59500",
+      "timed_out": false
+     },
+     "evidence": "run: exit 0",
+     "observed": null,
+     "verdict": "not-applicable"
+    }
+   }
+  },
+  {
+   "category": 10,
+   "category_key": "10_control/",
+   "category_title": "A plain correct program that must NOT be flagged",
+   "danger_line": {
+    "deno": null,
+    "python": null,
+    "velaris": null
+   },
+   "dangerous": false,
+   "description": "Counts the words on one line of input.",
+   "id": "10b",
+   "kind": "none",
+   "name": "b_word_count",
+   "needs": [
+    "io"
+   ],
+   "stdin": "the quick brown fox\n",
+   "tools": {
+    "deno": {
+     "before": {
+      "accepted_lines": [],
+      "diagnostics": [],
+      "exit": {
+       "check": 0,
+       "lint": 0
+      },
+      "on_target": []
+     },
+     "during": {
+      "exit": 0,
+      "memory_cap": "--max-old-space-size=256",
+      "stderr": "",
+      "stdout": "4 word(s)",
+      "timed_out": false
+     },
+     "evidence": "run: exit 0",
+     "observed": null,
+     "verdict": "not-applicable"
+    },
+    "python": {
+     "before": {
+      "static": "none"
+     },
+     "during": {
+      "exit": 0,
+      "memory_cap": "job object",
+      "stderr": "",
+      "stdout": "4 word(s)",
+      "timed_out": false
+     },
+     "evidence": "static step: none (by construction); run: exit 0",
+     "observed": null,
+     "verdict": "not-applicable"
+    },
+    "velaris": {
+     "before": {
+      "audit_effects": [
+       "io"
+      ],
+      "audit_ffi_modules": [],
+      "beyond_needs": [],
+      "check": [],
+      "proven_functions": [
+       "count_words"
+      ]
+     },
+     "during": {
+      "exit": 0,
+      "ok": true,
+      "out_of_memory": false,
+      "problems": [],
+      "ran": true,
+      "refused_effect": null,
+      "stdout": "4 word(s)",
+      "timed_out": false
+     },
+     "evidence": "run: exit 0",
+     "observed": null,
+     "verdict": "not-applicable"
+    }
+   }
+  },
+  {
+   "category": 10,
+   "category_key": "10_control/",
+   "category_title": "A plain correct program that must NOT be flagged",
+   "danger_line": {
+    "deno": null,
+    "python": null,
+    "velaris": null
+   },
+   "dangerous": false,
+   "description": "Uses the host's math library for a square root and declares exactly that (ffi:math in Velaris; Deno and Python need nothing).",
+   "id": "10c",
+   "kind": "none",
+   "name": "c_sqrt_via_math",
+   "needs": [
+    "io",
+    "ffi:math"
+   ],
+   "stdin": "",
+   "tools": {
+    "deno": {
+     "before": {
+      "accepted_lines": [],
+      "diagnostics": [],
+      "exit": {
+       "check": 0,
+       "lint": 0
+      },
+      "on_target": []
+     },
+     "during": {
+      "exit": 0,
+      "memory_cap": "--max-old-space-size=256",
+      "stderr": "",
+      "stdout": "sqrt(2) is about 1414",
+      "timed_out": false
+     },
+     "evidence": "run: exit 0",
+     "observed": null,
+     "verdict": "not-applicable"
+    },
+    "python": {
+     "before": {
+      "static": "none"
+     },
+     "during": {
+      "exit": 0,
+      "memory_cap": "job object",
+      "stderr": "",
+      "stdout": "sqrt(2) is about 1414",
+      "timed_out": false
+     },
+     "evidence": "static step: none (by construction); run: exit 0",
+     "observed": null,
+     "verdict": "not-applicable"
+    },
+    "velaris": {
+     "before": {
+      "audit_effects": [
+       "ffi",
+       "io"
+      ],
+      "audit_ffi_modules": [
+       "math"
+      ],
+      "beyond_needs": [],
+      "check": [],
+      "proven_functions": []
+     },
+     "during": {
+      "exit": 0,
+      "ok": true,
+      "out_of_memory": false,
+      "problems": [],
+      "ran": true,
+      "refused_effect": null,
+      "stdout": "sqrt(2) is about 1414",
+      "timed_out": false
+     },
+     "evidence": "run: exit 0",
+     "observed": null,
+     "verdict": "not-applicable"
+    }
+   }
+  }
+ ],
+ "schema": "velaris.benchmark/1",
+ "summary": [
+  {
+   "number": 1,
+   "title": "A file write hidden inside a helper function",
+   "tools": {
+    "deno": {
+     "caught-before-run": 0,
+     "caught-during-run": 3,
+     "false-positive": 0,
+     "missed": 0,
+     "not-applicable": 0,
+     "tool-absent": 0
+    },
+    "python": {
+     "caught-before-run": 0,
+     "caught-during-run": 0,
+     "false-positive": 0,
+     "missed": 3,
+     "not-applicable": 0,
+     "tool-absent": 0
+    },
+    "velaris": {
+     "caught-before-run": 3,
+     "caught-during-run": 0,
+     "false-positive": 0,
+     "missed": 0,
+     "not-applicable": 0,
+     "tool-absent": 0
+    }
+   }
+  },
+  {
+   "number": 2,
+   "title": "A network call hidden inside a helper",
+   "tools": {
+    "deno": {
+     "caught-before-run": 0,
+     "caught-during-run": 3,
+     "false-positive": 0,
+     "missed": 0,
+     "not-applicable": 0,
+     "tool-absent": 0
+    },
+    "python": {
+     "caught-before-run": 0,
+     "caught-during-run": 0,
+     "false-positive": 0,
+     "missed": 3,
+     "not-applicable": 0,
+     "tool-absent": 0
+    },
+    "velaris": {
+     "caught-before-run": 3,
+     "caught-during-run": 0,
+     "false-positive": 0,
+     "missed": 0,
+     "not-applicable": 0,
+     "tool-absent": 0
+    }
+   }
+  },
+  {
+   "number": 3,
+   "title": "Division by a value that comes from input and can be zero",
+   "tools": {
+    "deno": {
+     "caught-before-run": 0,
+     "caught-during-run": 0,
+     "false-positive": 0,
+     "missed": 3,
+     "not-applicable": 0,
+     "tool-absent": 0
+    },
+    "python": {
+     "caught-before-run": 0,
+     "caught-during-run": 3,
+     "false-positive": 0,
+     "missed": 0,
+     "not-applicable": 0,
+     "tool-absent": 0
+    },
+    "velaris": {
+     "caught-before-run": 2,
+     "caught-during-run": 1,
+     "false-positive": 0,
+     "missed": 0,
+     "not-applicable": 0,
+     "tool-absent": 0
+    }
+   }
+  },
+  {
+   "number": 4,
+   "title": "An off-by-one read past the end of a list",
+   "tools": {
+    "deno": {
+     "caught-before-run": 0,
+     "caught-during-run": 0,
+     "false-positive": 0,
+     "missed": 3,
+     "not-applicable": 0,
+     "tool-absent": 0
+    },
+    "python": {
+     "caught-before-run": 0,
+     "caught-during-run": 2,
+     "false-positive": 0,
+     "missed": 1,
+     "not-applicable": 0,
+     "tool-absent": 0
+    },
+    "velaris": {
+     "caught-before-run": 2,
+     "caught-during-run": 0,
+     "false-positive": 0,
+     "missed": 1,
+     "not-applicable": 0,
+     "tool-absent": 0
+    }
+   }
+  },
+  {
+   "number": 5,
+   "title": "Integer overflow",
+   "tools": {
+    "deno": {
+     "caught-before-run": 0,
+     "caught-during-run": 0,
+     "false-positive": 0,
+     "missed": 3,
+     "not-applicable": 0,
+     "tool-absent": 0
+    },
+    "python": {
+     "caught-before-run": 0,
+     "caught-during-run": 0,
+     "false-positive": 0,
+     "missed": 3,
+     "not-applicable": 0,
+     "tool-absent": 0
+    },
+    "velaris": {
+     "caught-before-run": 0,
+     "caught-during-run": 3,
+     "false-positive": 0,
+     "missed": 0,
+     "not-applicable": 0,
+     "tool-absent": 0
+    }
+   }
+  },
+  {
+   "number": 6,
+   "title": "An ignored failure (a parse that can fail, not handled)",
+   "tools": {
+    "deno": {
+     "caught-before-run": 0,
+     "caught-during-run": 0,
+     "false-positive": 0,
+     "missed": 3,
+     "not-applicable": 0,
+     "tool-absent": 0
+    },
+    "python": {
+     "caught-before-run": 0,
+     "caught-during-run": 3,
+     "false-positive": 0,
+     "missed": 0,
+     "not-applicable": 0,
+     "tool-absent": 0
+    },
+    "velaris": {
+     "caught-before-run": 3,
+     "caught-during-run": 0,
+     "false-positive": 0,
+     "missed": 0,
+     "not-applicable": 0,
+     "tool-absent": 0
+    }
+   }
+  },
+  {
+   "number": 7,
+   "title": "An infinite loop",
+   "tools": {
+    "deno": {
+     "caught-before-run": 0,
+     "caught-during-run": 2,
+     "false-positive": 0,
+     "missed": 1,
+     "not-applicable": 0,
+     "tool-absent": 0
+    },
+    "python": {
+     "caught-before-run": 0,
+     "caught-during-run": 2,
+     "false-positive": 0,
+     "missed": 1,
+     "not-applicable": 0,
+     "tool-absent": 0
+    },
+    "velaris": {
+     "caught-before-run": 0,
+     "caught-during-run": 2,
+     "false-positive": 0,
+     "missed": 1,
+     "not-applicable": 0,
+     "tool-absent": 0
+    }
+   }
+  },
+  {
+   "number": 8,
+   "title": "Runaway memory growth",
+   "tools": {
+    "deno": {
+     "caught-before-run": 3,
+     "caught-during-run": 0,
+     "false-positive": 0,
+     "missed": 0,
+     "not-applicable": 0,
+     "tool-absent": 0
+    },
+    "python": {
+     "caught-before-run": 0,
+     "caught-during-run": 3,
+     "false-positive": 0,
+     "missed": 0,
+     "not-applicable": 0,
+     "tool-absent": 0
+    },
+    "velaris": {
+     "caught-before-run": 0,
+     "caught-during-run": 3,
+     "false-positive": 0,
+     "missed": 0,
+     "not-applicable": 0,
+     "tool-absent": 0
+    }
+   }
+  },
+  {
+   "number": 9,
+   "title": "Reaching a dangerous module (subprocess / child_process / os.system)",
+   "tools": {
+    "deno": {
+     "caught-before-run": 0,
+     "caught-during-run": 2,
+     "false-positive": 0,
+     "missed": 1,
+     "not-applicable": 0,
+     "tool-absent": 0
+    },
+    "python": {
+     "caught-before-run": 0,
+     "caught-during-run": 0,
+     "false-positive": 0,
+     "missed": 3,
+     "not-applicable": 0,
+     "tool-absent": 0
+    },
+    "velaris": {
+     "caught-before-run": 2,
+     "caught-during-run": 0,
+     "false-positive": 0,
+     "missed": 1,
+     "not-applicable": 0,
+     "tool-absent": 0
+    }
+   }
+  },
+  {
+   "number": 10,
+   "title": "A plain correct program that must NOT be flagged",
+   "tools": {
+    "deno": {
+     "caught-before-run": 0,
+     "caught-during-run": 0,
+     "false-positive": 0,
+     "missed": 0,
+     "not-applicable": 3,
+     "tool-absent": 0
+    },
+    "python": {
+     "caught-before-run": 0,
+     "caught-during-run": 0,
+     "false-positive": 0,
+     "missed": 0,
+     "not-applicable": 3,
+     "tool-absent": 0
+    },
+    "velaris": {
+     "caught-before-run": 0,
+     "caught-during-run": 0,
+     "false-positive": 0,
+     "missed": 0,
+     "not-applicable": 3,
+     "tool-absent": 0
+    }
+   }
+  }
+ ],
+ "totals": {
+  "deno": {
+   "caught-before-run": 3,
+   "caught-during-run": 10,
+   "false-positive": 0,
+   "missed": 14,
+   "not-applicable": 3,
+   "tool-absent": 0
+  },
+  "python": {
+   "caught-before-run": 0,
+   "caught-during-run": 13,
+   "false-positive": 0,
+   "missed": 14,
+   "not-applicable": 3,
+   "tool-absent": 0
+  },
+  "velaris": {
+   "caught-before-run": 15,
+   "caught-during-run": 9,
+   "false-positive": 0,
+   "missed": 3,
+   "not-applicable": 3,
+   "tool-absent": 0
+  }
+ }
+}

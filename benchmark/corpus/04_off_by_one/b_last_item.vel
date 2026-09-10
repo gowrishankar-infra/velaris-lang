@@ -1,0 +1,8 @@
+// Takes the last item at position length instead of length - 1.
+fn last(xs: List of Int) -> Int {
+    return get(xs, length(xs))  // DANGER
+}
+
+fn main() uses io {
+    print(last([2500, 45000, 12000]))
+}
