@@ -685,7 +685,7 @@ def results_markdown(meta, categories, rows, summary, tot):
                  "DenoLand.Deno`, or see deno.com) and rerun.")
     L.append(f"- Timeout {TIMEOUT} s for every tool. Memory cap "
              f"{MEMORY_MB} MB: Velaris via `max_memory_mb` "
-             f"({'enforced' if meta['velaris_memory_cap'] else 'recorded but NOT enforced on Windows - the timeout is what stops a memory-growth program here'}); "
+             f"({meta['velaris_memory_cap']} on this platform - enforced on Linux, best-effort on macOS, not applied on Windows; where it does not hold the timeout is what stops a memory-growth program); "
              f"Deno via `--v8-flags=--max-old-space-size={MEMORY_MB}`; "
              f"Python via {meta['python_memory_cap']}.")
     L.append(f"- Programs: {len(rows)}"
@@ -924,8 +924,9 @@ def narrative(meta, rows, tot):
                  "the timeout (E610), not the memory cap: the interpreter "
                  "allocates slowly enough that 5 seconds did not reach "
                  f"{MEMORY_MB} MB"
-                 + (", and on Windows the cap is recorded but not enforced "
-                    "in any case" if not meta["velaris_memory_cap"] else "")
+                 + (f", and on this platform the cap is "
+                    f"{meta['velaris_memory_cap']} in any case"
+                    if meta["velaris_memory_cap"] != "enforced" else "")
                  + ". For Deno and Python the cap and the deadline race, "
                  "and which fires first varies with the machine's load, "
                  "so those cells record only that the program was "
@@ -1026,7 +1027,11 @@ def main(argv=None):
             "platform": f"{platform.system()} {platform.release()} "
                         f"{platform.machine()}",
             "prover": prover, "native": native,
-            "velaris_memory_cap": os.name != "nt",
+            # RLIMIT_AS: enforced on Linux, best-effort on macOS, not
+            # applied on Windows - the harness asserts nothing about it
+            "velaris_memory_cap": {"linux": "enforced",
+                                   "darwin": "best-effort"}.get(
+                sys.platform, "not applied"),
             "python_memory_cap": None,
             "timeout_s": TIMEOUT, "memory_mb": MEMORY_MB,
             "quick": args.quick}

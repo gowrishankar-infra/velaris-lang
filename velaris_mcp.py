@@ -111,7 +111,9 @@ TOOLS = [
                 "max_memory_mb": {
                     "type": "integer",
                     "description": ("memory cap in MB. Default 512. "
-                                    "Enforced on Linux and macOS."),
+                                    "Enforced on Linux, best-effort on "
+                                    "macOS, not applied on Windows; the "
+                                    "timeout applies everywhere."),
                 },
             },
             "required": ["source"],

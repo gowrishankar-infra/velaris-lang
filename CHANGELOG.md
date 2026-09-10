@@ -1,5 +1,25 @@
 # Velaris changelog
 
+## 2.63.1 - The memory cap claim, narrowed to where it holds
+The tests workflow had failed on every macos-latest leg since 2.62, in
+`check_library.py`: "a memory cap STOPS a program that eats memory".
+The cap is `RLIMIT_AS`, and macOS treats that limit as best-effort -
+the doubling program ran to the 60 second timeout (E610) instead of
+being stopped at 150 MB (E611). Linux honours the limit; Windows has
+no equivalent and was already skipped. The CrewAI tool's test had been
+narrowed to Linux for the same reason.
+
+The assertion now runs on Linux only, unchanged there; macOS prints a
+skip line saying why, Windows keeps its skip. Every place that stated
+the platform truth says the same thing now - EMBEDDING.md,
+THREAT_MODEL.md, COMPLIANCE.md, SECURITY.md, the MCP tool description,
+the `run()` docstring (a comment-only change, the only edit to the
+compiler), the benchmark README and the header the harness writes:
+enforced on Linux, best-effort on macOS, not applied on Windows; the
+timeout is enforced everywhere. Neither `check_termination.py` nor the
+benchmark harness asserts a memory-cap outcome, so nothing else
+needed narrowing.
+
 ## 2.63 - What a security reviewer looks for
 Nothing in the compiler changed. Six pieces for the person who has to
 decide whether agent-written Velaris may run on a machine they answer

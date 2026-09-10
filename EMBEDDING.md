@@ -49,11 +49,13 @@ separate process that is killed on breach, and the result says which
 limit it hit (E610 for time, E611 for memory). The budget still holds
 inside that process.
 
-Memory caps use the operating system's address-space limit, enforced
-on Linux and macOS; on Windows the timeout is enforced and the memory
-cap is recorded but not applied. An agent framework calling `run` in a
-loop should set both. The MCP server and the HTTP door default to 30
-seconds and 512 MB.
+Memory caps use the operating system's address-space limit
+(`RLIMIT_AS`): enforced on Linux; best-effort on macOS, where the
+limit is set but not reliably honoured and the timeout is what stops
+a runaway; not applied on Windows, where the cap is recorded only. The
+timeout is enforced on every platform. An agent framework calling
+`run` in a loop should set both. The MCP server and the HTTP door
+default to 30 seconds and 512 MB.
 
 ## What `run` guarantees
 

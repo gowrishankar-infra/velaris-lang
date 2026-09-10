@@ -255,7 +255,7 @@ Usage:
 import json
 import os
 
-VERSION = "2.63.0"
+VERSION = "2.63.1"
 import re
 import sys
 from dataclasses import dataclass, field
@@ -7736,9 +7736,11 @@ def run(source: str, *, path: str | None = None,
     that is killed on breach, and the result says which limit it hit.
     An agent framework calling this ten thousand times needs both.
 
-    Memory limits use the OS's address-space limit and are enforced on
-    Linux and macOS; on Windows the limit is recorded but not enforced,
-    and out_of_memory stays False. The timeout is enforced everywhere.
+    Memory limits use the OS's address-space limit (RLIMIT_AS): enforced
+    on Linux; best-effort on macOS, where the limit is set but not
+    reliably honoured and the timeout is what stops a runaway; not
+    applied on Windows, where the limit is recorded and out_of_memory
+    stays False. The timeout is enforced everywhere.
     """
     import io as _io
     import contextlib

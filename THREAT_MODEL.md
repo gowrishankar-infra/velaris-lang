@@ -44,7 +44,7 @@ on.
 |---|---|---|
 | A program that reads or writes files, reaches the network, asks the clock, draws randomness, or calls Python when the operator did not allow it | The effect budget: `--allow io` refuses `fs`, `net`, `clock`, `rand` and `ffi` at the call, whatever the source declares, and the refusal cannot be caught | `check_sandbox.py` - 16 escape attempts refused, 6 honest programs still run |
 | A program that reaches a Python module outside the ones the operator named | The module allow-list: `--allow io,ffi:math` refuses `ffi:os` with E311, through `py`, `py_json`, `py_new`, a submodule path, and the bounded child process | `check_sandbox.py` - four ways round the list, all refused |
-| A program that never ends, or eats memory | `velaris.run(timeout=, max_memory_mb=)` runs the program in a child process killed on breach and reports E610 or E611; the MCP server and the HTTP door default to 30 s and 512 MB | `check_library.py` - a program that never ends is stopped in 2 s; a program that doubles a text is stopped at 150 MB on Linux and macOS |
+| A program that never ends, or eats memory | `velaris.run(timeout=, max_memory_mb=)` runs the program in a child process killed on breach and reports E610 or E611; the MCP server and the HTTP door default to 30 s and 512 MB | `check_library.py` - a program that never ends is stopped in 2 s on every platform; a program that doubles a text is stopped at 150 MB, asserted on Linux only (best-effort on macOS, not applied on Windows - see below) |
 | A promise that is false - a contract the code does not keep, a division by a value that can be zero, a list read that can go past the end | The prover: `requires`/`ensures`/`invariant` are checked by Z3 before running (E700, E701, E703, E705, E706) with an exact counterexample; a premise it cannot translate abandons the proof to a runtime check rather than proving with a gap | `check_refusals.py` - 21 wrong programs each refused with the specific code; `fuzz_native.py` - random programs run natively and interpreted must agree exactly, so a proven-and-compiled function cannot behave differently from an interpreted one |
 | A failure the program ignores - a parse, a map lookup, a pop, a network call, a Python call that can fail | Fallibility in the signature (`or fail`), and E520 for any fallible call not handled with `check` or passed up with `try` | `check_fallible.py` - every builtin in `FALLIBLE_BUILTINS` is refused when ignored and formats its failure when caught; a builtin added without a recipe fails the suite |
 | A loop that never ends, before running it | The termination rule (SPEC.md 9.5): a loop is `terminates` only when a counter moves one step toward a limit the body leaves alone, `unshown` otherwise; reported by `audit` as `loops_unshown` and refused by `check --strict` as E612 | `check_termination.py` - 44 adversarial loops, each with its required verdict; the rule was wrong twice while being built, both times refusing a loop that ends, never the reverse |
@@ -87,9 +87,11 @@ none of the 7. Under the same rules Deno caught 29 and plain Python
 - **Code not written in Velaris.** A model asked for Velaris may hand
   back Python. The guard applies only to what the Velaris runtime
   runs.
-- **Memory caps on Windows.** `max_memory_mb` uses the OS
-  address-space limit, which Windows does not offer the same way; the
-  cap is recorded and not enforced there. The timeout is enforced on
+- **Memory caps outside Linux.** `max_memory_mb` uses the OS
+  address-space limit (`RLIMIT_AS`). It is enforced on Linux. On macOS
+  it is best-effort: the limit is set but not reliably honoured, and
+  in the suite the runaway program reached the timeout instead. On
+  Windows it is recorded and not applied. The timeout is enforced on
   every platform. (The benchmark harness wraps its own children in a
   Windows job object; the compiler does not do this for you.)
 - **A tampered compiler.** Velaris is one Python file running in the
@@ -121,7 +123,7 @@ none of the 7. Under the same rules Deno caught 29 and plain Python
 | Secrets in the environment | Run agent-written programs with a clean environment. `io` reads `env()`. |
 | Data leaves through `net` | Do not grant `net` to code you have not read. If the task needs it, enforce host restrictions outside Velaris (a network namespace, an egress proxy, a firewall rule); Velaris has no host list. |
 | A program does damage within `fs` | Do not grant `fs` to code you have not read. If the task needs it, run in a directory that holds nothing else, as a user that can reach nothing else. |
-| Runaway time or memory | Always set both `timeout` and `max_memory_mb`; the MCP server and HTTP door do by default. On Windows, add a job object or run on Linux. |
+| Runaway time or memory | Always set both `timeout` and `max_memory_mb`; the MCP server and HTTP door do by default. The cap holds on Linux; on macOS or Windows add an OS-level limit (a job object on Windows) or run on Linux. |
 | The result is wrong and no promise catches it | Require contracts on the functions that matter (`velaris proofs --min 80` in CI) and read the audit's `contract_coverage` list. A program with no promises has proven nothing. |
 | Output is trusted downstream | Never pipe a program's stdout into a shell or an interpreter. Treat output as data. |
 | The model wrote something other than Velaris | Check the file extension and run `velaris check` first; refuse to run anything the checker refuses. |

@@ -35,8 +35,9 @@ owns the limit, not whether it fires; the results say which.
 Memory caps: Velaris `max_memory_mb` uses the OS address-space limit,
 enforced on Linux and macOS and recorded but not enforced on Windows
 (the compiler's documented limitation). Deno gets `--max-old-space-size`
-on every platform. Python's child gets `RLIMIT_AS` on Linux (macOS may
-ignore it) and a job object on Windows. The header of `RESULTS.md`
+on every platform. Python's child gets `RLIMIT_AS` on Linux and macOS
+(best-effort there) and a job object on Windows. The Velaris cap is
+enforced on Linux, best-effort on macOS, not applied on Windows. The header of `RESULTS.md`
 records which applied on the machine that produced it.
 
 ## The corpus

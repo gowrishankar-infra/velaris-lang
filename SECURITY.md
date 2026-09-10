@@ -51,8 +51,9 @@ fix ships before the details do; the credit is public either way.
 
 What is not in scope of the challenge, because it is documented as not
 defended: anything a granted `ffi` module does, resource use below a
-limit, the meaning of printed text, the memory cap on Windows, and
-programs not written in Velaris.
+limit, the meaning of printed text, the memory cap anywhere but Linux
+(best-effort on macOS, not applied on Windows), and programs not
+written in Velaris.
 
 ## Verifying a download
 
