@@ -43,6 +43,28 @@ else:                                     # pragma: no cover
 
 PROTOCOL = "2024-11-05"
 
+# One pool per distinct budget a caller asks for, made the first time
+# that budget is seen and closed when the server stops. An assistant
+# calls velaris_run over and over inside one conversation; without this
+# each call paid a Python interpreter's startup. The budget still comes
+# from the request, and a pool never mixes two of them.
+POOLS = None
+
+
+def pools():
+    global POOLS
+    if POOLS is None:
+        POOLS = velaris.PoolRegistry()
+    return POOLS
+
+
+def close_pools() -> None:
+    global POOLS
+    registry, POOLS = POOLS, None
+    if registry is not None:
+        registry.close()
+
+
 TOOLS = [
     {
         "name": "velaris_card",
@@ -116,9 +138,10 @@ TOOLS = [
                 "max_memory_mb": {
                     "type": "integer",
                     "description": ("memory cap in MB. Default 512. "
-                                    "Enforced on Linux, best-effort on "
-                                    "macOS, not applied on Windows; the "
-                                    "timeout applies everywhere."),
+                                    "Enforced on Linux (RLIMIT_AS) and "
+                                    "on Windows (a job object); "
+                                    "best-effort on macOS. The timeout "
+                                    "applies everywhere."),
                 },
             },
             "required": ["source"],
@@ -147,7 +170,7 @@ def handle_tool(name: str, args: dict) -> dict:
     if name == "velaris_run":
         allow = set(args.get("allow") or ["io"])
         try:
-            result = velaris.run(
+            result = pools().run(
                 source, allow=allow,
                 stdin=args.get("stdin", ""),
                 args=args.get("args") or [],
@@ -181,6 +204,13 @@ def reply(msg_id, result=None, error=None) -> None:
 
 
 def main() -> int:
+    try:
+        return serve()
+    finally:
+        close_pools()                     # no worker outlives the server
+
+
+def serve() -> int:
     for line in sys.stdin:
         line = line.strip()
         if not line:
@@ -211,8 +241,10 @@ def main() -> int:
         elif method in ("notifications/initialized", "initialized"):
             continue                              # no reply expected
         elif method == "shutdown":
+            close_pools()
             reply(msg_id, None)
         elif method == "exit":
+            close_pools()
             return 0
         elif msg_id is not None:
             reply(msg_id, error={"code": -32601,

@@ -1,5 +1,196 @@
 # Velaris changelog
 
+## 3.1 - A pool that keeps its budget, memory caps on Windows, and a lockfile
+
+**velaris.Pool: bounded runs without a new interpreter every time.**
+Every run with a `timeout` or a `max_memory_mb` started a Python
+process, about a tenth of a second before a line of Velaris was read.
+An agent platform calling `run` thousands of times an hour paid that
+every time.
+
+    pool = velaris.Pool(size=4, allow={"io"}, timeout=30,
+                        max_memory_mb=512)
+    result = pool.run(source)          # the same RunResult run() returns
+    pool.close()                       # also a context manager
+
+Measured by `check_pool.py` on the machine this was written on, 200
+sequential bounded runs of a small program: **46.56 s a process at a
+time, 0.48 s on a pool** - 233 ms each against 2.4 ms each, 96.7x. The
+suite asserts at least 3x and prints both numbers, so the claim is
+re-measured wherever it runs rather than quoted from here.
+
+The speed is why it exists. The isolation is why it can be used, and
+these are the rules, each one asserted in `check_pool.py`:
+
+- **The budget is the pool's, not the program's.** It is parsed once,
+  when the pool is made, and installed by each worker at startup.
+  `pool.run` takes no `allow` argument - there is nowhere for a caller
+  or a program to ask for more, and a different budget means a
+  different pool. The budget is re-asserted from the pool before every
+  program, so an `@N` count is spent per program rather than shared
+  across a worker's whole life. A program that reaches into the
+  compiler through a granted `ffi` module and adds `fs` to the live
+  budget - the suite has one that does exactly this - cannot leave it
+  added for the next program.
+
+- **A worker is used once unless the run was clean.** Anything other
+  than `ok` - a refused effect, a failure that escaped, a program that
+  did not compile, the timeout, the memory cap - kills the worker and
+  starts a fresh one. This is stricter than it has to be: a program
+  that failed to compile never ran, so it left nothing behind, and
+  retiring its worker costs a restart. It is stricter on purpose,
+  because "only a clean run hands its worker back" is a rule a reader
+  can check in one line of `Pool.run`, and the weaker version is a
+  rule about which failures are harmless.
+
+- **A reused worker starts empty.** Before every program the child
+  resets every module-level mutable there is. Searching for them was
+  the work; the list, exhaustively, is `PROGRAM_ARGS`,
+  `EFFECT_BUDGET`, `FFI_MODULES`, `FS_GRANTS`, `NET_GRANTS`,
+  `OP_LIMITS`, `OP_COUNTS`, `PY_OBJECTS` (handles from `py_new`,
+  closed by the program or not), `PY_NEXT` (so handle numbering starts
+  again), `TRACE`, and `_NATIVE_KEEPALIVE` - which holds the JIT
+  engines and, through them, the native text arena. There is no proof
+  cache in memory to clear: `check_proofs` keeps its cache on disk and
+  only when asked (`use_cache=True`), and the library never asks. Three
+  things that belong to the process rather than the module are put
+  back too, because a granted `ffi` module can change all three: the
+  working directory, the environment, and the recursion limit the
+  interpreter raises. They are named in `MUTABLE_GLOBALS` and
+  `reset_program_state`, and `check_pool.py` parses `velaris.py`'s own
+  module-level assignments and fails if a mutable one appears in
+  neither that list nor its list of constants - so the next person to
+  add a global cannot forget. That is now rule 6 in ARCHITECTURE.md.
+
+- **The parent owns the deadline.** A worker that has not answered
+  within `timeout` is killed by the parent, not asked to stop, and a
+  replacement is started; the call returns E610.
+
+- **A program cannot reach the pipe.** The worker keeps private
+  duplicates of its own file descriptors 0 and 1 for the protocol and
+  points the program's at the null device. The suite has a program
+  that runs `echo` through `ffi:os` straight at file descriptor 1; the
+  shell's output goes nowhere and the next program still runs.
+
+- **Closing kills every worker**, including one still running a
+  program. A pool collected without `close()` is closed by its
+  finalizer, one that outlives the interpreter is closed at exit, and
+  a worker whose pipe closes ends by itself. The suite checks all
+  three against the operating system's own answer about the process
+  ids, not the parent's bookkeeping.
+
+`velaris.PoolRegistry` keeps one pool per distinct budget and makes
+each the first time that budget is asked for - what a server needs,
+since it learns the budget from the request. The MCP server and the
+HTTP door each keep one and close it on shutdown; a caller who varies
+the budget every time cannot make either hold processes without end,
+because the registry keeps at most eight pools and closes the least
+recently used. The CrewAI and LangChain tools stay on plain `run`: a
+crew's tool is not called often enough for a pool to pay for itself,
+and one process per call is easier for a reviewer to reason about.
+
+**Memory caps are enforced on Windows.** Windows has no `RLIMIT_AS`.
+The equivalent is a job object with `JOB_OBJECT_LIMIT_PROCESS_MEMORY`,
+which has to exist before the child does: the child is created
+suspended, assigned to the job, and only then resumed, so no
+instruction of it runs outside the cap. An allocation past the cap
+fails and reaches a Python child as `MemoryError`, which is already
+what `_run_bounded` reads as E611. `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`
+means closing the handle kills whatever is inside, which is also how a
+pool kills a Windows worker. It is `ctypes`; no new dependency. If any
+step fails - `CreateJobObject`, `SetInformationJobObject`,
+`AssignProcessToJobObject` - the cap is recorded and not enforced,
+which is exactly what Windows did before 3.1, rather than the run
+failing.
+
+So the platform rule is now: enforced on Linux (`RLIMIT_AS`) and on
+Windows (a job object); best-effort on macOS, where the limit is set
+and not reliably honoured and the timeout is what stops a runaway.
+`velaris.memory_cap_is_enforced()` answers for the machine you are on,
+and `check_library.py` asks it rather than reading the platform name,
+so the assertion now runs on Windows as well as Linux and skips only
+where the mechanism genuinely does not hold. Every place that stated
+the old rule was rewritten: EMBEDDING.md, THREAT_MODEL.md,
+COMPLIANCE.md, SECURITY.md, the MCP tool description, `run`'s
+docstring, `benchmark/README.md` and the header `benchmark/run.py`
+writes - the last of which now asks the compiler instead of guessing
+from `sys.platform`.
+
+On POSIX the cap moved from a `preexec_fn` in the parent to
+`--max-memory-mb` on the child's own command line, which the child
+applies before it does anything else. `preexec_fn` is documented as
+unsafe when the parent has threads, and the HTTP door has had threads
+since 2.54 - a latent hazard, not an observed failure, and it is gone.
+
+**velaris.lock.** `velaris add` already recorded a sha256 in
+`velaris.toml`. It now also writes `velaris.lock`: every vendored
+library with its source, its sha256 and the version of Velaris that
+added it, as JSON, sorted, one library per entry.
+
+    velaris deps --verify      # do the files match the lock?
+    velaris add <url> --force  # replace a library with different bytes
+
+`velaris deps --verify` (`velaris verify` is the older spelling of the
+same check) fails if a vendored file's hash differs from the lock or a
+locked library is not on disk, and says which. A project with no lock
+falls back to checking `velaris.toml` and says the lock is missing.
+`velaris add` refuses to overwrite a library that is already vendored
+when the incoming bytes differ, printing both digests; `--force`
+replaces it. A library that does not compile is still not accepted -
+and now the file it would have replaced is put back rather than
+deleted.
+
+One thing changed underneath: a vendored library is written as the
+exact bytes that arrived, in binary, rather than decoded and rewritten
+as text. Before 3.1 the same library added on Windows and on Linux
+locked two different hashes, because the rewrite translated line
+endings - which makes a lockfile useless for the one thing it is for.
+The digest is now the digest of what the source published, and the
+same everywhere.
+
+**Fixed: an empty budget did not survive the trip to a child process.**
+`velaris.run(source, allow=set(), timeout=1)` came back with E000 and
+"'''' is not an effect" instead of refusing `io` with E310. The parent
+spelled an empty budget as the two characters `''`, which a shell
+strips and `subprocess` does not. `Budget.parse` now reads `''` and
+`""` as an empty budget. Without a timeout the same call was always
+correct, which is why it went unnoticed.
+
+**Fixed: `run` left Python handles behind in a shared process.** It
+restored the budget and the program's arguments afterwards and not
+`PY_OBJECTS`, so a framework calling `run` in a loop accumulated every
+handle every program opened and did not close. It now puts those back
+the same way, which is also what a pool worker does between programs.
+
+**The benchmark.** Rerun in full on Windows 11 with Deno 2.9.6 and
+Python 3.13: identical verdicts to 3.0 on all 63 programs. Of the 56
+dangerous programs Velaris caught 54 - 42 before running, 12 while
+running - and missed 2; Deno caught 32 (5 before, 27 during) and
+missed 24; plain Python caught 28 (all while running) and missed 28;
+none of the three flagged any of the 7 controls. The Windows job
+object changed no verdict: in category 8 the interpreter still reaches
+the 5-second deadline before 256 MB, and `RESULTS.md` says so rather
+than implying the cap did the work. THREAT_MODEL.md had been carrying
+the 2.62 figures (60 programs, 53 dangerous, 51 caught) and
+COMPLIANCE.md said 60 programs; both now match RESULTS.md, and the
+README and docs/index.html carry the table for the first time. Two
+other stale counts in the README went with them: `check_sandbox.py` is
+24 escape attempts and 10 honest programs, not 11 attempts, and
+`check_refusals.py` is 21 wrong programs, not 20.
+
+**The published docs were three versions stale.** `docs/` had last
+been rebuilt at 2.60, so the reference page still said the effects were
+`io, fs, net, clock, rand, ffi` with no `env`, and the library page
+still showed `env_tools.setting` using `io`. Rebuilding for this
+release brought the site up to 3.1; the error-code count on the home
+page is now read from the generated page rather than typed by hand,
+where it had drifted from 49 to 59.
+
+**New suite.** `check_pool.py` - 38 checks, run without the prover
+first, as ARCHITECTURE.md rule 7 requires. `check_termination.py`
+joined CI at the same time; it had existed since 2.62 and never been
+wired in.
+
 ## 3.0 - Budgets that name paths, hosts, counts, and secrets
 This is a major version because a program that compiled under 2.x can
 be refused by 3.0: `env()` is its own effect now, and a function that

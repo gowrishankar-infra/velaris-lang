@@ -105,7 +105,7 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 </style></head><body>
 <nav><div class="in"><a class="brand" href="index.html">
 <span class="dot"></span>Velaris</a><a href="index.html" class="">Home</a><a href="tutorial.html" class="">Tutorial</a><a href="spec.html" class="here">Reference</a><a href="library.html" class="">Library</a><a href="errors.html" class="">Errors</a><a href="floats.html" class="">Floats</a><a href="playground.html" class="">Playground</a>
-<span class="ver">v2.60.0</span></div></nav>
+<span class="ver">v3.1.0</span></div></nav>
 <main class="wide"><h1>The Velaris language reference</h1>
 <br>
 <p>This is the specification: what Velaris means, precisely. It is not a</p>
@@ -231,9 +231,12 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 <br>
 <p>    fn save(path: Text, body: Text) uses fs { ... }</p>
 <br>
-<p>The effects are <code>io</code> (console), <code>fs</code> (files), <code>net</code> (network),</p>
-<p><code>clock</code> (the time), <code>rand</code> (randomness) and <code>ffi</code> (calling the host</p>
-<p>language, §12).</p>
+<p>The effects are <code>io</code> (the console: <code>print</code>, <code>read_line</code>, <code>args</code>),</p>
+<p><code>env</code> (environment variables, through <code>env()</code>), <code>fs</code> (files), <code>net</code></p>
+<p>(network), <code>clock</code> (the time), <code>rand</code> (randomness) and <code>ffi</code> (calling</p>
+<p>the host language, §12). <code>env</code> became its own effect in 3.0; before</p>
+<p>that it was part of <code>io</code>, which meant an io-only budget could read</p>
+<p>every secret in the environment.</p>
 <br>
 <p>The rule is transitive and checked at compile time: a function may</p>
 <p>only perform effects it declares, and calling a function requires</p>
@@ -244,6 +247,51 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 <p>This is a property of the whole call graph, not a convention. Reading</p>
 <p>a signature tells you the complete set of things a call can do to the</p>
 <p>outside world.</p>
+<br>
+<h3>7.1 The budget</h3>
+<br>
+<p>Declaring an effect is the program&#x27;s claim; the <b>budget</b> is the</p>
+<p>operator&#x27;s decision, given as <code>--allow</code> / <code>--deny</code> on the command line</p>
+<p>or <code>allow=</code> in the library, and enforced by the runtime at the moment</p>
+<p>an effect is attempted, whatever the source declares. A refusal stops</p>
+<p>the program and cannot be caught.</p>
+<br>
+<p>A grant names an effect, and may narrow it:</p>
+<br>
+<p>| Grant | Permits |</p>
+<p>|---|---|</p>
+<p>| <code>io</code>, <code>env</code>, <code>clock</code>, <code>rand</code> | that effect |</p>
+<p>| <code>fs</code> | any path, read and write |</p>
+<p>| <code>fs:read</code>, <code>fs:write</code> | one direction, any path |</p>
+<p>| <code>fs:read:P</code>, <code>fs:write:P</code> | one direction, for paths that resolve under <code>P</code> |</p>
+<p>| <code>net</code> | any host |</p>
+<p>| <code>net:H</code>, <code>net:H:PORT</code> | that host, at any port or at that port |</p>
+<p>| <code>net:*.D</code> | hosts with exactly one label in place of the star |</p>
+<p>| <code>ffi</code> | any Python module |</p>
+<p>| <code>ffi:a,b</code> | those top-level modules |</p>
+<p>| <code>...@N</code> | and at most N operations of that effect in the run |</p>
+<br>
+<p>Grants are additive. Paths are resolved with <code>realpath</code> when the budget</p>
+<p>is parsed and again at every <code>read_file</code>, <code>write_file</code> and</p>
+<p><code>file_exists</code>, then compared as prefixes, so <code>..</code> and symlinks cannot</p>
+<p>reach past a grant. A host is the URL&#x27;s host name, lower-cased; a port</p>
+<p>is the URL&#x27;s port or the scheme&#x27;s default; only <code>http</code> and <code>https</code> are</p>
+<p>reachable. A wildcard matches one label and never the domain itself;</p>
+<p>no wildcard may stand over an IP literal. A count is the smallest given</p>
+<p>for that effect and counts every operation of that effect across the</p>
+<p>whole run; a budget with no count is a budget on what, not on how much.</p>
+<br>
+<p>The refusals: E310 (the effect), E311 (a module outside <code>ffi:</code>), E313</p>
+<p>(a path outside <code>fs:</code>, named), E314 (a host or port outside <code>net:</code>,</p>
+<p>named), E315 (the count reached). One case is a catchable failure</p>
+<p>rather than a refusal: a redirect whose target is outside the <code>net:</code></p>
+<p>grants fails the request, naming the target, because the program did</p>
+<p>not choose where it was sent.</p>
+<br>
+<p>Outside the rule, and stated as such: a hard link inside a granted</p>
+<p>directory is that directory&#x27;s content; a file system changed by another</p>
+<p>process between the check and the open is outside the model; where a</p>
+<p>granted host name resolves is DNS&#x27;s business.</p>
 <br>
 <h2>8. Failure</h2>
 <br>
@@ -330,6 +378,43 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 <p>proof for that function is abandoned and its promises fall back to</p>
 <p>runtime checks. Proving with a dropped premise could manufacture a</p>
 <p>counterexample that is not real, so it is never done.</p>
+<br>
+<h3>9.5 Which loops are shown to end</h3>
+<br>
+<p>Every loop is given one of two verdicts, by a syntactic rule that</p>
+<p>needs no solver and so answers the same with and without the prover:</p>
+<br>
+<p><b>terminates</b> - the condition is, or contains as an <code>and</code> conjunct,</p>
+<p><code>v &lt; E</code>, <code>v &lt;= E</code>, <code>v &gt; E</code> or <code>v &gt;= E</code> (the counter <code>v</code> may stand on</p>
+<p>either side), where</p>
+<br>
+<li><code>E</code> mentions no name the body assigns or binds, and calls only</li>
+<p>  functions that read their arguments and touch nothing (<code>length</code> and</p>
+<p>  the like, or a user function with no effects that cannot fail); and</p>
+<li>every path through the body that reaches its end moves <code>v</code> by exactly</li>
+<p>  one step toward <code>E</code> - <code>v = v + 1</code> for <code>&lt;</code> and <code>&lt;=</code>, <code>v = v - 1</code> for</p>
+<p>  <code>&gt;</code> and <code>&gt;=</code> - and <code>v</code> is assigned nowhere else in the body, nested</p>
+<p>  loops included. A path that leaves through <code>return</code> or <code>fail</code> leaves</p>
+<p>  the loop and needs no step.</p>
+<br>
+<p><b>unshown</b> - every other shape. A step of two, a step on one arm of an</p>
+<p><code>if</code> only, a counter reset on some path, a limit the body changes, a</p>
+<p>condition with only a flag, an <code>or</code> in the condition, a counter moved</p>
+<p>inside a nested loop: all unshown, whether or not the loop happens to</p>
+<p>end when run.</p>
+<br>
+<p>A <code>for</code> loop is a <code>while</code> loop by the time the rule runs (the parser</p>
+<p>rewrites it; ARCHITECTURE.md) and goes through it unchanged: <code>for i in a to b</code> is shown to end unless the body</p>
+<p>assigns <code>i</code> or changes <code>b</code>, and <code>for x in xs</code> unless the body assigns</p>
+<p><code>xs</code>.</p>
+<br>
+<p>The verdict is reported by <code>velaris explain</code> (&quot;loops: 2 terminate, 1 not</p>
+<p>shown&quot;) and by <code>velaris audit</code> (<code>loops_unshown</code> per function, and a</p>
+<p>warning naming the functions). It is an error only under</p>
+<p><code>velaris check --strict</code>, as E612; without the flag a loop whose end is</p>
+<p>not shown is not a problem, and the time limit in <code>velaris.run</code> remains</p>
+<p>the guard against a loop that never ends. The compiler never reports</p>
+<p><code>terminates</code> for a shape outside the rule above.</p>
 <br>
 <h2>10. Modules</h2>
 <br>

@@ -736,7 +736,7 @@ def results_markdown(meta, categories, rows, summary, tot):
                  "DenoLand.Deno`, or see deno.com) and rerun.")
     L.append(f"- Timeout {TIMEOUT} s for every tool. Memory cap "
              f"{MEMORY_MB} MB: Velaris via `max_memory_mb` "
-             f"({meta['velaris_memory_cap']} on this platform - enforced on Linux, best-effort on macOS, not applied on Windows; where it does not hold the timeout is what stops a memory-growth program); "
+             f"({meta['velaris_memory_cap']} on this platform - enforced on Linux by RLIMIT_AS and on Windows by a job object, best-effort on macOS; where it does not hold the timeout is what stops a memory-growth program); "
              f"Deno via `--v8-flags=--max-old-space-size={MEMORY_MB}`; "
              f"Python via {meta['python_memory_cap']}.")
     L.append(f"- Programs: {len(rows)}"
@@ -1109,11 +1109,13 @@ def main(argv=None):
             "platform": f"{platform.system()} {platform.release()} "
                         f"{platform.machine()}",
             "prover": prover, "native": native,
-            # RLIMIT_AS: enforced on Linux, best-effort on macOS, not
-            # applied on Windows - the harness asserts nothing about it
-            "velaris_memory_cap": {"linux": "enforced",
-                                   "darwin": "best-effort"}.get(
-                sys.platform, "not applied"),
+            # RLIMIT_AS on POSIX, a job object on Windows: enforced on
+            # Linux and on Windows, best-effort on macOS. The compiler
+            # answers for itself rather than the harness guessing.
+            "velaris_memory_cap": (
+                "enforced" if velaris.memory_cap_is_enforced()
+                else ("best-effort" if sys.platform == "darwin"
+                      else "not applied")),
             "python_memory_cap": None,
             "timeout_s": TIMEOUT, "memory_mb": MEMORY_MB,
             "quick": args.quick}

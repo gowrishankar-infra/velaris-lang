@@ -49,13 +49,94 @@ separate process that is killed on breach, and the result says which
 limit it hit (E610 for time, E611 for memory). The budget still holds
 inside that process.
 
-Memory caps use the operating system's address-space limit
-(`RLIMIT_AS`): enforced on Linux; best-effort on macOS, where the
-limit is set but not reliably honoured and the timeout is what stops
-a runaway; not applied on Windows, where the cap is recorded only. The
-timeout is enforced on every platform. An agent framework calling
-`run` in a loop should set both. The MCP server and the HTTP door
-default to 30 seconds and 512 MB.
+Memory caps use whatever the operating system has:
+
+| Platform | Mechanism | Enforced? |
+|---|---|---|
+| Linux | `RLIMIT_AS`, set by the child on itself | yes |
+| Windows | a job object with `JOB_OBJECT_LIMIT_PROCESS_MEMORY`; the child is created suspended, put in the job, and only then resumed | yes, since 3.1 |
+| macOS | `RLIMIT_AS` | best-effort - the limit is set and not reliably honoured, and the timeout is what stops a runaway |
+
+If the Windows job object cannot be made, the cap is recorded and not
+enforced rather than the run failing - the behaviour before 3.1.
+`velaris.memory_cap_is_enforced()` answers for the machine you are on,
+so a suite can assert the cap where the mechanism holds and skip it
+where it does not. The timeout is enforced on every platform.
+
+An agent framework calling `run` in a loop should set both. The MCP
+server and the HTTP door default to 30 seconds and 512 MB.
+
+## Many runs: a pool
+
+Every bounded run starts a Python interpreter - about a tenth of a
+second before a line of Velaris is read. Calling `run` thousands of
+times an hour pays that every time. A pool keeps workers alive:
+
+```python
+pool = velaris.Pool(size=4, allow={"io"}, timeout=30, max_memory_mb=512)
+result = pool.run(source)        # the same RunResult run() returns
+pool.close()                     # also a context manager
+```
+
+`pool.run` also takes `stdin=`, `args=` and `path=`. On one machine,
+200 sequential bounded runs of a small program took 46.6 s one process
+at a time and 0.5 s on a pool.
+
+**The isolation rules matter more than the speed, and
+`check_pool.py` asserts every one of them.**
+
+* **The budget is the pool's, not the program's.** It is parsed once,
+  when the pool is made, and installed by each worker at startup.
+  `pool.run` takes no `allow` argument - there is nowhere for a caller
+  or a program to ask for more. If you need a different budget, make a
+  different pool. The budget is re-asserted from the pool before every
+  program, so a `@N` count is spent per program rather than shared
+  across a worker's whole life, and a program that reaches into the
+  compiler through a granted `ffi` module and widens its own budget
+  cannot leave it widened for the next program.
+
+* **A worker is used once unless the run was clean.** Anything other
+  than `ok` - a refused effect, a failure that escaped, a program that
+  did not compile, the timeout, the memory cap - kills the worker and
+  starts a fresh one. Only a run that finished cleanly hands its worker
+  back. That costs a restart on every rejected program; it is the rule
+  that makes the rest checkable.
+
+* **A reused worker starts empty.** Before every program the child puts
+  back every piece of module-level mutable state it has: the arguments
+  `args()` answers, Python handles from `py_new` whether the program
+  closed them or not, the native compiler's engines and the text arena
+  they own, the tracer, the budget and its operation counts - and the
+  working directory, the environment and the recursion limit, which a
+  program granted `ffi` can change.
+
+* **The parent owns the deadline.** A worker that has not answered
+  within `timeout` is killed by the parent process, not asked to stop.
+  The call returns E610 and a replacement worker is started.
+
+* **A program cannot reach the pipe.** The worker keeps private copies
+  of its own standard input and output for the protocol and points the
+  program's at the null device, so a program writing straight at file
+  descriptor 1 - which a granted `ffi` module can do - cannot corrupt
+  the answer the parent is parsing.
+
+* **Closing kills every worker**, including one still running a
+  program. A pool collected without `close()` is closed by its
+  finalizer, one that outlives the interpreter is closed at exit, and a
+  worker whose pipe closes ends by itself - so a parent that dies
+  without doing either still leaves nothing behind.
+
+A pool changes none of the guarantees in
+[THREAT_MODEL.md](THREAT_MODEL.md). A granted `ffi` module can still do
+whatever that module can do, inside a worker as anywhere else; what a
+pool promises is that it cannot do it to the *next* program.
+
+`velaris.PoolRegistry()` keeps one pool per distinct budget and makes
+each one the first time that budget is asked for - what a server needs,
+since it learns the budget from the request. The MCP server and the
+HTTP door each keep one. The CrewAI and LangChain tools stay on plain
+`run`: a crew's tool is not called often enough to need a pool, and one
+process per call is easier to reason about.
 
 ## What `run` guarantees
 
@@ -175,6 +256,32 @@ box without leaving the conversation.
 
 Four tools: `velaris_card`, `velaris_check`, `velaris_audit` and
 `velaris_run` (which takes `allow`, defaulting to `["io"]`).
+
+## Vendored libraries, and velaris.lock
+
+```
+velaris add https://example.com/geo.vel as geo   # vendored into lib/
+velaris add https://example.com/geo.vel --force  # replace different bytes
+velaris deps                                     # what you depend on
+velaris deps --verify                            # do they match the lock?
+```
+
+`velaris add` writes two files. `velaris.toml` says what the project
+depends on. **`velaris.lock`** says exactly which bytes were vendored:
+every library with its source, its sha256 and the version of Velaris
+that added it. The digest is of the fetched bytes exactly as they
+arrived, so it is the digest the source published and the same on every
+platform.
+
+`velaris deps --verify` (`velaris verify` is the older spelling of the
+same check) fails if a vendored file's hash differs from the lock, or
+if a lock entry has no file on disk. Run it in CI: a library that
+changed under you is worth looking at before trusting it.
+
+`velaris add` refuses to overwrite a library that is already vendored
+when the incoming bytes are different, and prints both digests;
+`--force` replaces it. A project made before 3.1 has no lock, and
+`deps --verify` says so and falls back to checking `velaris.toml`.
 
 ## From a language that is not Python
 

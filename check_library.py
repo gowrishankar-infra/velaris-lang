@@ -10,6 +10,7 @@ place people trust most.
     python check_library.py
 """
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -205,23 +206,28 @@ def main() -> int:
     DOUBLING = ("fn main() uses io {\n    let s = \"xxxxxxxxxxxxxxxx\"\n"
                 "    let i = 0\n    while i < 40 {\n        s = s + s\n"
                 "        i = i + 1\n    }\n    print(length(s))\n}\n")
-    # The cap is RLIMIT_AS. Linux honours it; macOS treats it as
-    # best-effort and the program ran to the 60 s timeout there (E610,
-    # not E611) on every macos-latest leg since 2.62; Windows has no
-    # equivalent. The assertion holds where the mechanism holds.
-    if sys.platform == "linux":
+    # The cap is RLIMIT_AS on POSIX and a job object on Windows (3.1).
+    # Linux honours RLIMIT_AS; macOS treats it as best-effort and the
+    # program ran to the 60 s timeout there (E610, not E611) on every
+    # macos-latest leg since 2.62. The assertion holds where the
+    # mechanism holds, and velaris says which that is rather than the
+    # suite guessing from the platform name.
+    if velaris.memory_cap_is_enforced():
         r = velaris.run(DOUBLING, allow={"io"}, max_memory_mb=150,
                         timeout=60)
         ok("a memory cap STOPS a program that eats memory",
            r.out_of_memory and not r.ok
            and any(p.code == "E611" for p in r.problems),
            str(r.as_dict())[:120])
+        ok("...and it is Linux's RLIMIT_AS or a Windows job object that "
+           "did it",
+           sys.platform == "linux" or os.name == "nt", sys.platform)
     elif sys.platform == "darwin":
         skip("a memory cap stops a program that eats memory (RLIMIT_AS "
              "is best-effort on macOS)")
     else:
-        skip("a memory cap stops a program that eats memory (not on "
-             "Windows)")
+        skip("a memory cap stops a program that eats memory (no job "
+             "object could be made on this Windows)")
 
     r = velaris.run(READS_A_FILE, allow={"io"}, timeout=30)
     ok("the budget still holds inside the bounded child process",
@@ -487,6 +493,88 @@ def main() -> int:
            f"compiler says {velaris.VERSION}")
     hooks = HERE / ".pre-commit-hooks.yaml"
     ok("the pre-commit hooks exist", hooks.exists())
+
+    print()
+    print("velaris.lock (3.1)")
+    print("-" * 62)
+    import shutil as _sh
+    import tempfile as _tf
+    lockbox = Path(_tf.mkdtemp(prefix="velaris-lock-"))
+    try:
+        upstream = lockbox / "greet.vel"
+        upstream.write_text(
+            "fn greet(who: Text) -> Text\n"
+            "    ensures length(result) >= 1\n"
+            "{\n"
+            '    return "hi " + who\n'
+            "}\n", encoding="utf-8")
+        work = lockbox / "project"
+        work.mkdir()
+
+        def velaris_in(where, *words):
+            env = dict(os.environ)
+            env["PYTHONPATH"] = str(HERE)
+            return subprocess.run(
+                [sys.executable, str(HERE / "velaris.py"), *words],
+                cwd=str(where), capture_output=True, text=True, env=env,
+                timeout=300)
+
+        added = velaris_in(work, "add", str(upstream), "as", "greet")
+        lock = work / "velaris.lock"
+        ok("velaris add writes velaris.lock",
+           added.returncode == 0 and lock.exists(),
+           (added.stdout + added.stderr)[:160])
+        recorded = json.loads(lock.read_text(encoding="utf-8"))
+        entry = (recorded.get("libraries") or [{}])[0]
+        ok("the lock records source, sha256 and the Velaris that added it",
+           recorded.get("lockfile") == "velaris.lock/1"
+           and entry.get("name") == "greet"
+           and len(entry.get("sha256", "")) == 64
+           and entry.get("added_by") == velaris.VERSION,
+           str(recorded)[:200])
+        ok("the locked digest is the digest of the bytes that arrived",
+           entry.get("sha256") == __import__("hashlib").sha256(
+               upstream.read_bytes()).hexdigest(),
+           str(entry.get("sha256")))
+
+        clean = velaris_in(work, "deps", "--verify")
+        ok("deps --verify passes on a clean tree",
+           clean.returncode == 0 and "exactly as locked" in clean.stdout,
+           (clean.stdout + clean.stderr)[:200])
+
+        vendored = work / "lib" / "greet.vel"
+        kept = vendored.read_bytes()
+        vendored.write_bytes(kept + b"\n// tampered with\n")
+        tampered = velaris_in(work, "deps", "--verify")
+        ok("deps --verify FAILS on a tampered file",
+           tampered.returncode == 1 and "CHANGED" in tampered.stdout,
+           (tampered.stdout + tampered.stderr)[:200])
+
+        vendored.unlink()
+        missing = velaris_in(work, "deps", "--verify")
+        ok("deps --verify FAILS on a library that is not there",
+           missing.returncode == 1 and "MISSING" in missing.stdout,
+           (missing.stdout + missing.stderr)[:200])
+
+        vendored.write_bytes(kept)
+        upstream.write_text(
+            upstream.read_text(encoding="utf-8") + "\n// a new version\n",
+            encoding="utf-8")
+        refused = velaris_in(work, "add", str(upstream), "as", "greet")
+        ok("velaris add REFUSES to overwrite different bytes",
+           refused.returncode == 1
+           and "different file" in refused.stderr
+           and vendored.read_bytes() == kept,
+           (refused.stdout + refused.stderr)[:200])
+        forced = velaris_in(work, "add", str(upstream), "as", "greet",
+                            "--force")
+        ok("...and --force replaces it and relocks it",
+           forced.returncode == 0
+           and vendored.read_bytes() != kept
+           and velaris_in(work, "deps", "--verify").returncode == 0,
+           (forced.stdout + forced.stderr)[:200])
+    finally:
+        _sh.rmtree(lockbox, ignore_errors=True)
 
     print()
     print("the HTTP door")

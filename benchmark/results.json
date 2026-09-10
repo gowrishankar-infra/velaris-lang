@@ -10,7 +10,7 @@
   "quick": false,
   "timeout_s": 5,
   "velaris": "3.0.0",
-  "velaris_memory_cap": "not applied"
+  "velaris_memory_cap": "enforced"
  },
  "programs": [
   {

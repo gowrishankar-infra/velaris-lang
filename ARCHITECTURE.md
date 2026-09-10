@@ -55,17 +55,20 @@ prover could not settle.
 | A new statement | parser, then `explore`, `run`, and codegen |
 | Editor features | `editor_answer` and `lsp_serve` |
 | CLI commands | `main`, near the other `argv[:1] == [...]` checks |
+| Anything a program can leave behind | `MUTABLE_GLOBALS` and `reset_program_state`, and the scan in `check_pool.py` that fails when a new module-level container appears in neither list |
 
 ## The suites, and what each one is for
 
 | Suite | Asks |
 |---|---|
-| `run_tests.py` | do all 90 examples reach their expected verdict |
+| `run_tests.py` | do all 92 examples reach their expected verdict |
 | `fuzz_native.py` | do the native and interpreted engines agree exactly |
 | `check_refusals.py` | is each wrong program refused with the RIGHT code |
 | `check_sandbox.py` | can the effect budget be escaped |
 | `check_fallible.py` | is every fallible builtin actually enforced |
 | `check_library.py` | do the library and MCP server keep the same promises |
+| `check_pool.py` | can a pooled worker leak anything to the next program |
+| `check_termination.py` | does each loop get the termination verdict it must |
 | `velaris test examples/std_test.vel` | does the standard library behave |
 
 ## The rules this project holds
@@ -81,7 +84,18 @@ prover could not settle.
    purpose; a project that only lists wins cannot be trusted about
    anything else.
 
-6. **Run every new suite WITHOUT the prover before wiring it into CI.**
+6. **A worker pool must reset every mutable global between programs.**
+   `velaris.Pool` runs one program after another in one process, which
+   is exactly where one program's leftovers become the next program's
+   starting state. Anything added to this file that a running program
+   can change belongs in `MUTABLE_GLOBALS` and in
+   `reset_program_state`; `check_pool.py` reads this file's own
+   module-level assignments and fails if a mutable one is in neither
+   that list nor its list of constants. Speed is never the reason to
+   skip a reset - a fast sandbox that leaks state between programs is
+   worse than a slow one.
+
+7. **Run every new suite WITHOUT the prover before wiring it into CI.**
    This has been got wrong three times - v2.39.1, v2.44, v2.53.1 - and
    always the same way: a suite passes locally, joins CI, and every
    no-solver leg fails because some check quietly depended on proofs.
@@ -97,7 +111,7 @@ prover could not settle.
 ## Working on it
 
     pip install -e ".[full]" pyinstaller
-    python run_tests.py          # 79 examples, expected verdicts
+    python run_tests.py          # 92 examples, expected verdicts
     velaris test examples/std_test.vel
     python fuzz_native.py 60     # both engines must agree
     velaris fmt examples/*.vel stdlib/*.vel --check

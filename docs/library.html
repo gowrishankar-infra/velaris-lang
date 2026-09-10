@@ -105,7 +105,7 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 </style></head><body>
 <nav><div class="in"><a class="brand" href="index.html">
 <span class="dot"></span>Velaris</a><a href="index.html" class="">Home</a><a href="tutorial.html" class="">Tutorial</a><a href="spec.html" class="">Reference</a><a href="library.html" class="here">Library</a><a href="errors.html" class="">Errors</a><a href="floats.html" class="">Floats</a><a href="playground.html" class="">Playground</a>
-<span class="ver">v2.60.0</span></div></nav>
+<span class="ver">v3.1.0</span></div></nav>
 <main class=""><h1>Standard library</h1>
 <p class="lead">Every function below is written in Velaris and parsed onto this page by the real compiler &mdash; contracts included. A violated <code>requires</code> is a compile error at your call site.</p>
 <div class="fnrow">
@@ -175,10 +175,10 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 <div class="sig">fn db.close(conn: Handle) uses ffi</div>
 </div>
 <div class="fnrow">
-<div class="sig">fn env_tools.setting(name: Text, fallback: Text) -&gt; Text uses io</div>
+<div class="sig">fn env_tools.setting(name: Text, fallback: Text) -&gt; Text uses env</div>
 </div>
 <div class="fnrow">
-<div class="sig">fn env_tools.number_setting(name: Text, fallback: Int) -&gt; Int uses io</div>
+<div class="sig">fn env_tools.number_setting(name: Text, fallback: Int) -&gt; Int uses env</div>
 </div>
 <div class="fnrow">
 <div class="sig">fn env_tools.succeed() uses io</div>
@@ -339,7 +339,7 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 <tr><td><code>code_at</code></td><td>pure</td><td>Text, Int</td><td>Int</td></tr>
 <tr><td><code>contains</code></td><td>pure</td><td>Text, Text</td><td>Bool</td></tr>
 <tr><td><code>div_or_fail</code> <span class="ecode">or fail</span></td><td>pure</td><td>Int, Int</td><td>Int</td></tr>
-<tr><td><code>env</code></td><td>io</td><td>Text, Text</td><td>Text</td></tr>
+<tr><td><code>env</code></td><td>env</td><td>Text, Text</td><td>Text</td></tr>
 <tr><td><code>exit_with</code></td><td>io</td><td>Int</td><td>Unit</td></tr>
 <tr><td><code>fetch</code> <span class="ecode">or fail</span></td><td>net</td><td>Text</td><td>Text</td></tr>
 <tr><td><code>fetch_status</code> <span class="ecode">or fail</span></td><td>net</td><td>Text</td><td>Int</td></tr>

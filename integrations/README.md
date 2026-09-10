@@ -2,6 +2,12 @@
 
 Three ready-to-submit integrations, in the order to submit them.
 
+Both framework tools call plain `velaris.run`, one process per
+call, and not `velaris.Pool`. A crew's tool is not called often
+enough for a pool to pay for itself, and one process per call is
+easier for a reviewer to reason about. EMBEDDING.md says when a
+pool is worth it.
+
 ## 1. CrewAI  (`crewai/`)  — submit first
 
 `crewai-tools` accepts community tools by pull request.

@@ -160,14 +160,17 @@ Usage:
   velaris new <name>                       start a fresh project
   velaris build program.vel [-o name]      one file anyone can run
   velaris add <url or path> [as name]      vendor a library into lib/
+  velaris add <url> --force                replace one with different bytes
   velaris deps                             what this project depends on
-  velaris verify                           are the libraries unchanged?
+  velaris deps --verify                    do the libraries match velaris.lock?
+  velaris verify                           the same check, older spelling
   velaris lsp                              language server (for editors)
   velaris version                          print the version
   python velaris.py program.vel            run a program
   python velaris.py program.vel --json     errors as machine-readable JSON
   python velaris.py program.vel --time     show how long the run took
   python velaris.py program.vel --no-native  force the interpreter
+  python velaris.py program.vel --max-memory-mb 512  stop it past that
   python velaris.py --version
 
 New in v0.16: IMPORTS - programs can span multiple files.
@@ -255,7 +258,7 @@ Usage:
 import json
 import os
 
-VERSION = "3.0.0"
+VERSION = "3.1.0"
 import re
 import sys
 from dataclasses import dataclass, field
@@ -1288,7 +1291,12 @@ class Budget:
         while i < len(items):
             item = items[i]
             i += 1
-            if not item:
+            if not item or item in ("''", '""'):
+                # an empty budget. A shell strips the quotes; a child
+                # process started with a list of arguments does not, and
+                # until 3.1 `run(src, allow=set(), timeout=1)` reached the
+                # child as the literal two characters '' and came back
+                # E000 instead of refusing io.
                 continue
             if item.startswith("ffi:"):
                 b.effects.add("ffi")
@@ -6688,6 +6696,8 @@ fn main() uses io {
 
 
 MANIFEST = "velaris.toml"
+LOCKFILE = "velaris.lock"
+LOCK_SCHEMA = "velaris.lock/1"
 
 
 def _manifest_read() -> list:
@@ -6705,17 +6715,138 @@ def _manifest_write(deps: list) -> None:
     with open(MANIFEST, "w", encoding="utf-8") as f:
         f.write("# Velaris dependencies. Every library is vendored into\n"
                 "# lib/ and recorded here with the exact bytes it had, so\n"
-                "# 'velaris verify' can tell you if anything changed.\n\n")
+                "# 'velaris deps --verify' can tell you if anything "
+                "changed.\n\n")
         f.write("[dependencies]\n")
         for name, source, digest in sorted(deps):
             f.write(f'{name} = {{ source = "{source}", '
                     f'sha256 = "{digest}" }}\n')
 
 
+# ---- velaris.lock ---------------------------------------------------------
+#      The manifest says what this project depends on. The lock says
+#      exactly which bytes were vendored, where they came from, and
+#      which Velaris put them there - so a checkout on another machine
+#      can be shown to hold the same libraries, not merely libraries
+#      with the same names.
+
+def _lock_read() -> dict:
+    """{name: entry}, empty when there is no lock or it cannot be read."""
+    if not os.path.exists(LOCKFILE):
+        return {}
+    try:
+        with open(LOCKFILE, encoding="utf-8") as f:
+            doc = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    out = {}
+    for entry in (doc.get("libraries") or []):
+        if isinstance(entry, dict) and entry.get("name"):
+            out[entry["name"]] = entry
+    return out
+
+
+def _lock_write(entries: dict) -> None:
+    doc = {"lockfile": LOCK_SCHEMA,
+           "libraries": [entries[name] for name in sorted(entries)]}
+    with open(LOCKFILE, "w", encoding="utf-8", newline="\n") as f:
+        json.dump(doc, f, indent=2, sort_keys=True)
+        f.write("\n")
+
+
+def _lock_path(entry: dict) -> str:
+    """Where a lock entry says its library lives, as this OS spells it."""
+    where = entry.get("file") or ("lib/" + entry["name"] + ".vel")
+    return os.path.join(*where.split("/"))
+
+
+def _digest_of(path: str) -> str:
+    import hashlib
+    with open(path, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+
+def verify_libraries() -> int:
+    """Are the vendored libraries exactly the ones that were locked?
+
+    Against velaris.lock when there is one - which also knows which
+    Velaris added each library - and against velaris.toml when there is
+    not, so a project made before 3.1 still verifies. Returns the exit
+    code: 0 when everything matches.
+    """
+    lock = _lock_read()
+    deps = _manifest_read()
+    if not lock and not deps:
+        print("nothing to verify - add a library with: "
+              "velaris add <url or path>")
+        return 0
+
+    if lock:
+        rows = [(e["name"], e.get("source", "?"), e.get("sha256", ""),
+                 _lock_path(e), e.get("added_by", "?")) for e in
+                (lock[n] for n in sorted(lock))]
+        against = f"{LOCKFILE} ({len(rows)} librar(ies))"
+    else:
+        rows = [(n, src, digest, os.path.join("lib", n + ".vel"), "?")
+                for n, src, digest in sorted(deps)]
+        against = (f"{MANIFEST} - there is no {LOCKFILE} yet; "
+                   f"velaris add writes one")
+    print(f"checking against {against}")
+
+    bad = 0
+    for name, source, digest, path, added_by in rows:
+        if not os.path.exists(path):
+            print(f"  MISSING  {name} - {path} is not there "
+                  f"(re-add it: velaris add {source})")
+            bad += 1
+            continue
+        now = _digest_of(path)
+        if now != digest:
+            print(f"  CHANGED  {name} - {path} is not the file that was "
+                  f"locked")
+            print(f"           locked {digest[:16]}...  now "
+                  f"{now[:16]}...")
+            bad += 1
+        else:
+            note = f"  (added by Velaris {added_by})" if added_by != "?" \
+                else ""
+            print(f"  ok       {name}{note}")
+
+    if lock:
+        # a manifest entry with no lock entry is a half-recorded library
+        locked = set(lock)
+        for name, source, _digest in sorted(deps):
+            if name not in locked:
+                print(f"  UNLOCKED {name} is in {MANIFEST} and not in "
+                      f"{LOCKFILE} (re-add it: velaris add {source})")
+                bad += 1
+
+    named = {os.path.normcase(os.path.abspath(row[3])) for row in rows}
+    if os.path.isdir("lib"):
+        for found in sorted(os.listdir("lib")):
+            if not found.endswith(".vel"):
+                continue
+            here = os.path.join("lib", found)
+            if os.path.normcase(os.path.abspath(here)) not in named:
+                print(f"  note     {here} is vendored and nothing records "
+                      f"where it came from")
+
+    if bad:
+        print(f"\n{bad} problem(s). A library that changed under you is "
+              f"worth looking at before trusting it.")
+        return 1
+    print(f"\nall {len(rows)} librar(ies) are exactly as locked")
+    return 0
+
+
 def packages(argv: list) -> int:
     import hashlib
     cmd = argv[0]
     deps = _manifest_read()
+    lock = _lock_read()
+
+    if cmd == "verify" or (cmd == "deps" and "--verify" in argv):
+        return verify_libraries()
 
     if cmd == "deps":
         if not deps:
@@ -6726,43 +6857,28 @@ def packages(argv: list) -> int:
         for name, source, digest in deps:
             here = os.path.join("lib", name + ".vel")
             mark = "ok " if os.path.exists(here) else "MISSING"
+            added = lock.get(name, {}).get("added_by")
             print(f"  [{mark}] {name}\n      from {source}"
-                  f"\n      {digest[:16]}...")
-        return 0
-
-    if cmd == "verify":
-        if not deps:
-            print("nothing to verify")
-            return 0
-        bad = 0
-        for name, source, digest in deps:
-            path = os.path.join("lib", name + ".vel")
-            if not os.path.exists(path):
-                print(f"  MISSING  {name} (re-add it: velaris add {source})")
-                bad += 1
-                continue
-            now = hashlib.sha256(open(path, "rb").read()).hexdigest()
-            if now != digest:
-                print(f"  CHANGED  {name} - the file is not what was "
-                      f"recorded")
-                bad += 1
-            else:
-                print(f"  ok       {name}")
-        if bad:
-            print(f"\n{bad} problem(s). A library that changed under you "
-                  f"is worth looking at before trusting it.")
-            return 1
-        print(f"\nall {len(deps)} dependenc(ies) are exactly as recorded")
+                  f"\n      {digest[:16]}..."
+                  + (f"   added by Velaris {added}" if added else ""))
+        if not lock:
+            print(f"\nthere is no {LOCKFILE} yet - velaris add writes "
+                  f"one, and 'velaris deps --verify' reads it")
+        else:
+            print(f"\n{LOCKFILE} records all of it; check it with: "
+                  f"velaris deps --verify")
         return 0
 
     if len(argv) < 2:                     # add
-        print("usage: velaris add <url or path> [as <name>]",
+        print("usage: velaris add <url or path> [as <name>] [--force]",
               file=sys.stderr)
         return 1
-    source = argv[1]
+    force = "--force" in argv
+    words = [a for a in argv[1:] if not a.startswith("--")]
+    source = words[0] if words else ""
     name = None
-    if len(argv) >= 4 and argv[2] == "as":
-        name = argv[3]
+    if len(words) >= 3 and words[1] == "as":
+        name = words[2]
     if name is None:
         name = os.path.basename(source)
         if name.endswith(".vel"):
@@ -6785,15 +6901,41 @@ def packages(argv: list) -> int:
             return 1
         data = open(source, "rb").read()
 
-    text = data.decode("utf-8", errors="replace")
-    os.makedirs("lib", exist_ok=True)
+    # the exact bytes, byte for byte, are what gets vendored and what
+    # gets locked: the digest a lock records is then the digest of what
+    # the source published, on every platform. Before 3.1 the file was
+    # decoded and rewritten, so the same library added on Windows and on
+    # Linux locked two different hashes.
+    digest = hashlib.sha256(data).hexdigest()
     path = os.path.join("lib", name + ".vel")
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(text)
+
+    if os.path.exists(path):
+        here = _digest_of(path)
+        if here != digest and not force:
+            print(f"'{name}' is already vendored at {path}, and what you "
+                  f"are adding is a different file.", file=sys.stderr)
+            print(f"  vendored  {here}", file=sys.stderr)
+            print(f"  incoming  {digest}", file=sys.stderr)
+            print(f"  add --force to replace it, after you have looked "
+                  f"at what changed", file=sys.stderr)
+            return 1
+        locked = lock.get(name, {}).get("sha256")
+        if locked and locked != here:
+            print(f"note: {path} did not match {LOCKFILE} before this "
+                  f"({locked[:16]}... locked, {here[:16]}... on disk)")
+
+    os.makedirs("lib", exist_ok=True)
+    kept = open(path, "rb").read() if os.path.exists(path) else None
+    with open(path, "wb") as f:
+        f.write(data)
 
     rep_ = inspect_source(path)           # a library must compile
     if rep_["errors"]:
-        os.remove(path)
+        if kept is None:
+            os.remove(path)
+        else:
+            with open(path, "wb") as f:   # put back what was there
+                f.write(kept)
         print(f"'{name}' does not compile, so it was not added:",
               file=sys.stderr)
         for e in rep_["errors"][:3]:
@@ -6801,9 +6943,11 @@ def packages(argv: list) -> int:
                   file=sys.stderr)
         return 1
 
-    digest = hashlib.sha256(open(path, "rb").read()).hexdigest()
     deps = [d for d in deps if d[0] != name] + [(name, source, digest)]
     _manifest_write(deps)
+    lock[name] = {"name": name, "source": source, "sha256": digest,
+                  "file": "lib/" + name + ".vel", "added_by": VERSION}
+    _lock_write(lock)
     own = [f for f in rep_["functions"]
            if os.path.abspath(f["file"]) == os.path.abspath(path)]
     proven = sum(1 for f in own if f["status"] == "proven")
@@ -6811,6 +6955,7 @@ def packages(argv: list) -> int:
     print(f"added {name} -> lib/{name}.vel")
     print(f"  {len(own)} function(s), {proven} with proven promises")
     print(f"  performs: {', '.join(effs) if effs else 'nothing'}")
+    print(f"  sha256 {digest[:16]}..., locked in {LOCKFILE}")
     print(f'  use it with: import "lib/{name}.vel" as {name}')
     return 0
 
@@ -7177,6 +7322,12 @@ def repl() -> int:
 
 def main() -> int:
     argv = sys.argv[1:]
+    if argv[:1] == ["--pool-worker"]:
+        return pool_worker(argv[1:])       # one child behind velaris.Pool
+    if "--max-memory-mb" in argv:
+        # before anything else this process does: a cap asked for late
+        # is a cap that missed whatever was allocated first
+        _cap_this_process(argv[argv.index("--max-memory-mb") + 1])
     if argv[:1] == ["repl"]:
         return repl()
     if argv[:1] == ["version"]:
@@ -7309,6 +7460,12 @@ def main() -> int:
 
         import velaris as _self          # the library half, reused whole
 
+        # One pool per distinct budget a caller asks for, made the
+        # first time that budget is seen and closed when the door
+        # stops. The ceiling is checked before a pool is asked for, so
+        # a pool never exists for a budget this server would refuse.
+        pools = _self.PoolRegistry()
+
         class Door(http.server.BaseHTTPRequestHandler):
             def log_message(self, *a):   # quiet unless something matters
                 pass
@@ -7363,7 +7520,7 @@ def main() -> int:
                             return self.answer(403, {
                                 "error": refused,
                                 "max_allow": ceiling.spec().split(",")})
-                        out = _self.run(
+                        out = pools.run(
                             source, allow=asked,
                             stdin=body.get("stdin", ""),
                             args=body.get("args") or [],
@@ -7395,6 +7552,8 @@ def main() -> int:
                 .serve_forever()
         except KeyboardInterrupt:
             print("\nstopped")
+        finally:
+            pools.close()                 # no worker outlives the door
         return 0
 
     if argv[:1] == ["mcp-install"]:
@@ -7851,7 +8010,7 @@ def main() -> int:
     # args() is the program's arguments - never the flags this command
     # took for itself. Until 2.62 `--allow io` leaked in as two words.
     FLAGS = {"--json", "--no-native", "--time", "--check", "--no-cache"}
-    VALUED = {"--allow", "--deny", "--timeout"}
+    VALUED = {"--allow", "--deny", "--timeout", "--max-memory-mb"}
     rest, skip = [], False
     for a in sys.argv[2:]:
         if skip:
@@ -8268,23 +8427,44 @@ def run(source: str, *, path: str | None = None,
     that is killed on breach, and the result says which limit it hit.
     An agent framework calling this ten thousand times needs both.
 
-    Memory limits use the OS's address-space limit (RLIMIT_AS): enforced
-    on Linux; best-effort on macOS, where the limit is set but not
-    reliably honoured and the timeout is what stops a runaway; not
-    applied on Windows, where the limit is recorded and out_of_memory
-    stays False. The timeout is enforced everywhere.
+    Memory limits use RLIMIT_AS on POSIX and a job object with
+    JOB_OBJECT_LIMIT_PROCESS_MEMORY on Windows: enforced on Linux and,
+    since 3.1, on Windows; best-effort on macOS, where the limit is set
+    but not reliably honoured and the timeout is what stops a runaway.
+    If the Windows job object cannot be made the cap is recorded and not
+    enforced rather than the run failing. memory_cap_is_enforced() says
+    which of those this machine is. The timeout is enforced everywhere.
+
+    Calling this in a loop starts an interpreter every time. velaris.Pool
+    keeps workers alive under one budget and is about a hundred times
+    faster for a small program; EMBEDDING.md states what it does and
+    does not carry between programs.
     """
-    import io as _io
-    import contextlib
     if timeout is not None or max_memory_mb is not None:
         return _run_bounded(source, path=path, allow=allow, deny=deny,
                             args=args, stdin=stdin, native=native,
                             timeout=timeout, max_memory_mb=max_memory_mb)
+    return _run_in_process(source, path=path,
+                           budget=_budget_from(allow, deny),
+                           args=args, stdin=stdin, native=native)
+
+
+def _run_in_process(source, *, path, budget, args, stdin,
+                    native) -> RunResult:
+    """run() with the budget already parsed, in THIS process.
+
+    The budget is installed, the program runs under it, and whatever
+    budget was in place before is put back - so several audits and runs
+    can share a process, and so a pool worker comes back to its own
+    budget after every program it serves.
+    """
+    import io as _io
+    import contextlib
     where, temp = _source_to_file(source, path)
-    budget = _budget_from(allow, deny)
 
     saved = Budget.snapshot()
     saved_args = list(PROGRAM_ARGS)
+    saved_handles, saved_next = dict(PY_OBJECTS), PY_NEXT[0]
     out, err = _io.StringIO(), _io.StringIO()
     problems, refused, code = [], None, 0
     try:
@@ -8319,6 +8499,11 @@ def run(source: str, *, path: str | None = None,
     finally:
         Budget.restore(saved)
         PROGRAM_ARGS[:] = saved_args
+        # handles a program opened and never closed are this program's,
+        # not the next one's - the same reason the budget is put back
+        PY_OBJECTS.clear()
+        PY_OBJECTS.update(saved_handles)
+        PY_NEXT[0] = saved_next
         if temp:
             os.unlink(temp)
     return RunResult(code == 0 and not problems, out.getvalue(),
@@ -8363,6 +8548,182 @@ def _refused_from(code: str, message: str):
     return None
 
 
+# ---------------------------------------------------------------------------
+# Memory caps, per platform
+#
+#     POSIX: the child sets RLIMIT_AS on itself before it does anything
+#     else, from --max-memory-mb on its own command line. It used to be
+#     a preexec_fn in the parent, which is documented as unsafe when the
+#     parent has threads - and the HTTP door, and now Pool, both do.
+#
+#     Windows: there is no RLIMIT_AS. The equivalent is a job object
+#     with JOB_OBJECT_LIMIT_PROCESS_MEMORY, which the parent must build
+#     before the child runs. So the child is created suspended, assigned
+#     to the job, and only then resumed: no instruction of the child
+#     runs outside the cap.
+#
+#     If any of it fails, the cap is recorded and not enforced - the
+#     behaviour Velaris had on Windows before 3.1 - rather than the run
+#     failing. The timeout is enforced on every platform either way.
+# ---------------------------------------------------------------------------
+
+
+def _cap_this_process(mb) -> bool:
+    """Cap this process's address space. True if the cap took hold."""
+    try:
+        import resource                    # POSIX only
+    except ImportError:
+        return False                       # Windows: the job object does it
+    try:
+        cap = int(mb) * 1024 * 1024
+        resource.setrlimit(resource.RLIMIT_AS, (cap, cap))
+        return True
+    except Exception:
+        return False
+
+
+class _WindowsMemoryJob:
+    """A Windows job object capping one child's committed memory.
+
+    An allocation past the cap fails, which reaches a Python child as
+    MemoryError. KILL_ON_JOB_CLOSE means closing this handle kills
+    whatever is still inside it, so a parent that goes away - or a Pool
+    that is closed - cannot leave a worker behind.
+
+    Every call is checked and every failure raises, so the caller can
+    fall back to recording the cap without enforcing it.
+    """
+
+    LIMIT_PROCESS_MEMORY = 0x00000100
+    LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
+    EXTENDED_LIMIT_INFORMATION = 9
+    CREATE_SUSPENDED = 0x00000004
+
+    def __init__(self, max_memory_mb: int):
+        import ctypes
+        from ctypes import wintypes as w
+
+        class IO_COUNTERS(ctypes.Structure):
+            _fields_ = [(n, ctypes.c_ulonglong) for n in (
+                "ReadOperationCount", "WriteOperationCount",
+                "OtherOperationCount", "ReadTransferCount",
+                "WriteTransferCount", "OtherTransferCount")]
+
+        class BASIC_LIMITS(ctypes.Structure):
+            _fields_ = [("PerProcessUserTimeLimit", ctypes.c_longlong),
+                        ("PerJobUserTimeLimit", ctypes.c_longlong),
+                        ("LimitFlags", w.DWORD),
+                        ("MinimumWorkingSetSize", ctypes.c_size_t),
+                        ("MaximumWorkingSetSize", ctypes.c_size_t),
+                        ("ActiveProcessLimit", w.DWORD),
+                        ("Affinity", ctypes.c_size_t),
+                        ("PriorityClass", w.DWORD),
+                        ("SchedulingClass", w.DWORD)]
+
+        class EXTENDED_LIMITS(ctypes.Structure):
+            _fields_ = [("BasicLimitInformation", BASIC_LIMITS),
+                        ("IoInfo", IO_COUNTERS),
+                        ("ProcessMemoryLimit", ctypes.c_size_t),
+                        ("JobMemoryLimit", ctypes.c_size_t),
+                        ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                        ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+        k = ctypes.WinDLL("kernel32", use_last_error=True)
+        # the default restype is a 32-bit int, which truncates a handle
+        k.CreateJobObjectW.restype = w.HANDLE
+        k.CreateJobObjectW.argtypes = [ctypes.c_void_p, w.LPCWSTR]
+        k.SetInformationJobObject.restype = w.BOOL
+        k.SetInformationJobObject.argtypes = [w.HANDLE, ctypes.c_int,
+                                              ctypes.c_void_p, w.DWORD]
+        k.AssignProcessToJobObject.restype = w.BOOL
+        k.AssignProcessToJobObject.argtypes = [w.HANDLE, w.HANDLE]
+        k.CloseHandle.restype = w.BOOL
+        k.CloseHandle.argtypes = [w.HANDLE]
+        nt = ctypes.WinDLL("ntdll", use_last_error=True)
+        nt.NtResumeProcess.argtypes = [w.HANDLE]
+
+        self._ctypes, self._k, self._nt = ctypes, k, nt
+        self.handle = k.CreateJobObjectW(None, None)
+        if not self.handle:
+            raise OSError(ctypes.get_last_error(), "CreateJobObject failed")
+        info = EXTENDED_LIMITS()
+        info.BasicLimitInformation.LimitFlags = (
+            self.LIMIT_PROCESS_MEMORY | self.LIMIT_KILL_ON_JOB_CLOSE)
+        info.ProcessMemoryLimit = int(max_memory_mb) * 1024 * 1024
+        if not k.SetInformationJobObject(
+                self.handle, self.EXTENDED_LIMIT_INFORMATION,
+                ctypes.byref(info), ctypes.sizeof(info)):
+            err = ctypes.get_last_error()
+            self.close()
+            raise OSError(err, "SetInformationJobObject failed")
+
+    def adopt(self, proc) -> None:
+        """Put a suspended child in the job, then let it run."""
+        if not self._k.AssignProcessToJobObject(self.handle,
+                                                int(proc._handle)):
+            raise OSError(self._ctypes.get_last_error(),
+                          "AssignProcessToJobObject failed")
+        self._nt.NtResumeProcess(int(proc._handle))
+
+    def close(self) -> None:
+        handle, self.handle = getattr(self, "handle", None), None
+        if handle:
+            try:
+                self._k.CloseHandle(handle)
+            except Exception:
+                pass
+
+
+def _spawn_capped(cmd: list, max_memory_mb, **popen_kw):
+    """Start cmd under a memory cap. Returns (proc, job, how) - `job`
+    must be closed once the child is finished with, and `how` is one of
+    'RLIMIT_AS', 'job object' or 'not enforced'."""
+    import subprocess
+    if max_memory_mb is None:
+        return subprocess.Popen(cmd, **popen_kw), None, "no cap asked for"
+    if os.name != "nt":
+        # the child caps itself from --max-memory-mb, already in cmd
+        return subprocess.Popen(cmd, **popen_kw), None, "RLIMIT_AS"
+    try:
+        job = _WindowsMemoryJob(max_memory_mb)
+    except Exception:
+        return subprocess.Popen(cmd, **popen_kw), None, "not enforced"
+    suspended = dict(popen_kw)
+    suspended["creationflags"] = (popen_kw.get("creationflags", 0)
+                                  | _WindowsMemoryJob.CREATE_SUSPENDED)
+    proc = subprocess.Popen(cmd, **suspended)
+    try:
+        job.adopt(proc)
+    except Exception:
+        job.close()                        # kills the suspended child
+        try:
+            proc.wait(timeout=10)
+        except Exception:
+            pass
+        return subprocess.Popen(cmd, **popen_kw), None, "not enforced"
+    return proc, job, "job object"
+
+
+def memory_cap_is_enforced() -> bool:
+    """Does max_memory_mb actually stop a program on this machine?
+
+    True on Linux (RLIMIT_AS) and on Windows when a job object can be
+    created. False on macOS, where RLIMIT_AS is set and not reliably
+    honoured, and on a Windows where the job object could not be made.
+    A suite that asserts the cap fires should ask this first.
+    """
+    if sys.platform == "linux":
+        return True
+    if os.name == "nt":
+        try:
+            job = _WindowsMemoryJob(256)
+        except Exception:
+            return False
+        job.close()
+        return True
+    return False
+
+
 def _run_bounded(source, *, path, allow, deny, args, stdin, native,
                  timeout, max_memory_mb) -> RunResult:
     """run() in a child process that can be killed."""
@@ -8389,34 +8750,31 @@ def _run_bounded(source, *, path, allow, deny, args, stdin, native,
            "--allow", budget.spec() or "''"]
     if not native:
         cmd.append("--no-native")
+    if max_memory_mb is not None:
+        # the child caps itself on POSIX; on Windows the job object
+        # below does it, and this only records what was asked for
+        cmd += ["--max-memory-mb", str(int(max_memory_mb))]
     cmd += list(args or [])
-
-    def limit_memory():                    # runs inside the child
-        if max_memory_mb is None:
-            return
-        try:
-            import resource
-            cap = int(max_memory_mb) * 1024 * 1024
-            resource.setrlimit(resource.RLIMIT_AS, (cap, cap))
-        except Exception:
-            pass                           # not this platform
 
     timed_out = False
     out, err, code = "", "", 0
+    proc, job, _how = _spawn_capped(
+        cmd, max_memory_mb, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE)
     try:
-        done = subprocess.run(
-            cmd, input=stdin, capture_output=True, text=True,
-            timeout=timeout,
-            preexec_fn=limit_memory if os.name != "nt" else None)
-        out, err, code = done.stdout, done.stderr, done.returncode
-    except subprocess.TimeoutExpired as e:
-        timed_out = True
-        out = (e.stdout or b"").decode("utf-8", "replace") \
-            if isinstance(e.stdout, bytes) else (e.stdout or "")
-        err = (e.stderr or b"").decode("utf-8", "replace") \
-            if isinstance(e.stderr, bytes) else (e.stderr or "")
-        code = 124
+        try:
+            raw_out, raw_err = proc.communicate(
+                stdin.encode("utf-8"), timeout=timeout)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            proc.kill()
+            raw_out, raw_err = proc.communicate()
+        out = raw_out.decode("utf-8", "replace")
+        err = raw_err.decode("utf-8", "replace")
+        code = 124 if timed_out else proc.returncode
     finally:
+        if job is not None:
+            job.close()
         if temp:
             os.unlink(temp)
 
@@ -8448,6 +8806,602 @@ def _run_bounded(source, *, path, allow, deny, args, stdin, native,
     ok = code == 0 and not problems
     return RunResult(ok, out, err if not problems else "", problems,
                      refused, code, timed_out, out_of_memory)
+
+
+# ---------------------------------------------------------------------------
+# 15. THE POOL — bounded runs without a new interpreter every time
+#
+#     A run with a timeout or a memory cap starts a Python interpreter,
+#     which costs about a tenth of a second before a line of Velaris is
+#     read. An agent platform calling run() thousands of times an hour
+#     pays that every time. A Pool keeps workers alive and hands each
+#     program to an idle one.
+#
+#     Speed is why it exists; isolation is why it can be used. Every
+#     rule in Pool's docstring is asserted in check_pool.py, because a
+#     fast sandbox that leaks state between programs is worse than a
+#     slow one.
+# ---------------------------------------------------------------------------
+
+import atexit
+import queue as _queue
+import threading
+import weakref
+
+# Every module-level container a running program can reach. The rest of
+# the module-level containers in this file - KEYWORDS, BUILTINS,
+# FALLIBLE_BUILTINS, TOKEN_SPEC and so on - are constants nothing writes
+# to. check_pool.py walks this file and fails if a new mutable one
+# appears that is named in neither list.
+MUTABLE_GLOBALS = ("PROGRAM_ARGS", "EFFECT_BUDGET", "FFI_MODULES",
+                   "FS_GRANTS", "NET_GRANTS", "OP_LIMITS", "OP_COUNTS",
+                   "PY_OBJECTS", "PY_NEXT", "TRACE", "_NATIVE_KEEPALIVE")
+
+
+def program_state_baseline() -> dict:
+    """What this process looked like before it ran anyone's program."""
+    return {"cwd": os.getcwd(), "env": dict(os.environ),
+            "recursion": sys.getrecursionlimit()}
+
+
+def reset_program_state(budget: "Budget | None" = None,
+                        baseline: dict | None = None) -> None:
+    """Put every piece of module-level mutable state back to how a
+    fresh process would find it.
+
+    A pool worker runs one program after another in one process, so
+    anything a program leaves behind here is state the next program
+    could see. Exhaustively, as of 3.1, that is:
+
+        PROGRAM_ARGS        what args() answers
+        EFFECT_BUDGET       the effects granted
+        FFI_MODULES         the Python modules granted
+        FS_GRANTS           the directions and paths granted
+        NET_GRANTS          the hosts and ports granted
+        OP_LIMITS           the @N caps
+        OP_COUNTS           how many fs and net operations have run
+        PY_OBJECTS          handles from py_new, closed by the program
+                            or not
+        PY_NEXT             the number the next handle would get
+        TRACE               the tracer's switch, depth and call count
+        _NATIVE_KEEPALIVE   the JIT engines, and the text arena each
+                            engine owns
+
+    There is no proof cache in memory to clear. check_proofs keeps its
+    cache on disk (.velaris/proofs.json) and only when it is asked to
+    (use_cache=True); the library and the pool never ask, so nothing
+    about one program's proofs survives in this process to reach the
+    next.
+
+    With a baseline, three things that are the process's rather than
+    this module's are put back too, because a program granted ffi can
+    change all three: the working directory, the environment, and
+    Python's recursion limit (which the interpreter raises so that its
+    own depth limit is the one that fires).
+
+    Passing no budget grants nothing, which is the right answer for a
+    reset outside a pool: the budget must be chosen deliberately, never
+    inherited from whatever ran last.
+    """
+    PROGRAM_ARGS[:] = []
+    PY_OBJECTS.clear()
+    PY_NEXT[0] = 1
+    _NATIVE_KEEPALIVE.clear()
+    TRACE.update({"on": False, "depth": 0, "calls": 0, "limit": 4000})
+    (budget if budget is not None else Budget()).install()
+    if baseline is None:
+        return
+    try:
+        if os.getcwd() != baseline["cwd"]:
+            os.chdir(baseline["cwd"])
+    except OSError:
+        pass
+    if dict(os.environ) != baseline["env"]:
+        os.environ.clear()
+        os.environ.update(baseline["env"])
+    if sys.getrecursionlimit() != baseline["recursion"]:
+        try:
+            sys.setrecursionlimit(baseline["recursion"])
+        except (ValueError, RecursionError):
+            pass
+
+
+# ---- the wire between a pool and its workers ------------------------------
+#      Four bytes of length, then one JSON object. Length-prefixed and
+#      not line-delimited, because a program's output is inside the
+#      object and can hold anything at all.
+
+def _msg_write(stream, payload: dict) -> None:
+    body = json.dumps(payload).encode("utf-8")
+    stream.write(len(body).to_bytes(4, "little"))
+    stream.write(body)
+    stream.flush()
+
+
+def _read_exactly(stream, n: int):
+    parts = []
+    while n > 0:
+        try:
+            chunk = stream.read(n)
+        except (OSError, ValueError):
+            return None
+        if not chunk:
+            return None                    # the other end went away
+        parts.append(chunk)
+        n -= len(chunk)
+    return b"".join(parts)
+
+
+def _msg_read(stream):
+    """The next message, or None when the pipe closed or went wrong."""
+    head = _read_exactly(stream, 4)
+    if head is None:
+        return None
+    body = _read_exactly(stream, int.from_bytes(head, "little"))
+    if body is None:
+        return None
+    try:
+        answer = json.loads(body.decode("utf-8"))
+    except ValueError:
+        return None
+    return answer if isinstance(answer, dict) else None
+
+
+def pool_worker(argv: list) -> int:
+    """One long-lived child behind velaris.Pool.
+
+    It parses its budget once, from its own command line, installs it,
+    and then serves one program at a time: read a request, run it,
+    answer with exactly the dict run() returns. A request carries a
+    program, its stdin and its arguments - never a budget. There is
+    nowhere for a program to ask for more than the pool was made with.
+    """
+    spec = argv[argv.index("--allow") + 1] if "--allow" in argv else ""
+    native = "--no-native" not in argv
+    if "--max-memory-mb" in argv:
+        # POSIX caps itself here; on Windows the parent put this process
+        # in a job object before it was allowed to run at all
+        _cap_this_process(argv[argv.index("--max-memory-mb") + 1])
+    try:
+        budget = Budget.parse(spec)
+    except BudgetError as e:
+        sys.stderr.write(f"velaris worker: {e}\n")
+        return 2
+
+    # The protocol gets private copies of fd 0 and fd 1, and the
+    # program's own fd 0 and fd 1 are pointed at the null device.
+    # Nothing a program writes - print, a hand-redirected stderr, or a
+    # write straight at the file descriptor through ffi - can reach the
+    # pipe the parent is parsing.
+    requests = os.fdopen(os.dup(0), "rb")
+    replies = os.fdopen(os.dup(1), "wb")
+    null = os.open(os.devnull, os.O_RDWR)
+    os.dup2(null, 0)
+    os.dup2(null, 1)
+    os.close(null)
+
+    baseline = program_state_baseline()
+    reset_program_state(budget, baseline)
+    _msg_write(replies, {"ready": VERSION, "pid": os.getpid(),
+                         "allow": budget.spec()})
+    while True:
+        request = _msg_read(requests)
+        if request is None or request.get("stop"):
+            return 0                       # the parent closed the pipe
+        reset_program_state(budget, baseline)
+        try:
+            answer = _run_in_process(
+                request.get("source") or "", path=request.get("path"),
+                budget=budget, args=request.get("args") or [],
+                stdin=request.get("stdin") or "",
+                native=native).as_dict()
+        except MemoryError:
+            answer = {"out_of_memory": True}
+        except Exception as e:             # a defect in the compiler, not
+            answer = {"crashed": f"{type(e).__name__}: {e}"}   # in the run
+        reset_program_state(budget, baseline)
+        try:
+            _msg_write(replies, answer)
+        except OSError:
+            return 0                       # the parent stopped listening
+
+
+class _Worker:
+    """One child process, and the pipe its pool talks to it over."""
+
+    def __init__(self, cmd: list, max_memory_mb):
+        import subprocess
+        self.killed_by_timeout = False
+        self.dead = False
+        self._kill_lock = threading.Lock()
+        self._noise: list = []
+        self.proc, self.job, self.cap = _spawn_capped(
+            cmd, max_memory_mb, stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.pid = self.proc.pid
+        self._drain = threading.Thread(target=self._read_stderr, daemon=True)
+        self._drain.start()
+        hello = _msg_read(self.proc.stdout)
+        if hello is None or not hello.get("ready"):
+            self.dispose()
+            raise RuntimeError("a pool worker did not start: "
+                               + (self.stderr() or "it said nothing"))
+        self.allow = hello.get("allow") or ""
+
+    def _read_stderr(self) -> None:
+        try:
+            for line in self.proc.stderr:
+                self._noise.append(line.decode("utf-8", "replace"))
+                del self._noise[:-40]      # the last 40 lines are plenty
+        except Exception:
+            pass
+
+    def stderr(self) -> str:
+        return "".join(self._noise).strip()
+
+    def ask(self, request: dict, timeout):
+        """Send one program and wait. None means the worker did not
+        answer: killed by the deadline, or dead for another reason."""
+        self.killed_by_timeout = False
+        alarm = None
+        if timeout is not None:
+            alarm = threading.Timer(timeout, self._deadline)
+            alarm.daemon = True
+            alarm.start()
+        try:
+            try:
+                _msg_write(self.proc.stdin, request)
+            except (OSError, ValueError):
+                return None
+            return _msg_read(self.proc.stdout)
+        finally:
+            if alarm is not None:
+                alarm.cancel()
+
+    def _deadline(self) -> None:
+        # the PARENT owns the deadline: a worker that has not answered
+        # is killed, not asked to stop. A program that ignores its own
+        # limits cannot ignore this one.
+        self.killed_by_timeout = True
+        self.kill()
+
+    def kill(self) -> None:
+        """Stop the child and reap it. Safe from any thread, and safe
+        while another thread is still reading the child's answer - the
+        pipes are closed by dispose(), once nobody is reading."""
+        with self._kill_lock:
+            if self.dead:
+                return
+            self.dead = True
+        if self.job is not None:
+            self.job.close()               # kills whatever is in the job
+        try:
+            self.proc.kill()
+        except Exception:
+            pass
+        try:
+            self.proc.wait(timeout=10)
+        except Exception:
+            pass
+
+    def dispose(self) -> None:
+        self.kill()
+        for stream in (self.proc.stdin, self.proc.stdout, self.proc.stderr):
+            try:
+                stream.close()
+            except Exception:
+                pass
+        try:
+            self._drain.join(timeout=2)
+        except Exception:
+            pass
+
+
+def _kill_workers(live: set, lock) -> None:
+    """Every worker in `live`, stopped and forgotten. Used by close(),
+    by the finalizer of a pool nobody closed, and at exit."""
+    try:
+        with lock:
+            workers = list(live)
+            live.clear()
+    except Exception:                      # interpreter shutdown
+        workers = list(live)
+        live.clear()
+    for worker in workers:
+        try:
+            worker.dispose()
+        except Exception:
+            pass
+
+
+_POOLS: "weakref.WeakSet" = weakref.WeakSet()
+
+
+@atexit.register
+def _close_pools_at_exit() -> None:
+    for pool in list(_POOLS):
+        try:
+            pool.close()
+        except Exception:
+            pass
+
+
+class Pool:
+    """Long-lived workers for bounded runs, all under ONE budget.
+
+        pool = velaris.Pool(size=4, allow={"io"}, timeout=30,
+                            max_memory_mb=512)
+        result = pool.run(source)          # the RunResult run() returns
+        pool.close()                       # also a context manager
+
+    A bounded run costs an interpreter's startup - about a tenth of a
+    second - before a line of Velaris is read. A pool pays that once
+    per worker instead of once per program.
+
+    The isolation rules, which matter more than the speed:
+
+    * THE BUDGET IS THE POOL'S, NOT THE PROGRAM'S. It is parsed once,
+      here, and installed by each worker at startup; `run` on a pool
+      takes no allow argument. A caller who needs a different budget
+      makes a different pool. Nothing a program does can widen it: the
+      budget is re-asserted from this object before every program,
+      which also puts the per-run operation counts (@N) back to zero,
+      so one program cannot spend another's allowance.
+
+    * A WORKER IS USED ONCE UNLESS THE RUN WAS CLEAN. Anything other
+      than ok - a refused effect, a failure that escaped, a program
+      that did not compile, the timeout, the memory cap - retires the
+      worker: it is killed and a fresh one takes its place. Only a run
+      that finished cleanly hands its worker back. That costs a
+      restart on every rejected program, and it is the rule that makes
+      the rest of this list checkable.
+
+    * A REUSED WORKER STARTS EMPTY. Before every program the child
+      resets every piece of module-level mutable state there is: the
+      arguments, the Python handles, the native compiler's engines and
+      the text arena they own, the tracer, the budget and its counts -
+      and the working directory, the environment and the recursion
+      limit, which a program granted ffi can change.
+      `reset_program_state` lists all of it.
+
+    * THE PARENT OWNS THE DEADLINE. A worker that has not answered
+      within `timeout` is killed by this process; the call returns
+      E610 and a replacement is started. The memory cap is set in the
+      child at startup, the same way a bounded `run` sets it.
+
+    * CLOSING KILLS EVERY WORKER, including one still running a
+      program. A pool collected without close() is closed by its
+      finalizer; a pool that outlives the interpreter is closed at
+      exit; and a worker whose pipe closes ends by itself, so a parent
+      that dies without doing either still leaves nothing behind.
+
+    `run` is safe to call from several threads: each call takes an idle
+    worker and blocks while none is free.
+
+    What a pool does NOT change: the effect budget is the same guard it
+    is everywhere else in Velaris, and the same things sit outside it -
+    a granted ffi module can do whatever that module can do, in a
+    worker as anywhere. THREAT_MODEL.md is the long form.
+    """
+
+    _CLOSED = object()
+
+    def __init__(self, size: int = 4, *, allow: set | None = None,
+                 deny: set | None = None, timeout: float | None = None,
+                 max_memory_mb: int | None = None, native: bool = True):
+        if int(size) < 1:
+            raise ValueError("a pool needs at least one worker")
+        self.size = int(size)
+        self.timeout = timeout
+        self.max_memory_mb = max_memory_mb
+        self.native = native
+        self._budget = _budget_from(allow, deny)   # a bad grant fails here,
+        self.allow = self._budget.spec()           # before any worker starts
+        self._free: "_queue.Queue" = _queue.Queue()
+        for _ in range(self.size):
+            self._free.put(None)           # a worker starts on first demand
+        self._live: set = set()
+        self._lock = threading.Lock()
+        self._closed = False
+        self.started = 0                   # how many workers ever started
+        _POOLS.add(self)
+        self._finalizer = weakref.finalize(self, _kill_workers,
+                                           self._live, self._lock)
+
+    # ---- using it ----------------------------------------------------
+    def run(self, source: str, *, stdin: str = "", args: list | None = None,
+            path: str | None = None) -> RunResult:
+        """Run one program on this pool, under the pool's budget.
+
+        The same RunResult `velaris.run` returns, including timed_out
+        and out_of_memory.
+        """
+        if self._closed:
+            raise RuntimeError("this pool is closed")
+        slot = self._free.get()
+        if slot is self._CLOSED:
+            self._free.put(slot)           # leave it for the next waiter
+            raise RuntimeError("this pool is closed")
+        worker, keep = slot, False
+        try:
+            if self._closed:
+                raise RuntimeError("this pool is closed")
+            if worker is not None and worker.proc.poll() is not None:
+                self._forget(worker)       # it died while it was idle
+                worker = None
+            if worker is None:
+                worker = self._start()
+            result = self._ask(worker, source, stdin, args, path)
+            keep = result.ok
+            return result
+        finally:
+            if worker is not None and not keep:
+                try:
+                    self._forget(worker)   # used once
+                finally:
+                    worker = None          # the slot comes back either
+            self._free.put(worker)         # way, or the pool shrinks
+
+    def close(self) -> None:
+        """Kill every worker, including one still running a program."""
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+        self._free.put(self._CLOSED)       # wake anyone waiting
+        _kill_workers(self._live, self._lock)
+        self._finalizer.detach()
+
+    def __enter__(self) -> "Pool":
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        self.close()
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
+    def worker_pids(self) -> list:
+        """The process ids of the workers alive right now."""
+        with self._lock:
+            return sorted(w.pid for w in self._live)
+
+    # ---- the machinery -----------------------------------------------
+    def _start(self) -> "_Worker":
+        cmd = [sys.executable, os.path.abspath(__file__), "--pool-worker",
+               "--allow", self._budget.spec()]
+        if not self.native:
+            cmd.append("--no-native")
+        if self.max_memory_mb is not None:
+            cmd += ["--max-memory-mb", str(int(self.max_memory_mb))]
+        worker = _Worker(cmd, self.max_memory_mb)
+        with self._lock:
+            # close() may have run between the check in run() and here.
+            # A worker added after close() drained the set would outlive
+            # the pool, which is the one thing close() promises it will
+            # not leave behind.
+            too_late = self._closed
+            if not too_late:
+                self._live.add(worker)
+                self.started += 1
+        if too_late:
+            worker.dispose()
+            raise RuntimeError("this pool is closed")
+        return worker
+
+    def _forget(self, worker) -> None:
+        with self._lock:
+            self._live.discard(worker)
+        worker.dispose()
+
+    def _ask(self, worker, source, stdin, args, path) -> RunResult:
+        answer = worker.ask({"source": source, "stdin": stdin or "",
+                             "args": list(args or []), "path": path},
+                            self.timeout)
+        if answer is not None and "ok" in answer:
+            return RunResult(
+                bool(answer.get("ok")), answer.get("output") or "",
+                answer.get("logs") or "",
+                [Problem(p.get("code"), p.get("message"), p.get("line"),
+                         p.get("file"), p.get("fixes") or [])
+                 for p in answer.get("problems") or []],
+                answer.get("refused_effect"), answer.get("exit_code") or 0,
+                bool(answer.get("timed_out")),
+                bool(answer.get("out_of_memory")))
+        return self._no_answer(worker, answer, path)
+
+    def _no_answer(self, worker, answer, path) -> RunResult:
+        """The worker handed back no run. Say which limit or which
+        fault it was, in the shape run() would have used."""
+        where = path or "<source>"
+        if worker.killed_by_timeout:
+            return RunResult(False, "", "", [Problem(
+                "E610", f"the program ran longer than {self.timeout} "
+                        f"second(s) and was stopped", 0, where,
+                ["give it more time, or fix the loop that never ends"])],
+                None, 124, True, False)
+        noise = worker.stderr()
+        starved = bool((answer or {}).get("out_of_memory")) or \
+            "MemoryError" in noise or "Cannot allocate" in noise
+        if starved and self.max_memory_mb is not None:
+            return RunResult(False, "", "", [Problem(
+                "E611", f"the program used more than {self.max_memory_mb} "
+                        f"MB and was stopped", 0, where,
+                ["give it more memory, or find what is growing"])],
+                None, 1, False, True)
+        detail = (answer or {}).get("crashed") or (
+            noise.splitlines()[-1][:200] if noise
+            else "the worker stopped without answering")
+        return RunResult(False, "", "", [Problem("E000", detail, 0, where,
+                                                 [])], None, 1)
+
+
+class PoolRegistry:
+    """One pool per distinct budget, made the first time it is asked for.
+
+    A server takes a budget per request, so it cannot make its pools up
+    front. This makes one the first time a budget is seen and keeps it
+    for the next request that names the same budget - the same grants,
+    timeout and memory cap. Budgets that differ never share a pool,
+    because a pool's budget is the thing that makes its workers safe to
+    reuse.
+
+    At most `keep` pools are held; the least recently used beyond that
+    is closed, so a caller who varies the budget on every request
+    cannot make a server hold processes without end.
+
+        pools = velaris.PoolRegistry()
+        result = pools.run(source, allow={"io"}, timeout=30,
+                           max_memory_mb=512)
+        pools.close()
+    """
+
+    def __init__(self, size: int = 4, keep: int = 8):
+        self.size, self.keep = int(size), max(1, int(keep))
+        self._pools: dict = {}             # key -> Pool, least used first
+        self._lock = threading.Lock()
+
+    def pool(self, *, allow=None, deny=None, timeout=None,
+             max_memory_mb=None, native: bool = True) -> "Pool":
+        # spec() rather than the caller's words: two spellings of one
+        # budget are one budget, and a bad grant fails here as it would
+        # in run(), before any worker starts
+        key = (_budget_from(allow, deny).spec(), timeout, max_memory_mb,
+               bool(native))
+        stale = []
+        with self._lock:
+            found = self._pools.pop(key, None)
+            if found is None or found.closed:
+                found = Pool(self.size, allow=allow, deny=deny,
+                             timeout=timeout, max_memory_mb=max_memory_mb,
+                             native=native)
+            self._pools[key] = found       # most recently used, last
+            while len(self._pools) > self.keep:
+                stale.append(self._pools.pop(next(iter(self._pools))))
+        for old in stale:
+            old.close()
+        return found
+
+    def run(self, source: str, *, allow=None, deny=None, timeout=None,
+            max_memory_mb=None, native: bool = True, stdin: str = "",
+            args: list | None = None, path: str | None = None) -> RunResult:
+        return self.pool(allow=allow, deny=deny, timeout=timeout,
+                         max_memory_mb=max_memory_mb, native=native).run(
+            source, stdin=stdin, args=args, path=path)
+
+    def close(self) -> None:
+        with self._lock:
+            pools, self._pools = list(self._pools.values()), {}
+        for pool in pools:
+            pool.close()
+
+    def __enter__(self) -> "PoolRegistry":
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        self.close()
+
 
 
 def card() -> str:

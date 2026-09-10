@@ -27,7 +27,7 @@ write instead.
 |---|---|---|
 | The operator | yes | Sets the budget (`--allow`, `--deny`, `timeout`, `max_memory_mb`) and decides what to do with the output. Everything below depends on the budget being narrower than "everything". |
 | The program | no | Written by a model or a stranger. Its `uses` clauses, its contracts and its comments are claims the compiler checks; the runtime enforces the operator's budget regardless of them. |
-| The compiler and runtime (`velaris.py`) | yes | One file, in the same process as the program it runs, or in a child process when a time or memory limit is set. A defect here is a defect in the guard. The suites below exist because of that. |
+| The compiler and runtime (`velaris.py`) | yes | One file, in the same process as the program it runs, or in a child process when a time or memory limit is set - a fresh one per run, or a pooled worker under one fixed budget (3.1). A defect here is a defect in the guard. The suites below exist because of that. |
 | The host Python and operating system | yes | The interpreter runs on CPython; the memory cap is the OS's address-space limit; the timeout kills a process. None of these are hardened by Velaris. |
 | Python modules granted through `ffi:` | yes, in full | A granted module can do whatever that module can do. Granting `ffi:subprocess` is granting a shell. |
 
@@ -44,22 +44,24 @@ on.
 
 | Threat | Mechanism | Tested by |
 |---|---|---|
-| A program that reads or writes files, reaches the network, asks the clock, draws randomness, or calls Python when the operator did not allow it | The effect budget: `--allow io` refuses `fs`, `net`, `clock`, `rand` and `ffi` at the call, whatever the source declares, and the refusal cannot be caught | `check_sandbox.py` - 16 escape attempts refused, 6 honest programs still run |
+| A program that reads or writes files, reaches the network, asks the clock, draws randomness, or calls Python when the operator did not allow it | The effect budget: `--allow io` refuses `fs`, `net`, `clock`, `rand` and `ffi` at the call, whatever the source declares, and the refusal cannot be caught | `check_sandbox.py` - 24 escape attempts refused, 10 honest programs still run |
 | A program that reaches a Python module outside the ones the operator named | The module allow-list: `--allow io,ffi:math` refuses `ffi:os` with E311, through `py`, `py_json`, `py_new`, a submodule path, and the bounded child process | `check_sandbox.py` - four ways round the list, all refused |
 | A program that reads or writes a file outside the directory the operator named, or writes when only reading was granted | Scoped fs grants (3.0): `fs:read:./data`, `fs:write:./out`. Every path is resolved with `realpath` before comparison, so `..` and symlinks cannot leave a prefix; E313 names the path and cannot be caught | `check_sandbox.py` - a read outside the prefix, a write under a read-only grant, a `..` escape, a symlink escape (POSIX); `check_library.py` - the same through `velaris.run` and through the HTTP door's ceiling |
 | A program that reaches a host, or a port, the operator did not name | Scoped net grants (3.0): `net:api.example.com:443`, `net:*.example.com` (one label). The URL's host and port are checked before any connection; E314 cannot be caught. A redirect to an ungranted host fails the request as a catchable failure naming the target | `check_sandbox.py` - a host not in the list, a port not in the list, a wildcard that must not match its parent domain, a redirect to an ungranted host; `check_fallible.py` - the redirect failure formats and is caught |
 | A program that reads the environment under a budget meant for the console | `env` is its own effect (3.0): `env()` needs `uses env`, and `--allow io` refuses it with E310. A program written for 2.x that calls `env()` under `uses io` alone is refused at compile time with "env() now needs 'uses env'" | `check_sandbox.py` - `env()` with only io granted; `check_library.py` - the same, and the exact message |
 | A program that does more file or network operations than the operator expected | Counts (3.0): `fs:read:./data@50`, `net:api.example.com@100` - at most that many operations of that effect in the run; E315 cannot be caught. A budget with no count is a budget on what, not on how much | `check_sandbox.py`, `check_library.py` - the count reached on fs and on net |
-| A program that never ends, or eats memory | `velaris.run(timeout=, max_memory_mb=)` runs the program in a child process killed on breach and reports E610 or E611; the MCP server and the HTTP door default to 30 s and 512 MB | `check_library.py` - a program that never ends is stopped in 2 s on every platform; a program that doubles a text is stopped at 150 MB, asserted on Linux only (best-effort on macOS, not applied on Windows - see below) |
+| A program that never ends, or eats memory | `velaris.run(timeout=, max_memory_mb=)` runs the program in a child process killed on breach and reports E610 or E611; the MCP server and the HTTP door default to 30 s and 512 MB | `check_library.py` - a program that never ends is stopped in 2 s on every platform; a program that doubles a text is stopped at 150 MB, asserted wherever the mechanism holds: Linux (`RLIMIT_AS`) and Windows (a job object, 3.1), best-effort on macOS - see below. `check_pool.py` asserts both limits again on a pool |
 | A promise that is false - a contract the code does not keep, a division by a value that can be zero, a list read that can go past the end | The prover: `requires`/`ensures`/`invariant` are checked by Z3 before running (E700, E701, E703, E705, E706) with an exact counterexample; a premise it cannot translate abandons the proof to a runtime check rather than proving with a gap | `check_refusals.py` - 21 wrong programs each refused with the specific code; `fuzz_native.py` - random programs run natively and interpreted must agree exactly, so a proven-and-compiled function cannot behave differently from an interpreted one |
 | A failure the program ignores - a parse, a map lookup, a pop, a network call, a Python call that can fail | Fallibility in the signature (`or fail`), and E520 for any fallible call not handled with `check` or passed up with `try` | `check_fallible.py` - every builtin in `FALLIBLE_BUILTINS` is refused when ignored and formats its failure when caught; a builtin added without a recipe fails the suite |
 | A loop that never ends, before running it | The termination rule (SPEC.md 9.5): a loop is `terminates` only when a counter moves one step toward a limit the body leaves alone, `unshown` otherwise; reported by `audit` as `loops_unshown` and refused by `check --strict` as E612 | `check_termination.py` - 44 adversarial loops, each with its required verdict; the rule was wrong twice while being built, both times refusing a loop that ends, never the reverse |
+| One program's leftovers becoming the next program's starting state, when runs share a process | `velaris.Pool` (3.1) fixes the budget when the pool is made and re-asserts it before every program; a worker is killed and replaced unless the run finished cleanly; a reused worker has every module-level mutable reset - arguments, Python handles, native engines and their arena, the tracer, the budget and its counts, and the working directory, environment and recursion limit a granted `ffi` module can change | `check_pool.py` - 38 checks, including a program that widens its own budget through `ffi` and cannot widen it for the next, a handle nobody closed, args from a previous run, a counted grant spent per program, and a program writing straight at file descriptor 1 |
 | Not knowing what a program does before running it | `velaris audit`: effects, Python modules named, proven share, what can fail, loops not shown to end, functions that promise nothing about the data they handle, and the exact budget to run it under | `check_library.py` - the library and the MCP server report the same audit; the format is versioned (`velaris.audit/1`) |
 
-On the 60-program benchmark (53 dangerous, 7 harmless), Velaris caught
-51 of the 53 - 41 before running and 10 while running - and flagged
-none of the 7. Under the same rules Deno caught 29 and plain Python
-28. The two misses are named below.
+On the 63-program benchmark (56 dangerous, 7 harmless), Velaris caught
+54 of the 56 - 42 before running and 12 while running - and flagged
+none of the 7. Under the same rules Deno caught 32 (5 before, 27
+during) and plain Python 28 (all while running). The two misses are
+named below.
 
 ## What it explicitly does NOT defend against
 
@@ -98,13 +100,27 @@ none of the 7. Under the same rules Deno caught 29 and plain Python
 - **Code not written in Velaris.** A model asked for Velaris may hand
   back Python. The guard applies only to what the Velaris runtime
   runs.
-- **Memory caps outside Linux.** `max_memory_mb` uses the OS
-  address-space limit (`RLIMIT_AS`). It is enforced on Linux. On macOS
-  it is best-effort: the limit is set but not reliably honoured, and
-  in the suite the runaway program reached the timeout instead. On
-  Windows it is recorded and not applied. The timeout is enforced on
-  every platform. (The benchmark harness wraps its own children in a
-  Windows job object; the compiler does not do this for you.)
+- **Memory caps on macOS.** `max_memory_mb` uses the OS address-space
+  limit (`RLIMIT_AS`) on POSIX and, since 3.1, a job object with
+  `JOB_OBJECT_LIMIT_PROCESS_MEMORY` on Windows - where the child is
+  created suspended, put in the job and only then resumed, so nothing
+  runs outside the cap. It is enforced on Linux and on Windows. On
+  macOS it is best-effort: the limit is set but not reliably honoured,
+  and in the suite the runaway program reached the timeout instead. If
+  the Windows job object cannot be made, the cap is recorded and not
+  enforced rather than the run failing, which is what a Windows before
+  3.1 always did. `velaris.memory_cap_is_enforced()` answers for the
+  machine you are on. The timeout is enforced on every platform.
+- **A pool worker's budget, once chosen.** A `Pool` fixes its budget
+  when it is made. That is the point - it is what lets a worker serve
+  the next program safely - but it means a caller who wants a narrower
+  budget for one program must make another pool, and a caller who
+  hands the same pool to two tenants has given them the same budget.
+  A worker is also a process that outlives one program: everything a
+  granted `ffi` module could do to a fresh process, it can do to a
+  worker, and the pool's promise is only that the *next* program does
+  not inherit it. `check_pool.py` is the whole of that promise.
+
 - **A tampered compiler.** Velaris is one Python file running in the
   same process as the untrusted program's interpreter. If the file,
   the package or the binary you run has been altered, nothing above
@@ -134,11 +150,12 @@ none of the 7. Under the same rules Deno caught 29 and plain Python
 | Secrets in the environment | Do not grant `env` to code you have not read; since 3.0 an `io`-only budget cannot read it. Run agent-written programs with a clean environment regardless. |
 | Data leaves through `net` | Grant hosts, not `net`: `net:api.example.com:443@100`. A host list bounds where, not what; an egress proxy or a firewall rule outside Velaris still belongs under it when the stakes warrant. |
 | A program does damage within `fs` | Grant directions and directories, not `fs`: `fs:read:./data,fs:write:./out`. Run in a directory that holds nothing else regardless. |
-| Runaway time or memory | Always set both `timeout` and `max_memory_mb`; the MCP server and HTTP door do by default. The cap holds on Linux; on macOS or Windows add an OS-level limit (a job object on Windows) or run on Linux. |
+| Runaway time or memory | Always set both `timeout` and `max_memory_mb`; the MCP server and HTTP door do by default. The cap holds on Linux and on Windows; on macOS add an OS-level limit or run on Linux. |
+| A vendored library changed under you | `velaris deps --verify` in CI: `velaris.lock` records the sha256 of every vendored library and the Velaris that added it, and `velaris add` refuses to replace one with different bytes unless you say `--force`. |
 | The result is wrong and no promise catches it | Require contracts on the functions that matter (`velaris proofs --min 80` in CI) and read the audit's `contract_coverage` list. A program with no promises has proven nothing. |
 | Output is trusted downstream | Never pipe a program's stdout into a shell or an interpreter. Treat output as data. |
 | The model wrote something other than Velaris | Check the file extension and run `velaris check` first; refuse to run anything the checker refuses. |
-| A compiler defect | Pin a version, verify the signature of what you install, run the suites (`python run_tests.py`, `check_sandbox.py`, `check_library.py`, `check_refusals.py`, `check_fallible.py`, `check_termination.py`, `fuzz_native.py`) on the machine that will run untrusted code, and report anything that lies through the private channel in SECURITY.md. |
+| A compiler defect | Pin a version, verify the signature of what you install, run the suites (`python run_tests.py`, `check_sandbox.py`, `check_library.py`, `check_refusals.py`, `check_fallible.py`, `check_termination.py`, `check_pool.py`, `fuzz_native.py`) on the machine that will run untrusted code, and report anything that lies through the private channel in SECURITY.md. |
 | A single maintainer | Real, and stated in [SUPPORT.md](SUPPORT.md). Fixes to soundness and sandbox reports are promised within a week; nothing else is promised. |
 
 ## What "not a security boundary" means here

@@ -37,11 +37,12 @@ runs the program in a child process it can kill. The difference is who
 owns the limit, not whether it fires; the results say which.
 
 Memory caps: Velaris `max_memory_mb` uses the OS address-space limit
-(`RLIMIT_AS`): enforced on Linux, best-effort on macOS, not applied on
-Windows. Deno gets `--max-old-space-size` on every platform. Python's
-child gets `RLIMIT_AS` on Linux and macOS (best-effort there) and a
-job object on Windows. The header of `RESULTS.md` records which
-applied on the machine that produced it.
+(`RLIMIT_AS`) on POSIX and a job object with
+`JOB_OBJECT_LIMIT_PROCESS_MEMORY` on Windows: enforced on Linux and on
+Windows, best-effort on macOS. Deno gets `--max-old-space-size` on
+every platform. Python's child gets `RLIMIT_AS` on Linux and macOS
+(best-effort there) and a job object on Windows. The header of
+`RESULTS.md` records which applied on the machine that produced it.
 
 ## The corpus
 
