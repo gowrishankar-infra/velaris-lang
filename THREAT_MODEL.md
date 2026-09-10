@@ -32,8 +32,10 @@ write instead.
 | Python modules granted through `ffi:` | yes, in full | A granted module can do whatever that module can do. Granting `ffi:subprocess` is granting a shell. |
 
 The budget is enforced inside the interpreter loop at the moment an
-effect is attempted, and a refusal (E310, E311) is not a failure the
-program can `check`; it stops the program. `check_sandbox.py` holds
+effect is attempted, and a refusal (E310, E311, E313, E314, E315) is
+not a failure the program can `check`; it stops the program. The one
+catchable case is a redirect to a host outside the grants: the program
+did not choose it, so the request fails and the program hears why. `check_sandbox.py` holds
 the escape attempts that established this, including a helper two
 layers down and a program that tries to catch the refusal and carry
 on.
@@ -44,6 +46,10 @@ on.
 |---|---|---|
 | A program that reads or writes files, reaches the network, asks the clock, draws randomness, or calls Python when the operator did not allow it | The effect budget: `--allow io` refuses `fs`, `net`, `clock`, `rand` and `ffi` at the call, whatever the source declares, and the refusal cannot be caught | `check_sandbox.py` - 16 escape attempts refused, 6 honest programs still run |
 | A program that reaches a Python module outside the ones the operator named | The module allow-list: `--allow io,ffi:math` refuses `ffi:os` with E311, through `py`, `py_json`, `py_new`, a submodule path, and the bounded child process | `check_sandbox.py` - four ways round the list, all refused |
+| A program that reads or writes a file outside the directory the operator named, or writes when only reading was granted | Scoped fs grants (3.0): `fs:read:./data`, `fs:write:./out`. Every path is resolved with `realpath` before comparison, so `..` and symlinks cannot leave a prefix; E313 names the path and cannot be caught | `check_sandbox.py` - a read outside the prefix, a write under a read-only grant, a `..` escape, a symlink escape (POSIX); `check_library.py` - the same through `velaris.run` and through the HTTP door's ceiling |
+| A program that reaches a host, or a port, the operator did not name | Scoped net grants (3.0): `net:api.example.com:443`, `net:*.example.com` (one label). The URL's host and port are checked before any connection; E314 cannot be caught. A redirect to an ungranted host fails the request as a catchable failure naming the target | `check_sandbox.py` - a host not in the list, a port not in the list, a wildcard that must not match its parent domain, a redirect to an ungranted host; `check_fallible.py` - the redirect failure formats and is caught |
+| A program that reads the environment under a budget meant for the console | `env` is its own effect (3.0): `env()` needs `uses env`, and `--allow io` refuses it with E310. A program written for 2.x that calls `env()` under `uses io` alone is refused at compile time with "env() now needs 'uses env'" | `check_sandbox.py` - `env()` with only io granted; `check_library.py` - the same, and the exact message |
+| A program that does more file or network operations than the operator expected | Counts (3.0): `fs:read:./data@50`, `net:api.example.com@100` - at most that many operations of that effect in the run; E315 cannot be caught. A budget with no count is a budget on what, not on how much | `check_sandbox.py`, `check_library.py` - the count reached on fs and on net |
 | A program that never ends, or eats memory | `velaris.run(timeout=, max_memory_mb=)` runs the program in a child process killed on breach and reports E610 or E611; the MCP server and the HTTP door default to 30 s and 512 MB | `check_library.py` - a program that never ends is stopped in 2 s on every platform; a program that doubles a text is stopped at 150 MB, asserted on Linux only (best-effort on macOS, not applied on Windows - see below) |
 | A promise that is false - a contract the code does not keep, a division by a value that can be zero, a list read that can go past the end | The prover: `requires`/`ensures`/`invariant` are checked by Z3 before running (E700, E701, E703, E705, E706) with an exact counterexample; a premise it cannot translate abandons the proof to a runtime check rather than proving with a gap | `check_refusals.py` - 21 wrong programs each refused with the specific code; `fuzz_native.py` - random programs run natively and interpreted must agree exactly, so a proven-and-compiled function cannot behave differently from an interpreted one |
 | A failure the program ignores - a parse, a map lookup, a pop, a network call, a Python call that can fail | Fallibility in the signature (`or fail`), and E520 for any fallible call not handled with `check` or passed up with `try` | `check_fallible.py` - every builtin in `FALLIBLE_BUILTINS` is refused when ignored and formats its failure when caught; a builtin added without a recipe fails the suite |
@@ -66,15 +72,20 @@ none of the 7. Under the same rules Deno caught 29 and plain Python
 - **Resource use below the limits.** A program may run for 29 of its
   30 seconds and hold 511 of its 512 MB, every time it is called. The
   limits stop a runaway; they do not ration.
-- **Request volume within the budget.** `net` allowed means any
-  number of requests to any host. There is no host allow-list, no
-  rate limit, and no distinction between GET and POST.
-- **Everything `io` includes.** `io` is the console - and `args()`,
-  `env()` and `read_line()`. A program run under `--allow io` can read
-  environment variables and print them. If secrets live in the
-  environment, they are within reach of an `io`-only program.
-- **Everything `fs` includes.** `fs` has no path allow-list. Allowing
-  it allows any path the OS user can reach, for reading and writing.
+- **Rate, and the meaning of a request.** A count (`@100`) bounds how
+  many operations a run makes, not how fast, how large, or whether a
+  request is a GET or a POST. A plain `net` grant is any number of
+  requests to any host; a plain `fs` grant is any path the OS user can
+  reach. Narrow them.
+- **What a granted host does with a request.** The grant names a host
+  as written; where the name resolves is DNS's business, and what the
+  host does with the data it receives is outside the model.
+- **What a granted path contains.** A hard link inside a granted
+  directory is that directory's content. A file system changed by
+  another process between the check and the open is outside the
+  model; a Velaris program has no threads, so it cannot race itself.
+- **Still within `io`:** `args()` and `read_line()`. Command-line
+  arguments and standard input are the console.
 - **Logic errors with no contract.** A function that returns the wrong
   number and promises nothing is correct as far as the compiler knows.
   Benchmark row 04c (a loop that stops one item early) is this, and
@@ -120,9 +131,9 @@ none of the 7. Under the same rules Deno caught 29 and plain Python
 | Risk | Recommendation |
 |---|---|
 | A granted module does harm | Grant no `ffi` unless the task needs it, then name the modules (`ffi:math,json`) and treat the grant as trust in those modules. Never grant `ffi:os`, `ffi:subprocess`, `ffi:shutil` or plain `ffi` to code you have not read. |
-| Secrets in the environment | Run agent-written programs with a clean environment. `io` reads `env()`. |
-| Data leaves through `net` | Do not grant `net` to code you have not read. If the task needs it, enforce host restrictions outside Velaris (a network namespace, an egress proxy, a firewall rule); Velaris has no host list. |
-| A program does damage within `fs` | Do not grant `fs` to code you have not read. If the task needs it, run in a directory that holds nothing else, as a user that can reach nothing else. |
+| Secrets in the environment | Do not grant `env` to code you have not read; since 3.0 an `io`-only budget cannot read it. Run agent-written programs with a clean environment regardless. |
+| Data leaves through `net` | Grant hosts, not `net`: `net:api.example.com:443@100`. A host list bounds where, not what; an egress proxy or a firewall rule outside Velaris still belongs under it when the stakes warrant. |
+| A program does damage within `fs` | Grant directions and directories, not `fs`: `fs:read:./data,fs:write:./out`. Run in a directory that holds nothing else regardless. |
 | Runaway time or memory | Always set both `timeout` and `max_memory_mb`; the MCP server and HTTP door do by default. The cap holds on Linux; on macOS or Windows add an OS-level limit (a job object on Windows) or run on Linux. |
 | The result is wrong and no promise catches it | Require contracts on the functions that matter (`velaris proofs --min 80` in CI) and read the audit's `contract_coverage` list. A program with no promises has proven nothing. |
 | Output is trusted downstream | Never pipe a program's stdout into a shell or an interpreter. Treat output as data. |

@@ -11,7 +11,7 @@
 import "db.vel" as db
 import "env_tools.vel" as sys
 
-fn main() uses io, ffi {
+fn main() uses io, env, ffi {
     print(format("running as {}", sys.setting("USER", "someone")))
     check db.open(":memory:") {
         ok conn {

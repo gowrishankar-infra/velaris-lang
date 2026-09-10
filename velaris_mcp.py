@@ -96,10 +96,15 @@ TOOLS = [
                 "source": {"type": "string"},
                 "allow": {
                     "type": "array", "items": {"type": "string"},
-                    "description": ("effects to permit: io, fs, net, "
+                    "description": ("effects to permit: io, env, fs, net, "
                                     "clock, rand, ffi. Default ['io']. "
-                                    "Granting ffi grants everything "
-                                    "Python can do."),
+                                    "Scoped grants: fs:read:./data, "
+                                    "fs:write:./out, net:api.example.com"
+                                    ":443, net:*.example.com, ffi:math,"
+                                    "json, and @N for at most N "
+                                    "operations (fs@50, net:host@100). "
+                                    "Plain fs, net or ffi grants every "
+                                    "path, host or module."),
                 },
                 "stdin": {"type": "string"},
                 "args": {"type": "array", "items": {"type": "string"}},

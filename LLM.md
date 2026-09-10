@@ -84,7 +84,9 @@ These are the mistakes that actually happen. Read them twice.
 
 1. **Every effect must be declared.** `print` needs `uses io`. A
    function without `uses` is pure and cannot call one that has
-   effects. Effects: `io` (console), `fs` (files), `net` (network),
+   effects. Effects: `io` (console: print, read_line, args), `env`
+   (environment variables - its own effect since 3.0, so `env()`
+   needs `uses env`, not `uses io`), `fs` (files), `net` (network),
    `clock`, `rand`, `ffi` (calling Python). Declare all that apply:
    `uses io, fs`.
 
@@ -325,7 +327,7 @@ env_tools  (uses io)
 
 ```
 print(x) uses io              ask(prompt) uses io
-log(x) uses io                env(name, fallback) uses io
+log(x) uses io                env(name, fallback) uses env
 args() uses io                exit_with(code) uses io
 read_line() uses io
 
@@ -391,7 +393,49 @@ velaris explain program.vel              functions, effects, proof status
 ```
 
 The effect budget (`--allow`/`--deny`) is enforced while the program
-runs, whatever the source declares; a refusal (E310) cannot be caught.
+runs, whatever the source declares; a refusal cannot be caught.
+
+## The budget grammar
+
+A budget names what a run may touch. Grants are comma-separated and
+additive; plain `fs`, `net` or `ffi` grants every path, host or module.
+
+```
+io                          the console: print, read_line, args
+env                         environment variables (env())
+fs                          any file, read and write
+fs:read      fs:write       one direction, any path
+fs:read:./data              read under that directory only
+fs:write:./out              write under that directory only
+net                         any host
+net:api.example.com         that host, any port
+net:api.example.com:443     that host and port only
+net:*.example.com           one label in place of the star (a.example.com
+                            yes; example.com no; a.b.example.com no)
+ffi                         any Python module
+ffi:math,json               those top-level modules only
+fs:read:./data@50           ...and at most 50 file operations in the run
+net:api.example.com@100     ...and at most 100 network operations
+clock  rand                 as before
+```
+
+Examples: `--allow io,fs:read:./data,net:api.example.com:443@20`;
+`velaris.run(source, allow={"io", "env", "fs:write:./out"})`.
+
+Paths are resolved with realpath before every comparison, so `..` and
+symlinks cannot reach past a prefix. A redirect to a host the run did
+not grant is a failure the program can catch (it asked for one host
+and was sent to another); every other refusal stops the program:
+
+| Code | Means |
+|---|---|
+| E310 | the effect itself is not in the budget |
+| E311 | a Python module outside the `ffi:` list |
+| E313 | a path outside the `fs:` grants, named in the message |
+| E314 | a host or port outside the `net:` grants |
+| E315 | the operation count for `fs` or `net` was reached |
+
+A budget with no count is a budget on what, not on how much.
 
 ## Errors, and what to do about them
 
@@ -401,8 +445,11 @@ them as structured data for a fix loop.
 | Code | Means | Fix |
 |---|---|---|
 | E200 | unknown function | check spelling; import the module |
-| E300 | effect not declared | add `uses ...` to the signature |
+| E300 | effect not declared (for `env()` since 3.0 the message is exactly: env() now needs 'uses env') | add `uses ...` to the signature |
 | E310 | effect not allowed by this run | the person running chose a budget |
+| E313 | a path outside the run's `fs:` grants | grant it: `--allow fs:read:<dir>`, or stay inside |
+| E314 | a host or port outside the run's `net:` grants | grant it: `--allow net:<host>:<port>` |
+| E315 | the run's `fs` or `net` operation count was reached | grant more: `@<count>`, or do less |
 | E401 | wrong number of arguments | count them |
 | E402 | unknown variable | declare it; inline functions cannot capture |
 | E403 | divide by zero at runtime | guard the divisor |

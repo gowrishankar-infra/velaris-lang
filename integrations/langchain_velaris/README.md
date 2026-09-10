@@ -12,6 +12,9 @@ from langchain_velaris import VelarisAuditTool, VelarisRunTool
 tools = [VelarisAuditTool(), VelarisRunTool(allow=["io"])]
 ```
 
+The `allow` list takes the full budget grammar and passes it through
+unchanged - `["io", "env", "fs:read:./data", "net:api.example.com:443@100"]`
+grants exactly those paths, hosts and counts (SPEC.md 7.1).
 `allow=["io"]` means anything the agent writes can print and nothing
 else: not read a file, reach the network, or call Python - whatever
 the code claims about itself. A refusal stops the program and the tool

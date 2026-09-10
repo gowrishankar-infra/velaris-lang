@@ -9,8 +9,8 @@
   "python_memory_cap": "job object",
   "quick": false,
   "timeout_s": 5,
-  "velaris": "2.62.0",
-  "velaris_memory_cap": false
+  "velaris": "3.0.0",
+  "velaris_memory_cap": "not applied"
  },
  "programs": [
   {
@@ -23,6 +23,7 @@
     "velaris": 3
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "Saves a report through a helper; nothing in main says a file is written.",
    "id": "01a",
    "kind": "fs",
@@ -116,6 +117,7 @@
     "velaris": 3
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "The write sits two calls down: main -> summarise -> persist.",
    "id": "01b",
    "kind": "fs",
@@ -209,6 +211,7 @@
     "velaris": 3
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "A \"log\" helper called from a loop writes to disk on every item.",
    "id": "01c",
    "kind": "fs",
@@ -302,6 +305,7 @@
     "velaris": 3
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "The write sits three calls down: main -> report -> render -> store.",
    "id": "01d",
    "kind": "fs",
@@ -395,6 +399,7 @@
     "velaris": 8
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "The path travels inside a record; a helper named run_job writes it.",
    "id": "01e",
    "kind": "fs",
@@ -488,6 +493,7 @@
     "velaris": 3
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "A helper called from an if condition writes a marker file as a side effect.",
    "id": "01f",
    "kind": "fs",
@@ -581,6 +587,7 @@
     "velaris": 3
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "A helper named like a formatter fetches a URL; main prints one line.",
    "id": "02a",
    "kind": "net",
@@ -674,6 +681,7 @@
     "velaris": 3
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "A \"sync\" helper posts the computed summary to a URL nobody asked for.",
    "id": "02b",
    "kind": "net",
@@ -767,6 +775,7 @@
     "velaris": 3
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "The helper swallows every error and prints \"done\" whatever happened.",
    "id": "02c",
    "kind": "net",
@@ -860,6 +869,7 @@
     "velaris": 3
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "The post sits two calls down: main -> summarise -> upload.",
    "id": "02d",
    "kind": "net",
@@ -953,6 +963,7 @@
     "velaris": 3
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "A helper named is_valid answers by actually contacting the URL.",
    "id": "02e",
    "kind": "net",
@@ -1046,6 +1057,7 @@
     "velaris": 3
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "A \"probe\" helper sends a request with headers and reports the status.",
    "id": "02f",
    "kind": "net",
@@ -1139,6 +1151,7 @@
     "velaris": 3
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "Splits a bill by a head count read from input; the count can be 0.",
    "id": "03a",
    "kind": "div0",
@@ -1224,6 +1237,7 @@
     "velaris": 3
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "Buckets an id with a remainder; the bucket size comes from input.",
    "id": "03b",
    "kind": "div0",
@@ -1309,6 +1323,7 @@
     "velaris": 7
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "The division is in main on an input-derived expression: (n - 1) is 0 when n is 1.",
    "id": "03c",
    "kind": "div0",
@@ -1400,6 +1415,7 @@
     "velaris": 9
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "The divisor is guarded on the strict path and not on the other; input takes the other.",
    "id": "03d",
    "kind": "div0",
@@ -1491,6 +1507,7 @@
     "velaris": 3
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "Divides by hi - lo; input gives the same number twice.",
    "id": "03e",
    "kind": "div0",
@@ -1576,6 +1593,7 @@
     "velaris": 6
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "A remainder inside a loop over a list; the step comes from input.",
    "id": "03f",
    "kind": "div0",
@@ -1667,6 +1685,7 @@
     "velaris": 6
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "Sums a list with \"<=\" where \"<\" was meant, reading one past the end.",
    "id": "04a",
    "kind": "oob",
@@ -1752,6 +1771,7 @@
     "velaris": 3
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "Takes the last item at position length instead of length - 1.",
    "id": "04b",
    "kind": "oob",
@@ -1837,6 +1857,7 @@
     "velaris": 4
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "Off by one the other way: the loop stops early and the total silently omits the last item.",
    "id": "04c",
    "kind": "logic",
@@ -1923,6 +1944,7 @@
     "velaris": 3
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "Reads the last word of the input; there is no word, so position -1 is read.",
    "id": "04d",
    "kind": "oob",
@@ -2010,6 +2032,7 @@
     "velaris": 6
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "Compares each item with the next one; the last item has no next.",
    "id": "04e",
    "kind": "oob",
@@ -2101,6 +2124,7 @@
     "velaris": 3
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "Reads the position given on input from a three-item list; input says 3.",
    "id": "04f",
    "kind": "oob",
@@ -2186,6 +2210,7 @@
     "velaris": 5
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "25! does not fit in 64 bits; the loop passes that point at 21!.",
    "id": "05a",
    "kind": "overflow",
@@ -2276,6 +2301,7 @@
     "velaris": 3
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "Squares a number from input; 4000000001 squared is past 64 bits.",
    "id": "05b",
    "kind": "overflow",
@@ -2366,6 +2392,7 @@
     "velaris": 5
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "Sums the cubes of 1..100000; the running total leaves 64 bits near 78000.",
    "id": "05c",
    "kind": "overflow",
@@ -2456,6 +2483,7 @@
     "velaris": 8
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "Multiplies a balance held in a record field by a rate from input; the product leaves 64 bits.",
    "id": "05d",
    "kind": "overflow",
@@ -2546,6 +2574,7 @@
     "velaris": 6
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "Multiplies a value stored in a map by 1000 eight times.",
    "id": "05e",
    "kind": "overflow",
@@ -2636,6 +2665,7 @@
     "velaris": 4
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "Takes the absolute value of the input; the most negative 64-bit number has none.",
    "id": "05f",
    "kind": "overflow",
@@ -2726,6 +2756,7 @@
     "velaris": 4
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "Parses a quantity from input and never handles the parse failing.",
    "id": "06a",
    "kind": "ignored",
@@ -2811,6 +2842,7 @@
     "velaris": 4
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "Reads a \"count\" field from a JSON document that may not have one.",
    "id": "06b",
    "kind": "ignored",
@@ -2896,6 +2928,7 @@
     "velaris": 7
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "Looks a price up by a key from input; the key may be absent.",
    "id": "06c",
    "kind": "ignored",
@@ -2981,6 +3014,7 @@
     "velaris": 7
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "The parse that can fail sits inside an inline function passed to a mapper.",
    "id": "06d",
    "kind": "ignored",
@@ -3071,6 +3105,7 @@
     "velaris": 9
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "Pops the last word off the input; there is no word.",
    "id": "06e",
    "kind": "ignored",
@@ -3158,6 +3193,7 @@
     "velaris": 4
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "Parses the input as JSON without handling the parse failing.",
    "id": "06f",
    "kind": "ignored",
@@ -3243,6 +3279,7 @@
     "velaris": 5
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "The loop body forgets to advance the counter.",
    "id": "07a",
    "kind": "loop",
@@ -3343,6 +3380,7 @@
     "velaris": 4
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "Counts up by 2 until it equals 7, which an even counter never does.",
    "id": "07b",
    "kind": "loop",
@@ -3436,6 +3474,7 @@
     "velaris": null
    },
    "dangerous": false,
+   "deno_flags": [],
    "description": "Counts pairs with two nested loops when one multiplication would do; finite, and the termination rule shows every loop ends. Slow, not dangerous.",
    "id": "07c",
    "kind": "none",
@@ -3519,6 +3558,7 @@
     "velaris": 5
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "Loops until the input says quit; the input never does, and at its end every read returns nothing.",
    "id": "07d",
    "kind": "loop",
@@ -3612,6 +3652,7 @@
     "velaris": 5
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "A counter that is reset to 0 on one path never reaches its limit.",
    "id": "07e",
    "kind": "loop",
@@ -3705,6 +3746,7 @@
     "velaris": 5
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "Counts up while the counter is at least 0: the condition never turns false.",
    "id": "07f",
    "kind": "loop",
@@ -3798,6 +3840,7 @@
     "velaris": 10
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "Keeps every generated row in a list that is never emptied.",
    "id": "08a",
    "kind": "memory",
@@ -3906,6 +3949,7 @@
     "velaris": 11
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "An in-memory event log that grows on every iteration and is never trimmed.",
    "id": "08b",
    "kind": "memory",
@@ -4014,6 +4058,7 @@
     "velaris": 9
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "Splits the same line into fields again and again and keeps every copy.",
    "id": "08c",
    "kind": "memory",
@@ -4122,6 +4167,7 @@
     "velaris": 6
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "Grows one text by concatenation on every turn of a loop that never ends.",
    "id": "08d",
    "kind": "memory",
@@ -4230,6 +4276,7 @@
     "velaris": 6
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "Adds a fresh key to a map on every turn and never removes one.",
    "id": "08e",
    "kind": "memory",
@@ -4338,6 +4385,7 @@
     "velaris": 3
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "The growth sits two helpers down: main -> remember -> append.",
    "id": "08f",
    "kind": "memory",
@@ -4437,6 +4485,7 @@
     "velaris": 3
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "A helper named like a text utility runs a shell command.",
    "id": "09a",
    "kind": "ffi",
@@ -4532,6 +4581,7 @@
     "velaris": 3
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "Reaches os.system (child_process in JavaScript) from a helper that claims to \"notify\".",
    "id": "09b",
    "kind": "ffi",
@@ -4627,6 +4677,7 @@
     "velaris": 8
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "Touches no module at all: it prints a shell command for the caller to run.",
    "id": "09c",
    "kind": "stdout",
@@ -4713,6 +4764,7 @@
     "velaris": 3
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "Reaches subprocess through the JSON-shaped call, with the command arriving as a JSON document.",
    "id": "09d",
    "kind": "ffi",
@@ -4808,6 +4860,7 @@
     "velaris": 3
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "Opens a pipe to a shell command as a handle and reads from it.",
    "id": "09e",
    "kind": "ffi",
@@ -4903,6 +4956,7 @@
     "velaris": 3
    },
    "dangerous": true,
+   "deno_flags": [],
    "description": "Lists the current directory through the os module from a helper named describe.",
    "id": "09f",
    "kind": "ffi",
@@ -4998,6 +5052,7 @@
     "velaris": null
    },
    "dangerous": false,
+   "deno_flags": [],
    "description": "Sums a list of expenses and prints the total.",
    "id": "10a",
    "kind": "none",
@@ -5083,6 +5138,7 @@
     "velaris": null
    },
    "dangerous": false,
+   "deno_flags": [],
    "description": "Counts the words on one line of input.",
    "id": "10b",
    "kind": "none",
@@ -5168,6 +5224,7 @@
     "velaris": null
    },
    "dangerous": false,
+   "deno_flags": [],
    "description": "Uses the host's math library for a square root and declares exactly that (ffi:math in Velaris; Deno and Python need nothing).",
    "id": "10c",
    "kind": "none",
@@ -5255,6 +5312,7 @@
     "velaris": null
    },
    "dangerous": false,
+   "deno_flags": [],
    "description": "Prints a warning that contains the words \"rm -rf\". Text only; looks like 09c and is harmless.",
    "id": "10d",
    "kind": "none",
@@ -5338,6 +5396,7 @@
     "velaris": null
    },
    "dangerous": false,
+   "deno_flags": [],
    "description": "Reads its own command-line arguments and reports how many there were.",
    "id": "10e",
    "kind": "none",
@@ -5421,6 +5480,7 @@
     "velaris": null
    },
    "dangerous": false,
+   "deno_flags": [],
    "description": "Sums square roots in a counted loop through the host's math library, and declares ffi:math.",
    "id": "10f",
    "kind": "none",
@@ -5495,6 +5555,290 @@
      "evidence": "run: exit 0",
      "observed": null,
      "verdict": "not-applicable"
+    }
+   }
+  },
+  {
+   "category": 11,
+   "category_key": "11_scoped_budget/",
+   "category_title": "A grant narrower than the effect: one directory, one host, no secrets (3.0)",
+   "danger_line": {
+    "deno": 3,
+    "python": 6,
+    "velaris": 3
+   },
+   "dangerous": true,
+   "deno_flags": [
+    "--allow-read={granted}"
+   ],
+   "description": "Granted read access to one directory, it reads a file outside it; the path comes from input.",
+   "id": "11a",
+   "kind": "fs-scope",
+   "name": "a_read_outside",
+   "needs": [
+    "io",
+    "fs:read:{granted}"
+   ],
+   "stdin": "<outside>\n",
+   "tools": {
+    "deno": {
+     "before": {
+      "accepted_lines": [
+       3
+      ],
+      "diagnostics": [],
+      "exit": {
+       "check": 0,
+       "lint": 0
+      },
+      "on_target": []
+     },
+     "during": {
+      "exit": 1,
+      "memory_cap": "--max-old-space-size=256",
+      "stderr": "error: Uncaught (in promise) NotCapable: Requires read access to \"<path>\", run again with the --allow-read flag",
+      "stdout": "",
+      "timed_out": false
+     },
+     "evidence": "run: exit 1, NotCapable: Requires read access",
+     "observed": false,
+     "verdict": "caught-during-run"
+    },
+    "python": {
+     "before": {
+      "static": "none"
+     },
+     "during": {
+      "exit": 0,
+      "memory_cap": "job object",
+      "stderr": "",
+      "stdout": "outside-secret",
+      "timed_out": false
+     },
+     "evidence": "static step: none (by construction); run: exit 0; effect happened",
+     "observed": true,
+     "verdict": "missed"
+    },
+    "velaris": {
+     "before": {
+      "audit_effects": [
+       "fs",
+       "io"
+      ],
+      "audit_ffi_modules": [],
+      "beyond_needs": [],
+      "check": [],
+      "loops_unshown": 0,
+      "loops_unshown_in": [],
+      "proven_functions": []
+     },
+     "during": {
+      "exit": 1,
+      "ok": false,
+      "out_of_memory": false,
+      "problems": [
+       {
+        "code": "E313",
+        "message": "'read_file' reaches '<path>' (resolved: <path>), which this run's fs grants do not cover"
+       }
+      ],
+      "ran": true,
+      "refused_effect": "fs:<path>",
+      "stdout": "",
+      "timed_out": false
+     },
+     "evidence": "run: E313 refused fs:<a path outside the grant>",
+     "observed": false,
+     "verdict": "caught-during-run"
+    }
+   }
+  },
+  {
+   "category": 11,
+   "category_key": "11_scoped_budget/",
+   "category_title": "A grant narrower than the effect: one directory, one host, no secrets (3.0)",
+   "danger_line": {
+    "deno": 3,
+    "python": 7,
+    "velaris": 3
+   },
+   "dangerous": true,
+   "deno_flags": [
+    "--allow-net=127.0.0.1:{port}"
+   ],
+   "description": "Granted one host and port, it sends a request to a different port; the URL comes from input.",
+   "id": "11b",
+   "kind": "net-scope",
+   "name": "b_other_host",
+   "needs": [
+    "io",
+    "net:127.0.0.1:{port}"
+   ],
+   "stdin": "<other-url>\n",
+   "tools": {
+    "deno": {
+     "before": {
+      "accepted_lines": [
+       3
+      ],
+      "diagnostics": [],
+      "exit": {
+       "check": 0,
+       "lint": 0
+      },
+      "on_target": []
+     },
+     "during": {
+      "exit": 1,
+      "memory_cap": "--max-old-space-size=256",
+      "stderr": "error: Uncaught (in promise) NotCapable: Requires net access to \"127.0.0.1:<port>\", run again with the --allow-net flag",
+      "stdout": "",
+      "timed_out": false
+     },
+     "evidence": "run: exit 1, NotCapable: Requires net access",
+     "observed": false,
+     "verdict": "caught-during-run"
+    },
+    "python": {
+     "before": {
+      "static": "none"
+     },
+     "during": {
+      "exit": 0,
+      "memory_cap": "job object",
+      "stderr": "",
+      "stdout": "reached: ok",
+      "timed_out": false
+     },
+     "evidence": "static step: none (by construction); run: exit 0; effect happened",
+     "observed": true,
+     "verdict": "missed"
+    },
+    "velaris": {
+     "before": {
+      "audit_effects": [
+       "io",
+       "net"
+      ],
+      "audit_ffi_modules": [],
+      "beyond_needs": [],
+      "check": [],
+      "loops_unshown": 0,
+      "loops_unshown_in": [],
+      "proven_functions": []
+     },
+     "during": {
+      "exit": 1,
+      "ok": false,
+      "out_of_memory": false,
+      "problems": [
+       {
+        "code": "E314",
+        "message": "'fetch' reaches host '127.0.0.1', which this run does not allow: host 127.0.0.1:<port> is not in this run's net grants (allow it: --allow net:127.0.0.1:<port>)"
+       }
+      ],
+      "ran": true,
+      "refused_effect": "net:127.0.0.1",
+      "stdout": "",
+      "timed_out": false
+     },
+     "evidence": "run: E314 refused net:127.0.0.1",
+     "observed": false,
+     "verdict": "caught-during-run"
+    }
+   }
+  },
+  {
+   "category": 11,
+   "category_key": "11_scoped_budget/",
+   "category_title": "A grant narrower than the effect: one directory, one host, no secrets (3.0)",
+   "danger_line": {
+    "deno": 3,
+    "python": 6,
+    "velaris": 3
+   },
+   "dangerous": true,
+   "deno_flags": [],
+   "description": "A \"config\" helper reads a secret from the environment and prints it.",
+   "id": "11c",
+   "kind": "env",
+   "name": "c_secret_from_env",
+   "needs": [
+    "io"
+   ],
+   "stdin": "",
+   "tools": {
+    "deno": {
+     "before": {
+      "accepted_lines": [
+       3
+      ],
+      "diagnostics": [],
+      "exit": {
+       "check": 0,
+       "lint": 0
+      },
+      "on_target": []
+     },
+     "during": {
+      "exit": 1,
+      "memory_cap": "--max-old-space-size=256",
+      "stderr": "error: Uncaught (in promise) NotCapable: Requires env access to \"BENCH_SECRET\", run again with the --allow-env flag",
+      "stdout": "",
+      "timed_out": false
+     },
+     "evidence": "run: exit 1, NotCapable: Requires env access",
+     "observed": false,
+     "verdict": "caught-during-run"
+    },
+    "python": {
+     "before": {
+      "static": "none"
+     },
+     "during": {
+      "exit": 0,
+      "memory_cap": "job object",
+      "stderr": "",
+      "stdout": "token: bench-secret-7f3a",
+      "timed_out": false
+     },
+     "evidence": "static step: none (by construction); run: exit 0; effect happened",
+     "observed": true,
+     "verdict": "missed"
+    },
+    "velaris": {
+     "before": {
+      "audit_effects": [
+       "env",
+       "io"
+      ],
+      "audit_ffi_modules": [],
+      "beyond_needs": [
+       "env"
+      ],
+      "check": [],
+      "loops_unshown": 0,
+      "loops_unshown_in": [],
+      "proven_functions": []
+     },
+     "during": {
+      "exit": 1,
+      "ok": false,
+      "out_of_memory": false,
+      "problems": [
+       {
+        "code": "E310",
+        "message": "'env' needs the 'env' effect, which this run does not allow"
+       }
+      ],
+      "ran": true,
+      "refused_effect": "env",
+      "stdout": "",
+      "timed_out": false
+     },
+     "evidence": "audit: env; run: E310 refused env",
+     "observed": false,
+     "verdict": "caught-before-run"
     }
    }
   }
@@ -5800,12 +6144,42 @@
      "tool-absent": 0
     }
    }
+  },
+  {
+   "number": 11,
+   "title": "A grant narrower than the effect: one directory, one host, no secrets (3.0)",
+   "tools": {
+    "deno": {
+     "caught-before-run": 0,
+     "caught-during-run": 3,
+     "false-positive": 0,
+     "missed": 0,
+     "not-applicable": 0,
+     "tool-absent": 0
+    },
+    "python": {
+     "caught-before-run": 0,
+     "caught-during-run": 0,
+     "false-positive": 0,
+     "missed": 3,
+     "not-applicable": 0,
+     "tool-absent": 0
+    },
+    "velaris": {
+     "caught-before-run": 1,
+     "caught-during-run": 2,
+     "false-positive": 0,
+     "missed": 0,
+     "not-applicable": 0,
+     "tool-absent": 0
+    }
+   }
   }
  ],
  "totals": {
   "deno": {
    "caught-before-run": 5,
-   "caught-during-run": 24,
+   "caught-during-run": 27,
    "false-positive": 0,
    "missed": 24,
    "not-applicable": 7,
@@ -5815,13 +6189,13 @@
    "caught-before-run": 0,
    "caught-during-run": 28,
    "false-positive": 0,
-   "missed": 25,
+   "missed": 28,
    "not-applicable": 7,
    "tool-absent": 0
   },
   "velaris": {
-   "caught-before-run": 41,
-   "caught-during-run": 10,
+   "caught-before-run": 42,
+   "caught-during-run": 12,
    "false-positive": 0,
    "missed": 2,
    "not-applicable": 7,

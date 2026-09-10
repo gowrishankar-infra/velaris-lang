@@ -1,5 +1,77 @@
 # Velaris changelog
 
+## 3.0 - Budgets that name paths, hosts, counts, and secrets
+This is a major version because a program that compiled under 2.x can
+be refused by 3.0: `env()` is its own effect now, and a function that
+called it under `uses io` alone is refused at compile time with exactly
+"env() now needs 'uses env'" and the fix. The reason is the sentence
+THREAT_MODEL.md had to carry since 2.63 - an `io`-only budget could
+read and print every secret in the environment. It cannot now. `io` is
+the console: `print`, `read_line`, `args`. `stdlib/env_tools.vel` and
+the two examples that read the environment declare `env`.
+
+**The 2.60 module allow-list, extended to every coarse effect.** The
+budget grammar (SPEC.md 7.1) narrows `fs` and `net` the way `ffi:math`
+narrows `ffi`:
+
+    fs:read:./data  fs:write:./out       one direction, under a path
+    net:api.example.com:443              one host and port
+    net:*.example.com                    one label in place of the star
+    fs:read:./data@50  net:...@100       at most that many operations
+
+Every path is resolved with `realpath` when the budget is parsed and
+again at every `read_file`, `write_file` and `file_exists`, then
+compared as a prefix, so `..` and symlinks cannot reach past a grant
+(E313, naming the path). `fetch`, `post`, `fetch_status` and `request`
+check the URL's host and port before any connection (E314); a
+wildcard matches exactly one label and never the domain itself, and
+no wildcard may stand over an IP literal. A count is the smallest
+given for that effect and applies to the whole run (E315); a budget
+with no count is a budget on what, not on how much. Every one of
+these refusals is uncatchable, like E310 and E311. The one catchable
+case is a redirect whose target lies outside the `net:` grants: the
+program asked for one host and was sent to another, so the request
+fails with the target named and the program hears why.
+
+The grammar travels unchanged through `--allow`, `velaris.run(allow=)`,
+the bounded child (which receives the budget re-spelled with absolute
+paths), the MCP server, the HTTP door, the CrewAI and LangChain tools
+and the Jupyter magic. The door's `--max-allow` takes it too, and a
+caller may not ask for more than the server grants at any level - an
+effect, a module, a wider path prefix, a host the server does not
+name, a port, a larger count, or an unscoped `fs` or `net` against a
+scoped ceiling - and is told which. The audit reads the paths and
+hosts a program names in literals (`fs_paths`, `net_hosts`, added
+within `velaris.audit/1`) and its `safe_command` grants exactly those,
+falling back to `fs:read` or `net` where a value is built at runtime.
+
+Stated as outside the rule rather than claimed: a hard link inside a
+granted directory is that directory's content; a file system changed
+by another process between the check and the open is outside the
+model, and a Velaris program has no threads to race itself; where a
+granted host name resolves is DNS's business.
+
+**Tested.** `check_sandbox.py` gained twelve cases: a read outside the
+prefix, a write with only read granted, a `..` escape, a symlink
+escape (POSIX; skipped on Windows), a host not in the list, a wildcard
+that must not match its parent domain, a port not in the list, a
+redirect to an ungranted host against a local server, the count
+reached on fs and on net, `env()` with only io granted, and an honest
+program using exactly its grants that must run - plus a redirect to a
+granted host that must be followed. `check_library.py` has the same
+through `velaris.run` and through the HTTP door with a ceiling
+narrower than the request at each level. `check_fallible.py` has the
+redirect failure as a recipe. The benchmark gained category 11 - a
+read outside the granted directory, a request to an ungranted host, a
+secret read through `env` - run under the narrowest budget each task
+needs, with Deno given the matching `--allow-read=<dir>` and
+`--allow-net=<host:port>`; Velaris refuses all three (the path and the
+URL arrive on stdin, so the first two are refused while running, and
+the third is flagged before), Deno refuses all three at the call, and
+Python, with no budget, does all three. THREAT_MODEL.md moves "io
+includes env", "fs has no path list" and "net has no host list" from
+the non-defences to the defences, each with its suite.
+
 ## 2.63.1 - The memory cap claim, narrowed to where it holds
 The tests workflow had failed on every macos-latest leg since 2.62, in
 `check_library.py`: "a memory cap STOPS a program that eats memory".

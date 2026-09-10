@@ -55,10 +55,10 @@ class VelarisMagics(Magics):
         if "--allow" in words:
             asked = words[words.index("--allow") + 1]
             allow = {n.strip() for n in asked.split(",") if n.strip()}
-            wrong = allow - set(ALL)
-            if wrong:
-                print(f"not an effect: {', '.join(sorted(wrong))}; "
-                      f"they are {', '.join(ALL)}")
+            try:                      # the whole grammar: fs:read:./x,
+                velaris.Budget.parse(asked)    # net:host:443, @count
+            except velaris.BudgetError as e:
+                print(str(e))
                 return
 
         if want_audit or want_check:

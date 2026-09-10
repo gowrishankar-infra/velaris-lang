@@ -60,9 +60,30 @@ default to 30 seconds and 512 MB.
 ## What `run` guarantees
 
 `allow={"io"}` means the program cannot read a file, reach the
-network, call Python, ask the clock or use randomness. Not "should
-not" - the runtime refuses, and a refusal **cannot be caught** by the
-program, so it cannot swallow the refusal and carry on.
+network, read the environment, call Python, ask the clock or use
+randomness. Not "should not" - the runtime refuses, and a refusal
+**cannot be caught** by the program, so it cannot swallow the refusal
+and carry on.
+
+A grant can be narrower than an effect, in the same grammar the
+command line takes (SPEC.md 7.1):
+
+```python
+velaris.run(source, allow={"io", "env",
+                           "fs:read:./data", "fs:write:./out@50",
+                           "net:api.example.com:443@100",
+                           "ffi:math,json"})
+```
+
+`fs:read:./data` permits reads under that directory only, resolved
+with realpath so `..` and symlinks cannot leave it; `net:host:port`
+permits that host and port, `net:*.example.com` one label under the
+domain; `@N` caps the operations of that effect for the whole run. A
+path, host or count outside the grants is refused (E313, E314, E315)
+and cannot be caught; the one catchable case is a redirect to a host
+outside the grants, which fails the request naming the target.
+`refused_effect` reports `fs:<path>`, `net:<host>` or `fs@count` /
+`net@count` for those.
 
 It is not a security boundary. `allow={"ffi"}` grants everything
 Python can do, and nothing here limits memory, time, or what a program
@@ -107,9 +128,13 @@ Field meanings, all stable within `velaris.audit/1`:
 | `effects` | everything the program may perform, transitively |
 | `functions` | per function: effects, can_fail, contracts, and whether each contract is `proven` before running or `checked at runtime` |
 | `proven_share` | percent of promise-carrying functions proven, or null when there are no promises |
-| `safe_command` | the command that grants exactly what it declared |
+| `safe_command` | the narrowest budget the audit can write: `fs:read:<path>` and `net:<host>` for the literals it read, the bare direction or effect where a value was built at runtime |
 | `warnings` | human-readable cautions, including which modules to grant |
 | `ffi_modules` | top-level Python packages named in py* calls, for `ffi:` grants (added in 2.60 within schema 1) |
+| `loops_unshown` | loops the termination rule cannot show to end (added in 2.62) |
+| `contract_coverage` | functions that take or return data and promise nothing (added in 2.62) |
+| `fs_paths` | `{"read": [...], "write": [...], "read_any": bool, "write_any": bool}` - the path literals a program reads and writes; a flag says a path was built at runtime (added in 3.0) |
+| `net_hosts` | `{"hosts": [...], "any": bool}` - the hosts (with ports when given) named in URL literals (added in 3.0) |
 
 A new field may be added within version 1; a field will not change
 meaning or disappear without the schema name changing.
@@ -157,7 +182,8 @@ Four tools: `velaris_card`, `velaris_check`, `velaris_audit` and
 a Rust agent or a shell script can use the same three calls.
 
 ```
-velaris serve --max-allow io,fs        # localhost:8787, grants at most this
+velaris serve --max-allow io,fs:read:./data,net:api.example.com@100
+                                       # localhost:8787, grants at most this
 ```
 
 ```
@@ -179,9 +205,12 @@ console.log(answer.ok, answer.output, answer.refused_effect);
 
 There are **two ceilings**, and both are enforced. The `allow` in a
 request is the program's budget. `--max-allow` is the server's own
-limit: a caller asking for more gets 403 and is told what the server
-grants. Start it with `--max-allow io` and no caller can touch the
-disk, whatever they ask for.
+limit, in the full grammar: a caller asking for more at any level - an
+effect, a module, a wider path prefix, a host the server does not
+name, a port, a larger count, or an unscoped `fs`/`net` against a
+scoped ceiling - gets 403 and is told what the server grants. Start it
+with `--max-allow io` and no caller can touch the disk, whatever they
+ask for.
 
 It binds to `127.0.0.1` unless told otherwise, because **this endpoint
 runs programs**. Do not expose it to a network you do not control, and

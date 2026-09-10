@@ -1,12 +1,13 @@
-// The environment a program runs in.
+// The environment a program runs in. Reading it is the `env` effect
+// (since 3.0), so an io-only budget cannot reach a secret through it.
 //
 // import "env_tools.vel" as sys
 
-fn setting(name: Text, fallback: Text) -> Text uses io {
+fn setting(name: Text, fallback: Text) -> Text uses env {
     return env(name, fallback)
 }
 
-fn number_setting(name: Text, fallback: Int) -> Int uses io {
+fn number_setting(name: Text, fallback: Int) -> Int uses env {
     let raw = env(name, "")
     if length(raw) == 0 {
         return fallback

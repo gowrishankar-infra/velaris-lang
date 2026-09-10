@@ -17,7 +17,8 @@ Manage.
 
 | Guarantee | Mechanism | Framework item | Tested by | What it does not cover |
 |---|---|---|---|---|
-| A program cannot perform an effect the operator did not allow | The effect budget: `--allow`/`--deny`, or `allow=` in `velaris.run`; a refusal (E310) stops the program and cannot be caught | LLM06 Excessive Agency - partially addresses (bounds *what* an agent's code may touch; not which tools the agent is given, nor what it does through a granted effect). LLM05 Improper Output Handling - partially addresses (model output that is Velaris code is executed only within the budget). NIST Manage | `check_sandbox.py` | `io` includes `env()` and `args()`; `fs` and `net` have no path or host lists; code not written in Velaris |
+| A program cannot perform an effect the operator did not allow | The effect budget: `--allow`/`--deny`, or `allow=` in `velaris.run`; a refusal (E310) stops the program and cannot be caught. Since 3.0 `env` is its own effect, so an `io`-only budget cannot read the environment | LLM06 Excessive Agency - partially addresses (bounds *what* an agent's code may touch; not which tools the agent is given, nor what it does through a granted effect). LLM05 Improper Output Handling - partially addresses (model output that is Velaris code is executed only within the budget). LLM02 Sensitive Information Disclosure - partially addresses (environment secrets, only) . NIST Manage | `check_sandbox.py` | `io` still includes `args()` and `read_line()`; code not written in Velaris |
+| A program cannot reach a path, host, port or count the operator did not name | Scoped grants (3.0): `fs:read:./data`, `fs:write:./out`, `net:host:port`, `net:*.domain`, `@N`; paths compared after `realpath`; E313/E314/E315 cannot be caught; a redirect to an ungranted host is a catchable failure | LLM06 - partially addresses (where and how often, within an effect). LLM10 Unbounded Consumption - partially addresses (operation counts). NIST Manage | `check_sandbox.py`, `check_library.py`, `check_fallible.py` (the redirect) | Rate and size of operations; what a granted host or directory does; hard links inside a granted directory; the file system changing under the program |
 | A program cannot reach a Python module the operator did not name | The `ffi:` allow-list (`--allow io,ffi:math`), enforced at the import gate for `py`, `py_json`, `py_new` and submodule paths, and in the bounded child | LLM06 - partially addresses. LLM03 Supply Chain - partially addresses (narrows which third-party code the program may invoke; says nothing about the provenance of that code). NIST Manage | `check_sandbox.py` | Anything a named module can do once named; plain `ffi` grants everything |
 | A program that never ends, or grows without bound, is stopped | `timeout=` and `max_memory_mb=` run the program in a killable child; E610/E611 report which limit fired; defaults of 30 s / 512 MB in the MCP server and HTTP door | LLM10 Unbounded Consumption - partially addresses (time and memory; not request volume, CPU below the limit, or cost) . NIST Manage | `check_library.py` (the cap assertion runs on Linux only) | The memory cap is best-effort on macOS and not applied on Windows; use below the limits; network volume |
 | A loop whose end cannot be shown is reported before running | The termination rule (SPEC.md 9.5): `loops_unshown` in the audit, E612 under `check --strict` | LLM10 - partially addresses (a static warning for one cause of unbounded consumption; the timeout remains the guard). NIST Measure | `check_termination.py` | Loops outside the one recognised shape are reported as unshown, not as infinite; a finite loop can still run for a long time |
@@ -30,12 +31,12 @@ Manage.
 
 ## Items not addressed
 
-LLM01 Prompt Injection, LLM02 Sensitive Information Disclosure, LLM04
-Data and Model Poisoning, LLM07 System Prompt Leakage and LLM08 Vector
-and Embedding Weaknesses are outside what Velaris does. In particular
-LLM02: a program run under `--allow io` can read the environment and
-print it, so secrets in the environment are not protected by the
-budget; see THREAT_MODEL.md.
+LLM01 Prompt Injection, LLM04 Data and Model Poisoning, LLM07 System
+Prompt Leakage and LLM08 Vector and Embedding Weaknesses are outside
+what Velaris does. LLM02 is addressed only for the environment: since
+3.0 a program needs the `env` effect to read it, and an `io`-only
+budget refuses it; secrets a program is handed on stdin, in a file it
+may read, or from a granted host are its to print. See THREAT_MODEL.md.
 
 ## Reading this table
 

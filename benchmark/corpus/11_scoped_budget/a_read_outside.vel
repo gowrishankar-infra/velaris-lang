@@ -1,0 +1,12 @@
+// Granted read access to one directory, it reads a file outside it; the path comes from input.
+fn peek(path: Text) -> Text uses fs {
+    check read_file(path) {  // DANGER
+        ok text { return text }
+        fail why { return "could not read: " + why }
+    }
+}
+
+fn main() uses io, fs {
+    let path = read_line()
+    print(peek(path))
+}

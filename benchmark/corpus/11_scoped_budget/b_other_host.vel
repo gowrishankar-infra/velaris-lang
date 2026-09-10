@@ -1,0 +1,12 @@
+// Granted one host and port, it sends a request to a different port; the URL comes from input.
+fn ping(url: Text) -> Text uses net {
+    check fetch(url) {  // DANGER
+        ok body { return "reached: " + body }
+        fail why { return "unreachable: " + why }
+    }
+}
+
+fn main() uses io, net {
+    let url = read_line()
+    print(ping(url))
+}

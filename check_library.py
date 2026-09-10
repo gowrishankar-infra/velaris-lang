@@ -132,7 +132,9 @@ def main() -> int:
        str(a.effects))
     ok("audit carries a schema version",
        a.schema == "velaris.audit/1" and a.velaris_version)
-    ok("audit suggests the safe command", "--allow fs,io" in
+    # the read goes through a path built at runtime, so the audit can
+    # narrow it to a direction but not to a path
+    ok("audit suggests the safe command", "--allow fs:read,io" in
        a.safe_command, a.safe_command)
 
     a = velaris.audit(PURE)
@@ -229,6 +231,163 @@ def main() -> int:
     r = velaris.run(PURE, allow={"io"}, timeout=30)
     ok("an honest program is unaffected by limits",
        r.ok and r.output.strip() == "42", repr(r.output))
+
+    print()
+    print("scoped grants through the library (3.0)")
+    print("-" * 62)
+    import os as _os
+    import shutil as _shutil
+    import threading as _threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    box = HERE / "_library_box"
+    for sub in ("data", "out"):
+        (box / sub).mkdir(parents=True, exist_ok=True)
+    inside = box / "data" / "a.txt"
+    inside.write_text("inside\n", encoding="utf-8")
+    outside = HERE / "_library_outside.txt"
+    outside.write_text("outside\n", encoding="utf-8")
+    data, out = (box / "data").as_posix(), (box / "out").as_posix()
+
+    ports = {}
+
+    class Local(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path.startswith("/go"):
+                self.send_response(302)
+                self.send_header(
+                    "Location", f"http://localhost:{ports['other']}/x")
+                self.end_headers()
+                return
+            body = b"hello"
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+
+    srv_a = HTTPServer(("127.0.0.1", 0), Local)
+    srv_b = HTTPServer(("127.0.0.1", 0), Local)
+    ports["granted"], ports["other"] = (srv_a.server_address[1],
+                                        srv_b.server_address[1])
+    for srv in (srv_a, srv_b):
+        _threading.Thread(target=srv.serve_forever, daemon=True).start()
+    gp, op = ports["granted"], ports["other"]
+
+    def reads(path):
+        return ("fn main() uses io, fs {\n"
+                f'    check read_file("{path}") {{\n'
+                "        ok t { print(\"READ \" + t) }\n"
+                "        fail w { print(\"failed\") }\n    }\n}\n")
+
+    def writes(path):
+        return ("fn main() uses io, fs {\n"
+                f'    write_file("{path}", "x")\n    print("WROTE")\n}}\n')
+
+    def fetches(url):
+        return ("fn main() uses io, net {\n"
+                f'    check fetch("{url}") {{\n'
+                "        ok b { print(\"GOT \" + b) }\n"
+                "        fail w { print(\"caught: \" + w) }\n    }\n}\n")
+
+    def refused(label, source, allow, code, effect_prefix):
+        r = velaris.run(source, allow=set(allow))
+        ok(label, not r.ok and any(p.code == code for p in r.problems)
+           and (r.refused_effect or "").startswith(effect_prefix),
+           str(r.as_dict())[:120])
+
+    refused("run REFUSES a read outside the prefix (E313)",
+            reads(outside.as_posix()), ["io", f"fs:read:{data}"],
+            "E313", "fs:")
+    refused("run REFUSES a write with only read granted (E313)",
+            writes((box / "data" / "new.txt").as_posix()),
+            ["io", f"fs:read:{data}"],
+            "E313", "fs:")
+    refused("run REFUSES a .. escape (E313)",
+            reads((box / "data" / ".." / ".." / outside.name).as_posix()),
+            ["io", f"fs:read:{data}"], "E313", "fs:")
+    if _os.name != "nt":
+        link = box / "data" / "link.txt"
+        try:
+            link.symlink_to(outside)
+            refused("run REFUSES a symlink escape (E313)",
+                    reads(link.as_posix()), ["io", f"fs:read:{data}"],
+                    "E313", "fs:")
+        except OSError:
+            skip("run REFUSES a symlink escape (no symlinks here)")
+    else:
+        skip("run REFUSES a symlink escape (POSIX only)")
+    refused("run REFUSES a host not in the list (E314)",
+            fetches(f"http://localhost:{gp}/"), ["io", f"net:127.0.0.1:{gp}"],
+            "E314", "net:")
+    refused("a wildcard does NOT match the parent domain (E314)",
+            fetches("http://example.com/"), ["io", "net:*.example.com"],
+            "E314", "net:")
+    refused("run REFUSES a port not in the list (E314)",
+            fetches(f"http://127.0.0.1:{op}/"), ["io", f"net:127.0.0.1:{gp}"],
+            "E314", "net:")
+    count_fs = ("fn main() uses io, fs {\n    let i = 0\n"
+                "    while i < 3 {\n"
+                f'        if file_exists("{inside.as_posix()}") {{ print("looked") }}\n'
+                "        i = i + 1\n    }\n}\n")
+    refused("run STOPS at the file operation count (E315)",
+            count_fs, ["io", f"fs:read:{data}@2"], "E315", "fs")
+    count_net = ("fn main() uses io, net {\n    let i = 0\n"
+                 "    while i < 3 {\n"
+                 f'        check fetch_status("http://127.0.0.1:{gp}/") {{\n'
+                 "            ok c { print(c) }\n            fail w { print(w) }\n"
+                 "        }\n        i = i + 1\n    }\n}\n")
+    refused("run STOPS at the network operation count (E315)",
+            count_net, ["io", f"net:127.0.0.1:{gp}@2"], "E315", "net")
+    env_prog = ('fn main() uses io, env {\n'
+                '    print(length(env("PATH", "")) > 0)\n}\n')
+    refused("run REFUSES env() with only io granted (E310)",
+            env_prog, ["io"], "E310", "env")
+    c = velaris.check('fn main() uses io {\n    print(env("PATH", ""))\n}\n')
+    ok("check says exactly what changed for env()",
+       not c.ok and c.problems[0].code == "E300"
+       and c.problems[0].message == "env() now needs 'uses env'",
+       str(c.as_dict())[:120])
+
+    r = velaris.run(fetches(f"http://127.0.0.1:{gp}/go"),
+                    allow={"io", f"net:127.0.0.1:{gp}"})
+    ok("a redirect to an ungranted host is a failure the program catches",
+       r.ok and "caught:" in r.output and "redirected to" in r.output,
+       str(r.as_dict())[:120])
+    r = velaris.run(fetches(f"http://127.0.0.1:{gp}/go"),
+                    allow={"io", f"net:127.0.0.1:{gp}", f"net:localhost:{op}"})
+    ok("a redirect to a granted host is followed",
+       r.ok and r.output.strip() == "GOT hello", str(r.as_dict())[:120])
+    honest = ("fn main() uses io, env, fs, net {\n"
+              f'    check read_file("{inside.as_posix()}") {{\n'
+              "        ok t {\n"
+              f'            write_file("{(box / "out" / "copy.txt").as_posix()}", t)\n'
+              f'            check fetch_status("http://127.0.0.1:{gp}/") {{\n'
+              '                ok c { print(format("ok {} {}", c, length(env("PATH", "")) > 0)) }\n'
+              "                fail w { print(w) }\n            }\n        }\n"
+              "        fail w { print(w) }\n    }\n}\n")
+    r = velaris.run(honest, allow={"io", "env", f"fs:read:{data}",
+                                   f"fs:write:{out}@5", f"net:127.0.0.1:{gp}@5"})
+    ok("an honest program using exactly its grants runs",
+       r.ok and r.output.strip() == "ok 200 true", str(r.as_dict())[:120])
+    r = velaris.run(reads(outside.as_posix()), allow={"io", f"fs:read:{data}"},
+                    timeout=20)
+    ok("the bounded child enforces the same prefix (E313)",
+       not r.ok and any(p.code == "E313" for p in r.problems),
+       str(r.as_dict())[:120])
+    a = velaris.audit(reads(inside.as_posix()) + fetches("https://api.example.com/v1").replace("fn main", "fn other"))
+    ok("audit names the paths and hosts a program reads",
+       a.fs_paths["read"] == [inside.as_posix()]
+       and a.net_hosts["hosts"] == ["api.example.com"]
+       and "fs:read:" in a.safe_command and "net:api.example.com" in a.safe_command,
+       a.safe_command)
+    _shutil.rmtree(box, ignore_errors=True)
+    outside.unlink(missing_ok=True)
+    scoped_ports = (gp, op)
+    scoped_servers = (srv_a, srv_b)
+    scoped_data = data
 
     print()
     print("the MCP server")
@@ -397,6 +556,76 @@ def main() -> int:
     finally:
         server.terminate()
         server.wait(timeout=30)
+
+    print()
+    print("the HTTP door with a scoped ceiling (3.0)")
+    print("-" * 62)
+    gp, op = scoped_ports
+    box2 = HERE / "_door_box"
+    (box2 / "data" / "sub").mkdir(parents=True, exist_ok=True)
+    (box2 / "data" / "sub" / "a.txt").write_text("inside\n", encoding="utf-8")
+    data2 = (box2 / "data").as_posix()
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port2 = probe.getsockname()[1]
+    server = _sub.Popen(
+        [sys.executable, str(HERE / "velaris.py"), "serve",
+         "--port", str(port2), "--max-allow",
+         f"io,fs:read:{data2},net:127.0.0.1:{gp}@5"],
+        stdout=_sub.DEVNULL, stderr=_sub.DEVNULL)
+    try:
+        for _ in range(60):
+            try:
+                urllib.request.urlopen(
+                    f"http://127.0.0.1:{port2}/health", timeout=1).read()
+                break
+            except Exception:
+                time.sleep(0.25)
+
+        def post2(path, payload):
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{port2}{path}",
+                data=_json.dumps(payload).encode(),
+                headers={"Content-Type": "application/json"})
+            try:
+                with urllib.request.urlopen(req, timeout=120) as r:
+                    return r.status, _json.load(r)
+            except urllib.error.HTTPError as e:
+                return e.code, _json.load(e)
+
+        prog = ("fn main() uses io, fs {\n"
+                f'    check read_file("{(box2 / "data" / "sub" / "a.txt").as_posix()}") {{\n'
+                "        ok t { print(\"READ \" + t) }\n"
+                "        fail w { print(\"failed\") }\n    }\n}\n")
+        code, d = post2("/run", {"source": prog, "allow": ["io", "fs:read"]})
+        ok("the door refuses an unscoped ask against a scoped ceiling (403)",
+           code == 403 and "fs:read" in d.get("error", ""), str(d)[:120])
+        code, d = post2("/run", {"source": prog,
+                                 "allow": ["io", f"fs:read:{box2.as_posix()}"]})
+        ok("the door refuses a wider path prefix than it grants (403)",
+           code == 403, str(d)[:120])
+        code, d = post2("/run", {"source": prog,
+                                 "allow": ["io", f"fs:read:{data2}/sub"]})
+        ok("the door accepts a narrower prefix and the program runs",
+           code == 200 and d.get("ok") and d.get("output", "").strip() == "READ inside",
+           str(d)[:120])
+        code, d = post2("/run", {"source": prog,
+                                 "allow": ["io", f"net:localhost:{gp}"]})
+        ok("the door refuses a host it does not grant (403)",
+           code == 403, str(d)[:120])
+        code, d = post2("/run", {"source": prog,
+                                 "allow": ["io", f"net:127.0.0.1:{gp}@10"]})
+        ok("the door refuses a count above its own (403)",
+           code == 403 and "at most 5" in d.get("error", ""), str(d)[:120])
+        code, d = post2("/run", {"source": prog, "allow": ["io", "fs:peek:x"]})
+        ok("the door rejects a budget that does not parse (400)",
+           code == 400, str(d)[:120])
+    finally:
+        server.terminate()
+        server.wait(timeout=30)
+        _shutil.rmtree(box2, ignore_errors=True)
+        for srv in scoped_servers:
+            srv.shutdown()
 
     print("-" * 62)
     print(f"{passed} correct, {failed} wrong")

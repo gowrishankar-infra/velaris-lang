@@ -100,6 +100,52 @@ def check_only(source: str) -> tuple:
     return done.returncode, (done.stdout or "") + (done.stderr or "")
 
 
+# Not a builtin of its own, but the one new way a network call can fail
+# since 3.0: a redirect to a host outside the run's net grants. The
+# program asked for one host and was sent to another, so this is a
+# failure it can catch, unlike a refused host (E314, which it cannot).
+def redirect_case() -> tuple:
+    """(passed, detail): the failure formats and is caught, never a
+    traceback, against a local server that redirects."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    class H(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(302)
+            self.send_header("Location", "http://localhost:9/elsewhere")
+            self.end_headers()
+
+        def log_message(self, *a):
+            pass
+
+    srv = HTTPServer(("127.0.0.1", 0), H)
+    port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    source = f'''fn main() uses io, net {{
+    check fetch("http://127.0.0.1:{port}/") {{
+        ok b {{
+            print("followed")
+        }}
+        fail why {{
+            print("caught: " + why)
+        }}
+    }}
+}}
+'''
+    SCRATCH.write_text(source, encoding="utf-8")
+    done = subprocess.run(
+        [sys.executable, str(VELARIS), str(SCRATCH),
+         "--allow", f"io,net:127.0.0.1:{port}"],
+        capture_output=True, text=True, timeout=300, cwd=HERE)
+    srv.shutdown()
+    SCRATCH.unlink(missing_ok=True)
+    output = (done.stdout or "") + (done.stderr or "")
+    good = (done.returncode == 0 and "caught:" in output
+            and "redirected to" in output and "Traceback" not in output)
+    return good, output.strip()[:100]
+
+
 def main() -> int:
     members = sorted(velaris.FALLIBLE_BUILTINS - SKIP)
     missing = [m for m in members if m not in CALLS]
@@ -161,6 +207,15 @@ def main() -> int:
             failed += 1
 
     SCRATCH.unlink(missing_ok=True)
+    good, detail = redirect_case()
+    if good:
+        print("  ok        a redirect to an ungranted host is a failure the "
+              "program can catch")
+        passed += 1
+    else:
+        print("  BROKEN    a redirect to an ungranted host: " + detail)
+        failed += 1
+
     print("-" * 62)
     print(f"{passed} enforced, {failed} not")
     if failed == 0:

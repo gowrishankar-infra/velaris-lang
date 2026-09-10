@@ -141,7 +141,7 @@ fn negated(n: Int) -> Int {
     return -n
 }
 
-fn main() uses io, ffi, net, clock {
+fn main() uses io, env, ffi, net, clock {
     let passed = 0
     let failed = 0
     let skipped = 0

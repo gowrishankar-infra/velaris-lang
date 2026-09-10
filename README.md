@@ -32,12 +32,16 @@ caught and carried past. You do not have to read the code, understand
 it, or trust the compiler's analysis of it.
 
 `--allow io,ffi:math,json` grants Python for those modules only; any
-other is refused. `--allow io --timeout 30` is available through the
+other is refused. Since 3.0 the same grammar narrows every coarse
+effect: `fs:read:./data`, `fs:write:./out`, `net:api.example.com:443`,
+`net:*.example.com`, and `@100` for at most that many operations in a
+run; `env` is its own effect, so an `io`-only program cannot read the
+environment. `timeout` and `max_memory_mb` are available through the
 library and every door. It is still not a security boundary - but the
-two caveats every review raised, the ffi cliff and unbounded execution,
-are now precise permissions rather than holes. It is a real guard for
-the situation everyone is now in — running a program someone, or
-something, else wrote.
+caveats every review raised, the ffi cliff, unbounded execution, and
+`fs` and `net` with no path or host list, are now precise permissions
+rather than holes. It is a real guard for the situation everyone is
+now in — running a program someone, or something, else wrote.
 
 ## The other half: promises, proven
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The Velaris comparison benchmark.
 
-    python benchmark/run.py            # all 60 programs -> RESULTS.md, results.json
+    python benchmark/run.py            # all 63 programs -> RESULTS.md, results.json
     python benchmark/run.py --quick    # one program per category, table on stdout
     python benchmark/run.py --check    # also compare verdicts with results.json
     python benchmark/run.py --only 03a,10c
@@ -44,10 +44,13 @@ MODULE_MARK = "module-reached"   # printed when a module call came back
 TOOLS = ("velaris", "deno", "python")
 VERDICTS = ("caught-before-run", "caught-during-run", "missed",
             "not-applicable", "false-positive", "tool-absent")
+SCOPED_KINDS = ("fs-scope", "net-scope", "env")
+PORTS_IN_USE: list = []          # every listener port, masked in evidence
 EXT = {"velaris": ".vel", "deno": ".js", "python": ".py"}
 
 sys.path.insert(0, ROOT)
 import velaris  # noqa: E402  (the checkout being benchmarked)
+HAVE_PROVER = velaris.HAVE_Z3
 
 
 class CorpusError(Exception):
@@ -223,7 +226,7 @@ def run_child(cmd, stdin_text, env=None):
     dict with exit, stdout, stderr, timed_out and which cap applied."""
     full_env = dict(os.environ)
     full_env.update({"NO_COLOR": "1", "PYTHONIOENCODING": "utf-8",
-                     "PYTHONUTF8": "1"})
+                     "PYTHONUTF8": "1", "BENCH_SECRET": SECRET})
     full_env.update(env or {})
     cap = "none"
     kwargs = dict(stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -292,8 +295,9 @@ def find_deno(explicit=None):
 def tidy(text, port=None):
     """Strip machine-specific detail so two runs produce the same file."""
     text = text.replace("\r", "")
-    if port:
-        text = text.replace(f":{port}", ":<port>")
+    for masked in ([port] if port else []) + PORTS_IN_USE:
+        if masked:
+            text = text.replace(f":{masked}", ":<port>")
     text = re.sub(r'file:///[^\s"\')]+', "<path>", text)
     text = re.sub(r'[A-Za-z]:[\\/][^\s"\')]+', "<path>", text)
     text = re.sub(r'(?<![\w:])/(?:[\w.\-]+/)+[\w.\-]+', "<path>", text)
@@ -320,6 +324,13 @@ def observed(kind, prog_id, tool, work_path, stdout):
         return any(p.startswith(prefix) for p in Hits.paths)
     if kind == "ffi":
         return SENTINEL in stdout or MODULE_MARK in stdout
+    if kind == "env":                        # the secret reached stdout
+        return SECRET in stdout
+    if kind == "fs-scope":                   # the file outside was read
+        return "outside-secret" in stdout
+    if kind == "net-scope":                  # the other listener was hit
+        prefix = f"/{prog_id}/{tool}"
+        return any(p.startswith(prefix) for p in Hits.paths)
     return None
 
 
@@ -344,14 +355,15 @@ def verdict_for(prog, absent, flagged_before, stopped, seen):
 
 # ------------------------------------------------------------ the tools
 
-def velaris_row(prog, stdin_text, work_path):
+def velaris_row(prog, stdin_text, work_path, needs_filled=None):
     path = prog["files"]["velaris"]
     with open(path, encoding="utf-8") as f:
         source = f.read()
     danger = prog["danger_line"]["velaris"]
-    needs = set(prog["needs"])
-    need_effects = {n.split(":")[0] for n in needs}
-    need_modules = {n.split(":", 1)[1] for n in needs if ":" in n}
+    needs = set(needs_filled if needs_filled is not None else prog["needs"])
+    need_effects = {n.split(":")[0].split("@")[0] for n in needs}
+    need_modules = {n.split(":", 1)[1] for n in needs
+                    if n.startswith("ffi:")}
 
     chk = velaris.check(source, path=path)
     problems = [{"code": p.code, "line": p.line, "message": tidy(p.message)}
@@ -384,7 +396,8 @@ def velaris_row(prog, stdin_text, work_path):
         r = velaris.run(source, path=path, allow=needs, stdin=stdin_text,
                         timeout=TIMEOUT, max_memory_mb=MEMORY_MB)
         during = {"ran": True, "ok": r.ok, "exit": r.exit_code,
-                  "refused_effect": r.refused_effect,
+                  "refused_effect": (tidy(r.refused_effect)
+                                     if r.refused_effect else None),
                   "timed_out": r.timed_out,
                   "out_of_memory": r.out_of_memory,
                   "problems": [{"code": p.code, "message": tidy(p.message)}
@@ -409,7 +422,10 @@ def velaris_row(prog, stdin_text, work_path):
                     + " (E612 under --strict)")
     if during.get("ran"):
         if r.refused_effect:
-            bits.append(f"run: {r.problems[0].code} refused {r.refused_effect}")
+            what = r.refused_effect
+            if what.startswith("fs:") and len(what) > 3:
+                what = "fs:<a path outside the grant>"
+            bits.append(f"run: {r.problems[0].code} refused {what}")
         elif r.timed_out:
             bits.append("run: E610 stopped at 5 s")
         elif r.out_of_memory:
@@ -429,7 +445,7 @@ def velaris_row(prog, stdin_text, work_path):
             "before": before, "during": during, "observed": seen}
 
 
-def deno_row(prog, stdin_text, work_path, deno, port):
+def deno_row(prog, stdin_text, work_path, deno, port, deno_flags=()):
     if deno is None:
         return {"verdict": "tool-absent", "evidence": "deno not installed",
                 "before": None, "during": None, "observed": None}
@@ -472,8 +488,9 @@ def deno_row(prog, stdin_text, work_path, deno, port):
     flagged_before = bool(on_target) if prog["dangerous"] \
         else bool(diagnostics)
 
-    cmd = [deno, "run", "--no-prompt",
-           f"--v8-flags=--max-old-space-size={MEMORY_MB}", path]
+    cmd = ([deno, "run", "--no-prompt",
+            f"--v8-flags=--max-old-space-size={MEMORY_MB}"]
+           + list(deno_flags) + [path])
     res = run_child(cmd, stdin_text)
     stopped = res["timed_out"] or res["exit"] != 0
     seen = observed(prog["kind"], prog["id"], "deno", work_path, res["stdout"])
@@ -576,25 +593,51 @@ def settle_memory_row(prog, result):
     return result
 
 
-def run_program(prog, deno, port, workdir):
+SECRET = "bench-secret-7f3a"     # in the environment of every child;
+                                 # a program that prints it reached env
+
+
+def fill(text, work_path, workdir, port, other, prog_id, tool):
+    """The placeholders a program's needs, stdin and flags may use."""
+    return (text.replace("{path}", work_path)
+            .replace("{url}", f"http://127.0.0.1:{port}/{prog_id}/{tool}")
+            .replace("{other_url}",
+                     f"http://127.0.0.1:{other}/{prog_id}/{tool}")
+            .replace("{granted}", os.path.join(workdir, "granted"))
+            .replace("{outside}",
+                     os.path.join(workdir, "outside", "secret.txt"))
+            .replace("{port}", str(port)).replace("{other}", str(other)))
+
+
+def run_program(prog, deno, port, other, workdir):
     row = {k: prog[k] for k in ("id", "category", "category_title", "name",
                                 "description", "dangerous", "kind", "needs")}
     row["danger_line"] = prog["danger_line"]
-    row["stdin"] = prog["stdin"].replace("{path}", "<path>") \
-        .replace("{url}", "<url>")
+    row["stdin"] = (prog["stdin"].replace("{path}", "<path>")
+                    .replace("{url}", "<url>")
+                    .replace("{other_url}", "<other-url>")
+                    .replace("{outside}", "<outside>")
+                    .replace("{granted}", "<granted>"))
+    row["deno_flags"] = prog.get("deno_flags", [])
     row["tools"] = {}
     for tool in TOOLS:
         work_path = os.path.join(workdir, f"{prog['id']}.{tool}.txt")
         if os.path.exists(work_path):
             os.remove(work_path)
-        url = f"http://127.0.0.1:{port}/{prog['id']}/{tool}"
-        stdin_text = prog["stdin"].replace("{path}", work_path) \
-            .replace("{url}", url)
+
+        def f(t, tool=tool, work_path=work_path):
+            return fill(t, work_path, workdir, port, other, prog["id"], tool)
+
+        stdin_text = f(prog["stdin"])
+        needs = [f(n) for n in prog["needs"]]
+        deno_flags = [f(x) for x in prog.get("deno_flags", [])]
         if tool == "velaris":
-            row["tools"][tool] = velaris_row(prog, stdin_text, work_path)
+            row["tools"][tool] = velaris_row(prog, stdin_text, work_path,
+                                             needs)
         elif tool == "deno":
             row["tools"][tool] = settle_memory_row(
-                prog, deno_row(prog, stdin_text, work_path, deno, port))
+                prog, deno_row(prog, stdin_text, work_path, deno, port,
+                               deno_flags))
         else:
             row["tools"][tool] = settle_memory_row(
                 prog, python_row(prog, stdin_text, work_path, port))
@@ -657,6 +700,14 @@ KIND_WHY = {
     "memory": "the growth sits in a loop whose end cannot be shown, which "
               "the audit reports before running; the run was bounded by "
               "max_memory_mb=256 and timeout=5",
+    "fs-scope": "the budget granted fs:read under one directory; the read "
+                "resolves outside it and is refused with E313, which "
+                "cannot be caught",
+    "net-scope": "the budget granted net for one host and port; the "
+                 "request names another and is refused with E314 before "
+                 "any connection is made",
+    "env": "env is its own effect since 3.0; the audit lists it beyond the "
+           "task's needs, and the run under io refuses env() with E310",
 }
 
 
@@ -791,6 +842,15 @@ def narrative(meta, rows, tot):
     P.append(s)
     P.append("")
 
+    scoped = [r for r in dangerous if r["kind"] in SCOPED_KINDS]
+    if scoped:
+        P.append("Category 11 runs every tool under the narrowest budget "
+                 "its task needs - Velaris with `fs:read:<dir>`, "
+                 "`net:127.0.0.1:<port>` or plain `io`; Deno with the "
+                 "matching `--allow-read=<dir>`, `--allow-net=<host:port>` "
+                 "or nothing; Python with nothing, since it has no "
+                 "budget. Rows: " + ids(scoped) + ".")
+        P.append("")
     only_velaris = [r for r in dangerous if v(r, "velaris").startswith("caught")
                     and v(r, "python") == "missed"
                     and (deno_absent or v(r, "deno") == "missed")]
@@ -960,7 +1020,9 @@ def compare(rows, path):
     if not os.path.exists(path):
         return [f"{path} does not exist"]
     with open(path, encoding="utf-8") as f:
-        old = {r["id"]: r for r in json.load(f)["programs"]}
+        data = json.load(f)
+    old = {r["id"]: r for r in data["programs"]}
+    recorded_with_prover = data.get("meta", {}).get("prover", True)
     diffs = []
     for r in rows:
         prev = old.get(r["id"])
@@ -971,8 +1033,19 @@ def compare(rows, path):
             a, b = r["tools"][t]["verdict"], prev["tools"][t]["verdict"]
             if "tool-absent" in (a, b):
                 continue
-            if a != b:
-                diffs.append(f"{r['id']} {t}: now {a}, recorded {b}")
+            if a == b:
+                continue
+            # Without the prover, E705/E706 are not found before running
+            # and the runtime check stops the program instead: the same
+            # program, caught later. Named, not hidden, and not a failure
+            # when the prover is the only thing that differs.
+            if (t == "velaris" and not HAVE_PROVER and recorded_with_prover
+                    and b == "caught-before-run" and a == "caught-during-run"):
+                print(f"  {r['id']} velaris: caught while running here; "
+                      f"recorded as caught before running with the prover "
+                      f"(prover absent, expected)", file=sys.stderr)
+                continue
+            diffs.append(f"{r['id']} {t}: now {a}, recorded {b}")
     return diffs
 
 
@@ -1010,7 +1083,16 @@ def main(argv=None):
         except Exception:
             deno = None
     server, port = start_listener()
+    other_server, other = start_listener()   # a host no task needs
+    PORTS_IN_USE[:] = [port, other]
     workdir = tempfile.mkdtemp(prefix="velaris-bench-")
+    os.makedirs(os.path.join(workdir, "granted"), exist_ok=True)
+    os.makedirs(os.path.join(workdir, "outside"), exist_ok=True)
+    with open(os.path.join(workdir, "granted", "notes.txt"), "w") as fh:
+        fh.write("granted-notes\n")
+    with open(os.path.join(workdir, "outside", "secret.txt"), "w") as fh:
+        fh.write("outside-secret\n")
+    os.environ["BENCH_SECRET"] = SECRET      # velaris.run's child inherits
     try:
         import z3  # noqa: F401
         prover = True
@@ -1042,7 +1124,7 @@ def main(argv=None):
             print(f"  {prog['id']} {prog['name']:<24}", end="", flush=True,
                   file=sys.stderr)
             try:
-                row = run_program(prog, deno, port, workdir)
+                row = run_program(prog, deno, port, other, workdir)
             except CorpusError as e:
                 print("\ncorpus error:", e, file=sys.stderr)
                 return 2
@@ -1058,6 +1140,7 @@ def main(argv=None):
                     row["tools"]["python"]["during"]["memory_cap"]
     finally:
         server.shutdown()
+        other_server.shutdown()
         shutil.rmtree(workdir, ignore_errors=True)
 
     summary = summarise(categories, rows)

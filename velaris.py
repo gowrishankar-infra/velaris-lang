@@ -255,7 +255,7 @@ Usage:
 import json
 import os
 
-VERSION = "2.63.1"
+VERSION = "3.0.0"
 import re
 import sys
 from dataclasses import dataclass, field
@@ -1229,35 +1229,447 @@ FALLIBLE_BUILTINS = {"to_int", "read_file", "fetch", "post",
 
 PROGRAM_ARGS: list = []    # filled by the CLI: velaris prog.vel a b c
 
-ALL_EFFECTS = ("io", "fs", "net", "clock", "rand", "ffi")
+ALL_EFFECTS = ("io", "env", "fs", "net", "clock", "rand", "ffi")
 EFFECT_BUDGET: set = set(ALL_EFFECTS)   # everything, unless you say less
 FFI_MODULES: set | None = None          # None = any module; a set = only
                                         # these top-level packages
 
 
-def parse_budget(spec: str) -> tuple:
-    """'io,fs,ffi:math,json' -> ({'io','fs','ffi'}, {'math','json'})
+FS_GRANTS: list | None = None          # None = any path; else [(kind, prefix)]
+NET_GRANTS: list | None = None         # None = any host; else [(host, port)]
+OP_LIMITS: dict = {"fs": None, "net": None}   # None = unlimited
+OP_COUNTS: dict = {"fs": 0, "net": 0}
 
-    Plain 'ffi' grants every module. 'ffi:a,b' grants the ffi effect for
-    those top-level packages only - the one caveat every security review
-    of this project raised, made into a precise permission.
+
+class BudgetError(ValueError):
+    """A budget that does not parse. Raised before anything runs."""
+
+
+class Budget:
+    """What a run may touch, as written on the command line.
+
+        io                      the console: print, read_line, args
+        env                     environment variables (since 3.0)
+        fs                      any file, read and write
+        fs:read  fs:write       one direction, any path
+        fs:read:./data          one direction, under that path only
+        fs:write:./out@50       ...and at most 50 file operations
+        net                     any host
+        net:api.example.com     that host, any port
+        net:api.example.com:443 that host and port
+        net:*.example.com       one label in place of the star
+        net:...@100             at most 100 network operations
+        ffi                     any Python module
+        ffi:math,json           those top-level modules only
+
+    Grants are additive: two fs items grant both. A count is the
+    smallest count given for that effect and applies to the whole run.
+    A budget with no count is a budget on what, not on how much. Paths
+    are resolved with realpath when the budget is parsed and again at
+    every call, so `..` and symlinks cannot reach past a prefix; paths
+    holding a comma cannot be written in this grammar.
     """
-    effects: set = set()
-    modules: set | None = None
-    for item in spec.split(","):
-        item = item.strip()
-        if not item:
-            continue
-        if item.startswith("ffi:"):
-            effects.add("ffi")
-            modules = set() if modules is None else modules
-            modules.add(item[len("ffi:"):].strip().split(".")[0])
-        elif modules is not None and "ffi" in effects and \
-                item not in ALL_EFFECTS:
-            modules.add(item.split(".")[0])   # continuation of ffi:a,b
+
+    def __init__(self):
+        self.effects: set = set()
+        self.modules: set | None = None
+        self.fs: list | None = None        # [(kind, prefix or None)]
+        self.net: list | None = None       # [(host pattern, port or None)]
+        self.limits: dict = {"fs": None, "net": None}
+        self._fs_any = False               # a plain 'fs' was written
+        self._net_any = False              # a plain 'net' was written
+
+    # ---- parsing -------------------------------------------------------
+    @classmethod
+    def parse(cls, spec: str) -> "Budget":
+        b = cls()
+        items = [s.strip() for s in spec.split(",")]
+        i = 0
+        while i < len(items):
+            item = items[i]
+            i += 1
+            if not item:
+                continue
+            if item.startswith("ffi:"):
+                b.effects.add("ffi")
+                b.modules = set() if b.modules is None else b.modules
+                b.modules.add(item[4:].strip().split(".")[0])
+                # continuation: ffi:a,b,c until something that is not a
+                # bare module name
+                while i < len(items) and items[i] and ":" not in items[i] \
+                        and "@" not in items[i] \
+                        and items[i] not in ALL_EFFECTS:
+                    b.modules.add(items[i].split(".")[0])
+                    i += 1
+            elif item == "fs" or item.startswith("fs:") or \
+                    item.startswith("fs@"):
+                b._add_fs(item)
+            elif item == "net" or item.startswith("net:") or \
+                    item.startswith("net@"):
+                b._add_net(item)
+            elif item in ALL_EFFECTS:
+                b.effects.add(item)
+            else:
+                raise BudgetError(
+                    f"'{item}' is not an effect. They are: "
+                    f"{', '.join(ALL_EFFECTS)} (or ffi:module, fs:read:path, "
+                    f"net:host:port, with @count)")
+        return b
+
+    @staticmethod
+    def _split_count(item: str) -> tuple:
+        """'fs:read:./x@50' -> ('fs:read:./x', 50); no count -> None."""
+        at = item.rfind("@")
+        if at > 0 and item[at + 1:].isdigit():
+            n = int(item[at + 1:])
+            if n < 0:
+                raise BudgetError(f"'{item}': a count cannot be negative")
+            return item[:at], n
+        if at > 0:
+            raise BudgetError(f"'{item}': what follows @ must be a whole "
+                              f"number of operations")
+        return item, None
+
+    def _limit(self, kind: str, n) -> None:
+        if n is None:
+            return
+        cur = self.limits[kind]
+        self.limits[kind] = n if cur is None else min(cur, n)
+
+    def _add_fs(self, item: str) -> None:
+        body, n = self._split_count(item)
+        self.effects.add("fs")
+        self._limit("fs", n)
+        if body == "fs":
+            self.fs = None                     # any path, either direction
+            self._fs_any = True
+            return
+        rest = body[3:]                        # after 'fs:'
+        kind, sep, path = rest.partition(":")
+        if kind not in ("read", "write"):
+            raise BudgetError(f"'{item}': after fs: write read or write, "
+                              f"then optionally :path")
+        prefix = None
+        if sep:
+            if not path:
+                raise BudgetError(f"'{item}': the path after fs:{kind}: "
+                                  f"is empty")
+            prefix = os.path.normcase(os.path.realpath(path))
+        if getattr(self, "_fs_any", False):
+            return                             # plain fs already covers it
+        if self.fs is None:
+            self.fs = []
+        self.fs.append((kind, prefix))
+
+    def _add_net(self, item: str) -> None:
+        body, n = self._split_count(item)
+        self.effects.add("net")
+        self._limit("net", n)
+        if body == "net":
+            self._net_any = True
+            self.net = None
+            return
+        rest = body[4:]                        # after 'net:'
+        host, port = parse_host_port(rest)
+        if host.startswith("*."):
+            tail = host[2:]
+            if not tail or "*" in tail or "." not in tail:
+                raise BudgetError(f"'{item}': the wildcard must be "
+                                  f"'*.' followed by at least two labels")
+            if all(lbl.isdigit() for lbl in tail.split(".")):
+                raise BudgetError(f"'{item}': no wildcard over an IP "
+                                  f"literal")
+        elif "*" in host:
+            raise BudgetError(f"'{item}': only one leading '*.' label "
+                              f"is allowed")
+        if getattr(self, "_net_any", False):
+            return
+        if self.net is None:
+            self.net = []
+        self.net.append((host, port))
+
+    # ---- the other direction: back to text, and to the runtime --------
+    def spec(self) -> str:
+        """The budget as the command line would write it, absolute paths
+        included, so a child process parses to the same budget."""
+        out = []
+        for e in sorted(self.effects):
+            if e == "ffi":
+                out.append("ffi" if self.modules is None else
+                           ",".join("ffi:" + m for m in sorted(self.modules)))
+            elif e == "fs":
+                tail = f"@{self.limits['fs']}" if self.limits["fs"] is not None else ""
+                if self.fs is None:
+                    out.append("fs" + tail)
+                else:
+                    for kind, prefix in self.fs:
+                        out.append(f"fs:{kind}" + (f":{prefix}" if prefix else "") + tail)
+            elif e == "net":
+                tail = f"@{self.limits['net']}" if self.limits["net"] is not None else ""
+                if self.net is None:
+                    out.append("net" + tail)
+                else:
+                    for host, port in self.net:
+                        h = f"[{host}]" if ":" in host else host
+                        out.append(f"net:{h}" + (f":{port}" if port else "") + tail)
+            else:
+                out.append(e)
+        return ",".join(out)
+
+    def deny(self, names) -> None:
+        for name in names:
+            self.effects.discard(name)
+            if name == "fs":
+                self.fs = None
+                self.limits["fs"] = None
+            elif name == "net":
+                self.net = None
+                self.limits["net"] = None
+            elif name == "ffi":
+                self.modules = None
+
+    def install(self) -> None:
+        EFFECT_BUDGET.clear()
+        EFFECT_BUDGET.update(self.effects)
+        g = globals()
+        g["FFI_MODULES"] = self.modules
+        g["FS_GRANTS"] = None if self.fs is None else list(self.fs)
+        g["NET_GRANTS"] = None if self.net is None else list(self.net)
+        g["OP_LIMITS"] = dict(self.limits)
+        g["OP_COUNTS"] = {"fs": 0, "net": 0}
+
+    @staticmethod
+    def snapshot() -> dict:
+        return {"effects": set(EFFECT_BUDGET), "modules": FFI_MODULES,
+                "fs": FS_GRANTS, "net": NET_GRANTS,
+                "limits": dict(OP_LIMITS), "counts": dict(OP_COUNTS)}
+
+    @staticmethod
+    def restore(saved: dict) -> None:
+        EFFECT_BUDGET.clear()
+        EFFECT_BUDGET.update(saved["effects"])
+        g = globals()
+        g["FFI_MODULES"] = saved["modules"]
+        g["FS_GRANTS"] = saved["fs"]
+        g["NET_GRANTS"] = saved["net"]
+        g["OP_LIMITS"] = saved["limits"]
+        g["OP_COUNTS"] = saved["counts"]
+
+    # ---- one budget inside another (the HTTP door's ceiling) ----------
+    def covers(self, asked: "Budget") -> str | None:
+        """None when everything `asked` wants sits inside this budget;
+        else one sentence naming the first thing that does not."""
+        for e in sorted(asked.effects):
+            if e not in self.effects:
+                return f"this server does not grant {e}"
+        if "ffi" in asked.effects and self.modules is not None:
+            if asked.modules is None:
+                return "this server grants ffi for named modules only"
+            extra = asked.modules - self.modules
+            if extra:
+                return f"this server does not grant ffi:{sorted(extra)[0]}"
+        if "fs" in asked.effects:
+            if self.limits["fs"] is not None and (
+                    asked.limits["fs"] is None
+                    or asked.limits["fs"] > self.limits["fs"]):
+                return (f"this server allows at most {self.limits['fs']} "
+                        f"file operations")
+            if self.fs is not None:
+                if asked.fs is None:
+                    return "this server grants fs under named paths only"
+                for kind, prefix in asked.fs:
+                    if not any(_fs_grant_covers(sk, sp, kind, prefix)
+                               for sk, sp in self.fs):
+                        return (f"this server does not grant fs:{kind}"
+                                + (f":{prefix}" if prefix else ""))
+        if "net" in asked.effects:
+            if self.limits["net"] is not None and (
+                    asked.limits["net"] is None
+                    or asked.limits["net"] > self.limits["net"]):
+                return (f"this server allows at most {self.limits['net']} "
+                        f"network operations")
+            if self.net is not None:
+                if asked.net is None:
+                    return "this server grants net for named hosts only"
+                for host, port in asked.net:
+                    if not any(_net_grant_covers(sh, sp, host, port)
+                               for sh, sp in self.net):
+                        return (f"this server does not grant net:{host}"
+                                + (f":{port}" if port else ""))
+        return None
+
+
+def parse_host_port(text: str) -> tuple:
+    """'api.example.com:443' -> ('api.example.com', 443); '[::1]:80' ->
+    ('::1', 80); a bare host -> (host, None). Lower-cased, no trailing
+    dot."""
+    text = text.strip()
+    if not text:
+        raise BudgetError("net: needs a host")
+    port = None
+    if text.startswith("["):
+        end = text.find("]")
+        if end < 0:
+            raise BudgetError(f"'{text}': unclosed [ in an IPv6 literal")
+        host = text[1:end]
+        rest = text[end + 1:]
+        if rest:
+            if not rest.startswith(":") or not rest[1:].isdigit():
+                raise BudgetError(f"'{text}': expected :port after ]")
+            port = int(rest[1:])
+    else:
+        host, sep, tail = text.rpartition(":")
+        if sep and tail.isdigit():
+            port = int(tail)
         else:
-            effects.add(item)
-    return effects, modules
+            host = text
+        if "/" in host or "@" in host or not host:
+            raise BudgetError(f"'{text}': a host is a name or address, "
+                              f"with an optional :port")
+    if port is not None and not 0 < port < 65536:
+        raise BudgetError(f"'{text}': port out of range")
+    return host.lower().rstrip("."), port
+
+
+def _fs_grant_covers(kind: str, prefix, want_kind: str, want_prefix) -> bool:
+    """Does a server's grant (kind, prefix) cover a caller's grant
+    (want_kind, want_prefix)? Same direction, and the caller's prefix
+    (None = any path) must sit under the server's (None = any path)."""
+    if kind != want_kind:
+        return False
+    if prefix is None:
+        return True
+    if want_prefix is None:
+        return False
+    return (want_prefix == prefix
+            or want_prefix.startswith(prefix.rstrip(os.sep) + os.sep))
+
+
+def _host_matches(pattern: str, host: str) -> bool:
+    if pattern.startswith("*."):
+        tail = pattern[2:]
+        return host.endswith("." + tail) and \
+            "." not in host[:-len(tail) - 1] and len(host) > len(tail) + 1
+    return pattern == host
+
+
+def _net_grant_covers(host: str, port, want_host: str, want_port) -> bool:
+    """Does the grant permit want_host:want_port? Both sides may be
+    patterns when one budget is checked against another; a wildcard
+    covers the same wildcard and any single-label host under it."""
+    if port is not None and want_port != port:
+        return False
+    if host.startswith("*.") and want_host.startswith("*."):
+        return host == want_host
+    if want_host.startswith("*."):
+        return False
+    return _host_matches(host, want_host)
+
+
+def parse_budget(spec: str) -> tuple:
+    """(effects, modules) - the 2.60 shape, kept for callers that only
+    want those two; the scoped grants live on Budget.parse(spec)."""
+    b = Budget.parse(spec)
+    return b.effects, b.modules
+
+
+def allow_path(kind: str, path: str, what: str, line: int) -> str:
+    """Refuse a file operation outside the paths this run granted.
+
+    kind is 'read', 'write' or 'any' (file_exists). The path is resolved
+    with realpath before the comparison, and so is every grant, so `..`
+    and symlinks cannot reach past a prefix. Returns the resolved path
+    the operation should use.
+    """
+    real = os.path.normcase(os.path.realpath(str(path)))
+    if FS_GRANTS is None:
+        return real
+    wants = ("read", "write") if kind == "any" else (kind,)
+    for gkind, prefix in FS_GRANTS:
+        if gkind in wants and (prefix is None or real == prefix
+                               or real.startswith(prefix.rstrip(os.sep)
+                                                  + os.sep)):
+            return real
+    need = kind if kind != "any" else "read"
+    raise VelarisError("E313",
+        f"'{what}' reaches '{path}' (resolved: {real}), which this run's "
+        f"fs grants do not cover", line,
+        fixes=[f"allow it: --allow fs:{need}:{os.path.dirname(real) or real}",
+               "or use a program that stays inside the granted paths"])
+
+
+class _RedirectRefused(Exception):
+    def __init__(self, target: str, why: str):
+        self.target, self.why = target, why
+        super().__init__(why)
+
+
+def host_refusal(url: str) -> str | None:
+    """Why this URL's host is outside the run's net grants, or None."""
+    import urllib.parse
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme not in ("http", "https"):
+        return f"'{parts.scheme or '?'}' is not http or https"
+    try:
+        host = (parts.hostname or "").lower().rstrip(".")
+        port = parts.port or (443 if parts.scheme == "https" else 80)
+    except ValueError as e:
+        return f"the address does not parse: {e}"
+    if not host:
+        return "the address has no host"
+    if NET_GRANTS is None:
+        return None
+    for ghost, gport in NET_GRANTS:
+        if _host_matches(ghost, host) and (gport is None or gport == port):
+            return None
+    return (f"host {host}:{port} is not in this run's net grants "
+            f"(allow it: --allow net:{host}:{port})")
+
+
+def allow_host(url: str, what: str, line: int) -> None:
+    """Refuse a request to a host this run did not grant (E314)."""
+    why = host_refusal(url)
+    if why is None:
+        return
+    import urllib.parse
+    host = (urllib.parse.urlsplit(url).hostname or "?")
+    raise VelarisError("E314",
+        f"'{what}' reaches host '{host}', which this run does not allow: "
+        f"{why}", line,
+        fixes=["or use a program that stays with the granted hosts"])
+
+
+def count_op(kind: str, what: str, line: int) -> None:
+    """Spend one of the run's fs or net operations (E315 past the count)."""
+    limit = OP_LIMITS.get(kind)
+    OP_COUNTS[kind] = OP_COUNTS.get(kind, 0) + 1
+    if limit is not None and OP_COUNTS[kind] > limit:
+        raise VelarisError("E315",
+            f"'{what}' is the {OP_COUNTS[kind]}{_ordinal(OP_COUNTS[kind])} "
+            f"{kind} operation, and this run allows {limit}", line,
+            fixes=[f"allow more: --allow {kind}@{OP_COUNTS[kind]}",
+                   "or use a program that does less"])
+
+
+def _ordinal(n: int) -> str:
+    return "th" if 10 <= n % 100 <= 20 else \
+        {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+
+
+def guarded_opener():
+    """An opener whose redirects are held to the same net grants, and
+    which refuses to leave http(s). A refused redirect is a failure the
+    program can catch: it asked for one host and was sent to another."""
+    import urllib.request
+
+    class Guarded(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            why = host_refusal(newurl)
+            if why is not None:
+                raise _RedirectRefused(newurl, why)
+            return super().redirect_request(req, fp, code, msg, headers,
+                                            newurl)
+    return urllib.request.build_opener(Guarded)
 
 
 def allow_module(module: str, what: str, line: int) -> None:
@@ -1388,7 +1800,7 @@ BUILTINS = {
     "json_has":   {"effects": set(),      "types": ["Text", "Text"], "ret": "Bool"},
     "json_of":    {"effects": set(),      "types": ["Any"],          "ret": "Text"},
     "args":       {"effects": {"io"},     "types": [],              "ret": "List of Text"},
-    "env":        {"effects": {"io"},     "types": ["Text", "Text"], "ret": "Text"},
+    "env":        {"effects": {"env"},    "types": ["Text", "Text"], "ret": "Text"},
     "exit_with":  {"effects": {"io"},     "types": ["Int"],         "ret": "Unit"},
     "read_line":  {"effects": {"io"},     "types": [],              "ret": "Text"},
     "post":       {"effects": {"net"},    "types": ["Text", "Text"], "ret": "Text"},
@@ -1457,6 +1869,17 @@ def check_effects(funcs: list[Function], errors: list) -> None:
                 return
             needed = effects_of_callee(node.name, node.line)
             missing = needed - fn.effects
+            if missing == {"env"} and node.name == "env":
+                # since 3.0 the environment is its own effect, so an
+                # io-only budget cannot read secrets; the message says
+                # exactly what changed
+                raise VelarisError(
+                    "E300", "env() now needs 'uses env'", node.line,
+                    fixes=[f"add 'uses env' to the signature of "
+                           f"'{fn.name}' (and to every function that "
+                           f"calls it)",
+                           "run it with --allow io,env, or drop the "
+                           "env() call"])
             if missing:
                 eff = ", ".join(sorted(missing))
                 declared = ("declares no effects (it is pure)" if not fn.effects
@@ -4893,7 +5316,9 @@ def run_builtin(name: str, args: list, line: int):
     if name == "chars":
         return list(str(args[0]))
     if name == "file_exists":
-        return os.path.exists(str(args[0]))
+        real = allow_path("any", str(args[0]), name, line)
+        count_op("fs", name, line)
+        return os.path.exists(real)
     if name == "lower":
         return str(args[0]).lower()
     if name == "length":
@@ -5278,13 +5703,17 @@ def run_builtin(name: str, args: list, line: int):
                              "check with length(...) before using get"])
         return xs[i]
     if name == "read_file":
+        real = allow_path("read", str(args[0]), name, line)
+        count_op("fs", name, line)
         try:
-            return open(args[0], encoding="utf-8").read()
+            return open(real, encoding="utf-8").read()
         except OSError:
             raise FailSignal(f"cannot read file '{args[0]}'")
     if name == "write_file":
+        real = allow_path("write", str(args[0]), name, line)
+        count_op("fs", name, line)
         try:
-            with open(str(args[0]), "w", encoding="utf-8") as fh:
+            with open(real, "w", encoding="utf-8") as fh:
                 fh.write(to_text(args[1]))
             return None
         except OSError as e:
@@ -5312,10 +5741,12 @@ def run_builtin(name: str, args: list, line: int):
         headers = {str(k): str(v) for k, v in headers.items()}
         headers.setdefault("User-Agent", f"velaris/{VERSION}")
         data = body.encode("utf-8") if body else None
+        allow_host(url, name, line)
+        count_op("net", name, line)
         req = urllib.request.Request(url, data=data, headers=headers,
                                      method=method)
         try:
-            with urllib.request.urlopen(req, timeout=20) as resp:
+            with guarded_opener().open(req, timeout=20) as resp:
                 answer = {
                     "status": int(resp.status),
                     "body": resp.read(1 << 20).decode("utf-8",
@@ -5326,6 +5757,9 @@ def run_builtin(name: str, args: list, line: int):
                 "status": int(e.code),
                 "body": e.read(1 << 20).decode("utf-8", errors="replace"),
                 "headers": {k: v for k, v in (e.headers or {}).items()}}
+        except _RedirectRefused as e:     # sent somewhere it may not go
+            raise FailSignal(f"'{url}' redirected to '{e.target}', which "
+                             f"this run does not allow: {e.why}")
         except Exception as e:            # say what happened, not how
             reason = "the address did not resolve"
             text = str(e).lower()
@@ -5353,9 +5787,11 @@ def run_builtin(name: str, args: list, line: int):
             headers["Content-Type"] = (
                 "application/json" if body.lstrip()[:1] in "{["
                 else "text/plain; charset=utf-8")
+        allow_host(url, name, line)
+        count_op("net", name, line)
         try:
             req = urllib.request.Request(url, data=data, headers=headers)
-            with urllib.request.urlopen(req, timeout=10) as resp:
+            with guarded_opener().open(req, timeout=10) as resp:
                 if name == "fetch_status":
                     return int(resp.status)
                 return resp.read(1 << 20).decode("utf-8", errors="replace")
@@ -5363,6 +5799,9 @@ def run_builtin(name: str, args: list, line: int):
             if name == "fetch_status":
                 return int(e.code)
             raise FailSignal(f"'{url}' answered with status {e.code}")
+        except _RedirectRefused as e:     # sent somewhere it may not go
+            raise FailSignal(f"'{url}' redirected to '{e.target}', which "
+                             f"this run does not allow: {e.why}")
         except Exception:
             raise FailSignal(f"cannot reach '{url}'")
     if name == "args":
@@ -6856,15 +7295,17 @@ def main() -> int:
             port = int(argv[argv.index("--port") + 1])
         if "--host" in argv:
             host = argv[argv.index("--host") + 1]
-        max_allow = set(ALL_EFFECTS)
-        if "--max-allow" in argv:
-            asked = argv[argv.index("--max-allow") + 1]
-            max_allow = {n.strip() for n in asked.split(",") if n.strip()}
-            unknown = max_allow - set(ALL_EFFECTS)
-            if unknown:
-                print(f"not an effect: {', '.join(sorted(unknown))}",
-                      file=sys.stderr)
-                return 2
+        # the ceiling: a caller may ask for anything inside it, at any
+        # level - effect, module, path prefix, host, count - and nothing
+        # outside; Budget.covers is the one place that rule lives
+        try:
+            ceiling = Budget.parse(argv[argv.index("--max-allow") + 1]
+                                   if "--max-allow" in argv
+                                   else ",".join(ALL_EFFECTS))
+        except BudgetError as e:
+            print(str(e), file=sys.stderr)
+            return 2
+        max_allow = ceiling.effects
 
         import velaris as _self          # the library half, reused whole
 
@@ -6913,12 +7354,15 @@ def main() -> int:
                             200, _self.audit(source).as_dict())
                     if where == "/run":
                         asked = set(body.get("allow") or ["io"])
-                        refused = asked - max_allow
+                        try:
+                            wanted = _self.Budget.parse(",".join(asked))
+                        except _self.BudgetError as e:
+                            return self.answer(400, {"error": str(e)})
+                        refused = ceiling.covers(wanted)
                         if refused:
                             return self.answer(403, {
-                                "error": "this server does not grant "
-                                         + ", ".join(sorted(refused)),
-                                "max_allow": sorted(max_allow)})
+                                "error": refused,
+                                "max_allow": ceiling.spec().split(",")})
                         out = _self.run(
                             source, allow=asked,
                             stdin=body.get("stdin", ""),
@@ -7386,30 +7830,24 @@ def main() -> int:
     filename = sys.argv[1]
     as_json = "--json" in sys.argv
     if "--allow" in sys.argv or "--deny" in sys.argv:
-        allowed = set()
-        modules = None
-        if "--allow" in sys.argv:
-            allowed, modules = parse_budget(
-                sys.argv[sys.argv.index("--allow") + 1])
-            bad = allowed - set(ALL_EFFECTS)
-            if bad:
-                print(f"'{sorted(bad)[0]}' is not an effect. They are: "
-                      f"{', '.join(ALL_EFFECTS)} (or ffi:module,module)",
-                      file=sys.stderr)
-                return 2
-        else:
-            allowed = set(ALL_EFFECTS)
+        try:
+            budget = Budget.parse(sys.argv[sys.argv.index("--allow") + 1]
+                                  if "--allow" in sys.argv
+                                  else ",".join(ALL_EFFECTS))
+        except BudgetError as e:
+            print(str(e), file=sys.stderr)
+            return 2
         if "--deny" in sys.argv:
-            for name in sys.argv[sys.argv.index("--deny") + 1].split(","):
-                name = name.strip()
-                if name and name not in ALL_EFFECTS:
+            names = [n.strip() for n in
+                     sys.argv[sys.argv.index("--deny") + 1].split(",")
+                     if n.strip()]
+            for name in names:
+                if name not in ALL_EFFECTS:
                     print(f"'{name}' is not an effect. They are: "
                           f"{', '.join(ALL_EFFECTS)}", file=sys.stderr)
                     return 2
-                allowed.discard(name)
-        EFFECT_BUDGET.clear()
-        EFFECT_BUDGET.update(allowed)
-        globals()["FFI_MODULES"] = modules
+            budget.deny(names)
+        budget.install()
     # args() is the program's arguments - never the flags this command
     # took for itself. Until 2.62 `--allow io` leaked in as two words.
     FLAGS = {"--json", "--no-native", "--time", "--check", "--no-cache"}
@@ -7523,7 +7961,8 @@ class AuditResult:
 
     __slots__ = ("schema", "velaris_version", "ok", "problems", "effects",
                  "functions", "proven_share", "safe_command", "warnings",
-                 "ffi_modules", "loops_unshown", "contract_coverage")
+                 "ffi_modules", "loops_unshown", "contract_coverage",
+                 "fs_paths", "net_hosts")
 
     def __init__(self, **kw):
         for k in self.__slots__:
@@ -7607,6 +8046,94 @@ def _ffi_modules_named(path: str, source: str | None) -> set:
     return found
 
 
+def _fs_net_named(path: str, source: str | None) -> tuple:
+    """(paths, hosts) a program names in literals, for scoped grants.
+
+    paths: {"read": [...], "write": [...], "read_any": bool,
+    "write_any": bool} - the flags say a call used a path built at
+    runtime, which no literal can cover. hosts: {"hosts": [...],
+    "any": bool} the same way. Like _ffi_modules_named, this reads
+    literals only.
+    """
+    paths = {"read": set(), "write": set(), "read_any": False,
+             "write_any": False}
+    hosts = {"hosts": set(), "any": False}
+    try:
+        funcs, _ = load_program(path, source)
+    except Exception:
+        return paths, hosts
+    import dataclasses as _dc
+    import urllib.parse
+
+    def host_of(url: str) -> str | None:
+        if not (url.startswith("http://") or url.startswith("https://")):
+            url = "https://" + url
+        try:
+            parts = urllib.parse.urlsplit(url)
+            h = (parts.hostname or "").lower().rstrip(".")
+            if not h:
+                return None
+            return f"{h}:{parts.port}" if parts.port else h
+        except ValueError:
+            return None
+
+    def visit(node):
+        if isinstance(node, (list, tuple)):
+            for x in node:
+                visit(x)
+            return
+        if not _dc.is_dataclass(node):
+            return
+        if isinstance(node, Call):
+            kind = {"read_file": "read", "file_exists": "read",
+                    "write_file": "write"}.get(node.name)
+            if kind and node.args:
+                if isinstance(node.args[0], Str):
+                    paths[kind].add(node.args[0].value)
+                else:
+                    paths[kind + "_any"] = True
+            at = {"fetch": 0, "post": 0, "fetch_status": 0,
+                  "request": 1}.get(node.name)
+            if at is not None and len(node.args) > at:
+                arg = node.args[at]
+                h = host_of(arg.value) if isinstance(arg, Str) else None
+                if h:
+                    hosts["hosts"].add(h)
+                else:
+                    hosts["any"] = True
+        for f in _dc.fields(node):
+            visit(getattr(node, f.name))
+
+    for fn in funcs:
+        visit(fn.body)
+    return paths, hosts
+
+
+def _safe_grants(effects, modules_named, paths, hosts) -> list:
+    """The narrowest budget the audit can write from what it read."""
+    out = []
+    for e in effects:
+        if e == "ffi":
+            out.append("ffi:" + ",".join(modules_named) if modules_named
+                       else "ffi")
+        elif e == "fs":
+            for kind in ("read", "write"):
+                if paths[kind + "_any"]:
+                    out.append(f"fs:{kind}")
+                else:
+                    out.extend(f"fs:{kind}:{p}" for p in sorted(paths[kind]))
+            if not any(x.startswith("fs") for x in out):
+                out.append("fs")           # declared, never used literally
+        elif e == "net":
+            if hosts["any"] or not hosts["hosts"]:
+                out.append("net")
+            else:
+                out.extend(f"net:{h}" for h in sorted(hosts["hosts"]))
+        else:
+            out.append(e)
+    return out
+
+
 def check(source: str, *, path: str | None = None,
           prove: bool = True) -> CheckResult:
     """Compile without running. Every problem, plus what was proven."""
@@ -7670,6 +8197,8 @@ def audit(source: str, *, path: str | None = None) -> AuditResult:
                 + ", ".join(coverage))
         modules_named = sorted(_ffi_modules_named(where, source if path
                                                   else None))
+        paths_named, hosts_named = _fs_net_named(where, source if path
+                                                 else None)
         if "ffi" in effects:
             if modules_named:
                 warnings.append(
@@ -7705,13 +8234,16 @@ def audit(source: str, *, path: str | None = None) -> AuditResult:
             contract_coverage=coverage,
             proven_share=share,
             safe_command=("velaris <file> --allow " + (
-                ",".join(
-                    [e for e in effects if e != "ffi"]
-                    + (["ffi:" + ",".join(modules_named)] if modules_named
-                       and "ffi" in effects
-                       else ["ffi"] if "ffi" in effects else []))
+                ",".join(_safe_grants(effects, modules_named,
+                                      paths_named, hosts_named))
                 or "''")),
             ffi_modules=modules_named,
+            fs_paths={"read": sorted(paths_named["read"]),
+                      "write": sorted(paths_named["write"]),
+                      "read_any": paths_named["read_any"],
+                      "write_any": paths_named["write_any"]},
+            net_hosts={"hosts": sorted(hosts_named["hosts"]),
+                       "any": hosts_named["any"]},
             warnings=warnings)
     finally:
         if temp:
@@ -7749,27 +8281,14 @@ def run(source: str, *, path: str | None = None,
                             args=args, stdin=stdin, native=native,
                             timeout=timeout, max_memory_mb=max_memory_mb)
     where, temp = _source_to_file(source, path)
-    if allow is None:
-        budget, modules = set(ALL_EFFECTS), None
-    else:
-        budget, modules = parse_budget(",".join(sorted(allow)))
-    for name in (deny or ()):
-        budget.discard(name)
-    unknown = (budget | set(deny or ())) - set(ALL_EFFECTS)
-    if unknown:
-        raise ValueError(f"not an effect: {', '.join(sorted(unknown))}; "
-                         f"they are {', '.join(ALL_EFFECTS)} "
-                         f"(or ffi:module)")
+    budget = _budget_from(allow, deny)
 
-    saved_budget = set(EFFECT_BUDGET)
-    saved_modules = FFI_MODULES
+    saved = Budget.snapshot()
     saved_args = list(PROGRAM_ARGS)
     out, err = _io.StringIO(), _io.StringIO()
     problems, refused, code = [], None, 0
     try:
-        EFFECT_BUDGET.clear()
-        EFFECT_BUDGET.update(budget)
-        globals()["FFI_MODULES"] = modules
+        budget.install()
         PROGRAM_ARGS[:] = list(args or [])
         result = check(source, path=path)
         if not result.ok:
@@ -7791,21 +8310,14 @@ def run(source: str, *, path: str | None = None,
         code = int(e.code or 0)
     except VelarisError as e:
         problems = [_as_problem(e, where)]
-        if e.code == "E310":
-            refused = e.message.split("'")[3] \
-                if e.message.count("'") >= 4 else None
-        elif e.code == "E311":
-            m = re.search(r"module '([^']+)'", e.message)
-            refused = "ffi:" + m.group(1) if m else "ffi"
+        refused = _refused_from(e.code, e.message)
         code = 1
     except FailSignal as e:
         problems = [Problem("E521", f"a failure escaped: {e.reason}", 0,
                             where, ["handle it with check"])]
         code = 1
     finally:
-        EFFECT_BUDGET.clear()
-        EFFECT_BUDGET.update(saved_budget)
-        globals()["FFI_MODULES"] = saved_modules
+        Budget.restore(saved)
         PROGRAM_ARGS[:] = saved_args
         if temp:
             os.unlink(temp)
@@ -7813,23 +8325,55 @@ def run(source: str, *, path: str | None = None,
                      err.getvalue(), problems, refused, code)
 
 
+def _budget_from(allow, deny) -> "Budget":
+    """The library's allow= / deny= as a Budget; a bad grant is a
+    ValueError before anything runs."""
+    try:
+        budget = Budget.parse(",".join(sorted(ALL_EFFECTS)) if allow is None
+                              else ",".join(sorted(allow)))
+    except BudgetError as e:
+        raise ValueError(str(e))
+    unknown = set(deny or ()) - set(ALL_EFFECTS)
+    if unknown:
+        raise ValueError(f"not an effect: {', '.join(sorted(unknown))}; "
+                         f"they are {', '.join(ALL_EFFECTS)}")
+    budget.deny(deny or ())
+    return budget
+
+
+def _refused_from(code: str, message: str):
+    """What a refusal was about, for RunResult.refused_effect: the
+    effect for E310, ffi:module for E311, fs:<path> for E313,
+    net:<host> for E314, and the counted effect for E315."""
+    if code == "E310":
+        m = re.search(r"needs the '(\w+)' effect", message)
+        return m.group(1) if m else None
+    if code == "E311":
+        m = re.search(r"module '([^']+)'", message)
+        return "ffi:" + m.group(1) if m else "ffi"
+    if code == "E313":
+        m = re.search(r"reaches '([^']+)'", message)
+        return "fs:" + m.group(1) if m else "fs"
+    if code == "E314":
+        m = re.search(r"host '([^']+)'", message)
+        return "net:" + m.group(1) if m else "net"
+    if code == "E315":
+        m = re.search(r" (fs|net) operation", message)
+        return (m.group(1) if m else "") + "@count"
+    return None
+
+
 def _run_bounded(source, *, path, allow, deny, args, stdin, native,
                  timeout, max_memory_mb) -> RunResult:
     """run() in a child process that can be killed."""
     import subprocess
     where, temp = _source_to_file(source, path)
-    spec = ",".join(sorted(ALL_EFFECTS)) if allow is None \
-        else ",".join(sorted(allow))
-    budget, modules = parse_budget(spec)
-    for name in (deny or ()):
-        budget.discard(name)
-    unknown = (budget | set(deny or ())) - set(ALL_EFFECTS)
-    if unknown:
+    try:
+        budget = _budget_from(allow, deny)
+    except ValueError:
         if temp:
             os.unlink(temp)
-        raise ValueError(f"not an effect: {', '.join(sorted(unknown))}; "
-                         f"they are {', '.join(ALL_EFFECTS)} "
-                         f"(or ffi:module)")
+        raise
 
     # compile first, in this process: a program that does not compile
     # never needs a child, and the problems come back the normal way
@@ -7839,13 +8383,10 @@ def _run_bounded(source, *, path, allow, deny, args, stdin, native,
             os.unlink(temp)
         return RunResult(False, "", "", result.problems, None, 1)
 
-    flag = ",".join(sorted(budget - {"ffi"}))
-    if "ffi" in budget:
-        flag += ("," if flag else "") + (
-            "ffi" if modules is None
-            else ",".join("ffi:" + m for m in sorted(modules)))
+    # the same budget, spelled out with absolute paths, so the child
+    # parses to exactly what this process would have enforced
     cmd = [sys.executable, os.path.abspath(__file__), where,
-           "--allow", flag or "''"]
+           "--allow", budget.spec() or "''"]
     if not native:
         cmd.append("--no-native")
     cmd += list(args or [])
@@ -7892,12 +8433,7 @@ def _run_bounded(source, *, path, allow, deny, args, stdin, native,
         if m:
             problems.append(Problem(m.group(1), m.group(2).strip(), 0,
                                     where, []))
-            if m.group(1) == "E310":
-                q = re.search(r"needs the '(\w+)' effect", m.group(2))
-                refused = q.group(1) if q else None
-            elif m.group(1) == "E311":
-                q = re.search(r"module '([^']+)'", m.group(2))
-                refused = "ffi:" + q.group(1) if q else "ffi"
+            refused = _refused_from(m.group(1), m.group(2))
         elif "MemoryError" in text or code in (-9, 137) or \
                 "Cannot allocate" in text:
             out_of_memory = True

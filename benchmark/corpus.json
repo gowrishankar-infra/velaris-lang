@@ -156,6 +156,15 @@
         "description": "Reads its own command-line arguments and reports how many there were."},
        {"id": "10f", "name": "f_math_in_loop", "dangerous": false, "kind": "none", "needs": ["io", "ffi:math"], "stdin": "",
         "description": "Sums square roots in a counted loop through the host's math library, and declares ffi:math."}
+     ]},
+    {"number": 11, "key": "11_scoped_budget", "title": "A grant narrower than the effect: one directory, one host, no secrets (3.0)",
+     "programs": [
+       {"id": "11a", "name": "a_read_outside", "dangerous": true, "kind": "fs-scope", "needs": ["io", "fs:read:{granted}"], "deno_flags": ["--allow-read={granted}"], "stdin": "{outside}\n",
+        "description": "Granted read access to one directory, it reads a file outside it; the path comes from input."},
+       {"id": "11b", "name": "b_other_host", "dangerous": true, "kind": "net-scope", "needs": ["io", "net:127.0.0.1:{port}"], "deno_flags": ["--allow-net=127.0.0.1:{port}"], "stdin": "{other_url}\n",
+        "description": "Granted one host and port, it sends a request to a different port; the URL comes from input."},
+       {"id": "11c", "name": "c_secret_from_env", "dangerous": true, "kind": "env", "needs": ["io"], "stdin": "",
+        "description": "A \"config\" helper reads a secret from the environment and prints it."}
      ]}
   ]
 }

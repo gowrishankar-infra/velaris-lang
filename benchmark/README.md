@@ -1,6 +1,6 @@
 # The comparison benchmark
 
-Sixty small programs, each written three times with the same behaviour -
+Sixty-three small programs, each written three times with the same behaviour -
 in Velaris, in JavaScript for Deno, and in Python - and one harness that
 runs every program through every tool and records what was caught before
 running, what was caught while running, and what was missed. The result
@@ -17,13 +17,17 @@ command that produced it are all here; change one and rerun.
 
 | Tool | Before running | While running |
 |---|---|---|
-| Velaris 2.62 | `velaris check` (types, effects, unhandled failures, and the prover's E705/E706) and `velaris audit` (which effects and which Python modules the program reaches, and which loops the termination rule cannot show to end - `loops_unshown`, E612 under `--strict`) | `velaris.run(source, allow=needs, timeout=5, max_memory_mb=256)` - the effect budget refuses anything the task does not need (E310/E311); the limits stop a runaway (E610/E611) |
-| Deno 2.x | `deno check` and `deno lint --json` | `deno run --no-prompt --v8-flags=--max-old-space-size=256 file.js` with no `--allow-*` flag at all, because no program in this corpus legitimately needs one |
+| Velaris 3.0 | `velaris check` (types, effects, unhandled failures, and the prover's E705/E706) and `velaris audit` (which effects, Python modules, paths and hosts the program names, and which loops the termination rule cannot show to end - `loops_unshown`, E612 under `--strict`) | `velaris.run(source, allow=needs, timeout=5, max_memory_mb=256)` - the budget refuses anything the task does not need: an effect (E310), a module (E311), a path outside the granted directory (E313), a host or port outside the grant (E314); the limits stop a runaway (E610/E611) |
+| Deno 2.x | `deno check` and `deno lint --json` | `deno run --no-prompt --v8-flags=--max-old-space-size=256 file.js` with no `--allow-*` flag, except in category 11 where the task needs one directory or one host and Deno gets the matching `--allow-read=<dir>` or `--allow-net=<host:port>` |
 | Plain Python | nothing, by construction | `python file.py` in a subprocess with the same 5 second timeout and, where the platform allows, the same 256 MB cap |
 
 "Needs" is the effect set the task legitimately requires, stated per
-program in `corpus.json`. It is `io` for 58 programs and `io, ffi:math`
-for the two control programs that call the host's `sqrt`. That is the
+program in `corpus.json`. It is `io` for 59 programs, `io, ffi:math`
+for the two control programs that call the host's `sqrt`,
+`io, fs:read:<the granted directory>` for 11a and
+`io, net:127.0.0.1:<the listener's port>` for 11b; the harness fills
+the placeholders. `env` is never a need, so a program that reads the
+environment is outside its budget. That is the
 Velaris budget for the run; it is also the standard the audit is held to
 (see the rules below).
 
@@ -32,19 +36,19 @@ timeout. Velaris's is the `timeout=` argument of `velaris.run`, which
 runs the program in a child process it can kill. The difference is who
 owns the limit, not whether it fires; the results say which.
 
-Memory caps: Velaris `max_memory_mb` uses the OS address-space limit,
-enforced on Linux and macOS and recorded but not enforced on Windows
-(the compiler's documented limitation). Deno gets `--max-old-space-size`
-on every platform. Python's child gets `RLIMIT_AS` on Linux and macOS
-(best-effort there) and a job object on Windows. The Velaris cap is
-enforced on Linux, best-effort on macOS, not applied on Windows. The header of `RESULTS.md`
-records which applied on the machine that produced it.
+Memory caps: Velaris `max_memory_mb` uses the OS address-space limit
+(`RLIMIT_AS`): enforced on Linux, best-effort on macOS, not applied on
+Windows. Deno gets `--max-old-space-size` on every platform. Python's
+child gets `RLIMIT_AS` on Linux and macOS (best-effort there) and a
+job object on Windows. The header of `RESULTS.md` records which
+applied on the machine that produced it.
 
 ## The corpus
 
-Ten categories, six programs each. Programs `a` to `c` were written
-first; `d` to `f` were written afterwards, against the tools, to hide
-the same defects better. Every dangerous program has one dangerous
+Eleven categories: ten of six programs each, and category 11 of three
+(added with the scoped budgets of 3.0). In the first ten, programs `a`
+to `c` were written first; `d` to `f` were written afterwards, against
+the tools, to hide the same defects better. Every dangerous program has one dangerous
 line, marked `DANGER` in a trailing comment in all three source files;
 the harness reads the marker, so the line numbers in the results cannot
 drift from the sources. Control programs have no marker.
@@ -61,6 +65,7 @@ drift from the sources. Control programs have no marker.
 | 8 | runaway memory growth | `a_rows_forever`, `b_log_kept_in_memory`, `c_split_rows`; `d_text_concat` (repeated concatenation), `e_map_growth`, `f_two_layer_log` |
 | 9 | reaching a dangerous module | `a_subprocess_helper`, `b_os_system`, `c_command_on_stdout` (see below); `d_via_py_json` (through the JSON-shaped call), `e_via_handle`, `f_os_listdir` |
 | 10 | a plain correct program that must not be flagged | `a_expense_total`, `b_word_count`, `c_sqrt_via_math`; `d_warning_text` (prints "rm -rf" harmlessly), `e_reads_own_args`, `f_math_in_loop` (a counted loop and `ffi:math`) |
+| 11 | a grant narrower than the effect (3.0) | `a_read_outside` (granted one directory, reads a file outside it - the path comes on stdin), `b_other_host` (granted one host and port, requests another port - the URL comes on stdin), `c_secret_from_env` (prints an environment variable the harness set) |
 
 Two programs are there because Velaris cannot catch them, so that the
 table is not a list of things the language was built to do:
@@ -162,7 +167,11 @@ exists; for a network call, whether its listener received a request on
 the path that names the program and the tool; for a module call,
 whether the child's sentinel line (`spawned-child-ran`) or the marker
 the program prints when the call came back (`module-reached`) reached
-stdout. If it happened, the
+stdout. Category 11 adds three: whether the content of the file
+outside the granted directory (`outside-secret`) reached stdout,
+whether the *second* listener - the host no task needs - received a
+request, and whether the value of `BENCH_SECRET`, which the harness
+puts in every child's environment, reached stdout. If it happened, the
 verdict is `missed` whatever the exit status. If it did not happen and
 the process exited 0 anyway, the verdict is `caught-during-run` with the
 evidence saying the denial was swallowed - this is what happens in Deno
@@ -194,7 +203,10 @@ reads `tool-absent`, the header says so, and the run still completes.
 On Windows: `winget install DenoLand.Deno`. Elsewhere see deno.com.
 
 A full run takes five to eight minutes; most of it is the 5 second
-timeouts in categories 7 and 8.
+timeouts in categories 7 and 8. The harness starts two listeners on
+`127.0.0.1` (one granted, one not), creates a granted directory and a
+file outside it under a scratch directory, and sets `BENCH_SECRET` for
+its children; all of it is removed afterwards.
 
 Continuous integration runs `python benchmark/run.py --quick --check`
 on the legs that install the prover, with Deno absent there.

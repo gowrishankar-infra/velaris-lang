@@ -123,9 +123,12 @@ A function declares what it may do:
 
     fn save(path: Text, body: Text) uses fs { ... }
 
-The effects are `io` (console), `fs` (files), `net` (network),
-`clock` (the time), `rand` (randomness) and `ffi` (calling the host
-language, §12).
+The effects are `io` (the console: `print`, `read_line`, `args`),
+`env` (environment variables, through `env()`), `fs` (files), `net`
+(network), `clock` (the time), `rand` (randomness) and `ffi` (calling
+the host language, §12). `env` became its own effect in 3.0; before
+that it was part of `io`, which meant an io-only budget could read
+every secret in the environment.
 
 The rule is transitive and checked at compile time: a function may
 only perform effects it declares, and calling a function requires
@@ -136,6 +139,51 @@ anything it calls, however deep. Violations are E300.
 This is a property of the whole call graph, not a convention. Reading
 a signature tells you the complete set of things a call can do to the
 outside world.
+
+### 7.1 The budget
+
+Declaring an effect is the program's claim; the **budget** is the
+operator's decision, given as `--allow` / `--deny` on the command line
+or `allow=` in the library, and enforced by the runtime at the moment
+an effect is attempted, whatever the source declares. A refusal stops
+the program and cannot be caught.
+
+A grant names an effect, and may narrow it:
+
+| Grant | Permits |
+|---|---|
+| `io`, `env`, `clock`, `rand` | that effect |
+| `fs` | any path, read and write |
+| `fs:read`, `fs:write` | one direction, any path |
+| `fs:read:P`, `fs:write:P` | one direction, for paths that resolve under `P` |
+| `net` | any host |
+| `net:H`, `net:H:PORT` | that host, at any port or at that port |
+| `net:*.D` | hosts with exactly one label in place of the star |
+| `ffi` | any Python module |
+| `ffi:a,b` | those top-level modules |
+| `...@N` | and at most N operations of that effect in the run |
+
+Grants are additive. Paths are resolved with `realpath` when the budget
+is parsed and again at every `read_file`, `write_file` and
+`file_exists`, then compared as prefixes, so `..` and symlinks cannot
+reach past a grant. A host is the URL's host name, lower-cased; a port
+is the URL's port or the scheme's default; only `http` and `https` are
+reachable. A wildcard matches one label and never the domain itself;
+no wildcard may stand over an IP literal. A count is the smallest given
+for that effect and counts every operation of that effect across the
+whole run; a budget with no count is a budget on what, not on how much.
+
+The refusals: E310 (the effect), E311 (a module outside `ffi:`), E313
+(a path outside `fs:`, named), E314 (a host or port outside `net:`,
+named), E315 (the count reached). One case is a catchable failure
+rather than a refusal: a redirect whose target is outside the `net:`
+grants fails the request, naming the target, because the program did
+not choose where it was sent.
+
+Outside the rule, and stated as such: a hard link inside a granted
+directory is that directory's content; a file system changed by another
+process between the check and the open is outside the model; where a
+granted host name resolves is DNS's business.
 
 ## 8. Failure
 
