@@ -222,6 +222,32 @@ are proven before running - useful when the code in the cell came from
 a model. Effects outside `--allow` are refused, and the cell says which
 flag would permit them.
 
+## As a GitHub Action
+
+```yaml
+permissions:
+  contents: read
+  pull-requests: write          # only for pr-comment
+
+steps:
+  - uses: actions/checkout@v5
+  - uses: gowrishankar-infra/velaris-lang@v2.63
+    with:
+      min-proven: "80"
+      pr-comment: "true"
+```
+
+The action installs Velaris with the prover, checks every `.vel` file
+(or the `files` glob), and fails the job if anything does not compile
+or a promise cannot be kept. With `pr-comment: "true"`, on a
+`pull_request` event it also posts one comment holding the audit of
+each changed `.vel` file - the same `velaris.audit()` this document
+describes: effects, Python modules named, proven share, the safe
+command, and the warnings (`loops_unshown`, `contract_coverage`) - and
+on later runs edits its own comment, found by a hidden HTML marker,
+rather than adding another. It talks to the REST API with the job's
+`GITHUB_TOKEN` through `curl`; no third-party action is involved.
+
 ## As a commit hook
 
 ```yaml

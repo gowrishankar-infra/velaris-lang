@@ -1,26 +1,134 @@
 name: release
 
+# Every artifact a release publishes is signed with sigstore (keyless,
+# through this workflow's OIDC identity), the wheel is built twice and
+# compared, and a CycloneDX SBOM travels with the release. Every
+# third-party action is pinned to a commit; the tag it was resolved
+# from is in the comment beside it. SECURITY.md says how to verify.
+
 on:
   push:
     tags: ["v*"]
 
+permissions:
+  contents: read
+
 jobs:
+  dist:
+    name: wheel and sdist, signed, with SBOM
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write            # attach files to the release
+      id-token: write            # sigstore keyless signing
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
+        with:
+          python-version: "3.12"
+      - name: Build the distribution
+        run: |
+          pip install build
+          SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) python -m build
+          ls -l dist
+      - name: Generate the SBOM (CycloneDX)
+        run: |
+          pip install cyclonedx-bom
+          python -m venv sbom-env
+          sbom-env/bin/pip install "$(ls dist/*.whl)[full]"
+          cyclonedx-py environment --of JSON \
+            --mc-type application \
+            -o "dist/velaris-lang-${GITHUB_REF_NAME#v}.cdx.json" \
+            sbom-env/bin/python
+          python -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['bomFormat'], d['specVersion'], len(d.get('components', [])), 'components')" \
+            "dist/velaris-lang-${GITHUB_REF_NAME#v}.cdx.json"
+      - name: Sign the wheel, the sdist and the SBOM (sigstore)
+        uses: sigstore/gh-action-sigstore-python@790bc6befb9d733738f18d8f895854b453640ec9  # v3.5.0
+        with:
+          inputs: |
+            ./dist/*.whl
+            ./dist/*.tar.gz
+            ./dist/*.cdx.json
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum *.whl *.tar.gz *.cdx.json > SHA256SUMS
+          cat SHA256SUMS
+      - name: Keep the distribution for the PyPI job
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: dist
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+          if-no-files-found: error
+      - name: Attach to the GitHub release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2
+        with:
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
+            dist/*.cdx.json
+            dist/*.sigstore.json
+            dist/SHA256SUMS
+
+  reproducible:
+    name: the wheel builds the same twice
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
+        with:
+          python-version: "3.12"
+      - name: Build twice with the same SOURCE_DATE_EPOCH and compare
+        run: |
+          pip install build
+          export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
+          echo "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH"
+          python -m build --wheel --outdir build1
+          rm -rf build          # hatchling's intermediate directory
+          python -m build --wheel --outdir build2
+          a=$(ls build1/*.whl); b=$(ls build2/*.whl)
+          sha256sum "$a" "$b"
+          if cmp -s "$a" "$b"; then
+            echo "reproducible: both builds are byte-identical"
+            echo "wheel sha256: $(sha256sum "$a" | cut -d' ' -f1)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "NOT reproducible: the two wheels differ"
+            diff <(unzip -l "$a") <(unzip -l "$b") || true
+            exit 1
+          fi
+
   bundle:
-    name: the double-click bundle
+    name: the double-click bundle, signed
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
         with:
           python-version: "3.12"
       - run: python build_mcpb.py
-      - uses: softprops/action-gh-release@v2
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6  # v4.1.2
+      - name: Sign velaris.mcpb (cosign, keyless)
+        run: |
+          cosign sign-blob --yes velaris.mcpb \
+            --output-signature velaris.mcpb.sig \
+            --output-certificate velaris.mcpb.pem \
+            --bundle velaris.mcpb.sigstore.json
+          sha256sum velaris.mcpb > velaris.mcpb.sha256
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2
         with:
-          files: velaris.mcpb
+          files: |
+            velaris.mcpb
+            velaris.mcpb.sig
+            velaris.mcpb.pem
+            velaris.mcpb.sigstore.json
+            velaris.mcpb.sha256
 
   binaries:
+    name: standalone executable, signed
     strategy:
       fail-fast: false
       matrix:
@@ -37,9 +145,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     permissions:
       contents: write
+      id-token: write
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
         with:
           python-version: "3.12"
       - name: Install with proofs, native speed, and PyInstaller
@@ -64,14 +173,31 @@ jobs:
             [ -f "$f" ] && mv "$f" "${{ matrix.asset }}"
           done
           ls
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6  # v4.1.2
+      - name: Sign the executable (cosign, keyless)
+        shell: bash
+        run: |
+          cd dist
+          cosign sign-blob --yes "${{ matrix.asset }}" \
+            --output-signature "${{ matrix.asset }}.sig" \
+            --output-certificate "${{ matrix.asset }}.pem" \
+            --bundle "${{ matrix.asset }}.sigstore.json"
+          sha256sum "${{ matrix.asset }}" > "${{ matrix.asset }}.sha256"
+          ls
       - name: Attach to the GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2
         with:
-          files: dist/${{ matrix.asset }}
+          files: |
+            dist/${{ matrix.asset }}
+            dist/${{ matrix.asset }}.sig
+            dist/${{ matrix.asset }}.pem
+            dist/${{ matrix.asset }}.sigstore.json
+            dist/${{ matrix.asset }}.sha256
           generate_release_notes: true
 
   pypi:
     name: publish to PyPI
+    needs: [dist, reproducible]
     runs-on: ubuntu-latest
     # until a pending publisher exists on pypi.org this cannot succeed,
     # and a release should not be marked broken for that reason
@@ -79,16 +205,13 @@ jobs:
     permissions:
       id-token: write            # trusted publishing, no API token stored
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - name: The same files that were signed
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
         with:
-          python-version: "3.12"
-      - name: Build the distribution
-        run: |
-          pip install build
-          python -m build
+          name: dist
+          path: dist
       - name: Publish
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # release/v1
         with:
           skip-existing: true
 
@@ -99,8 +222,8 @@ jobs:
     if: ${{ github.repository_owner != '' }}
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
         with:
           node-version: "20"
       - name: Publish to the Marketplace

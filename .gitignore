@@ -10,3 +10,6 @@ ledger.txt
 .velaris/
 velaris.mcpb
 _mcpb_build/
+
+# card eval: the answers a model gave, per run
+evals/answers/

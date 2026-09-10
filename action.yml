@@ -25,6 +25,10 @@ inputs:
     description: "Fail if fewer than this percent of promise-carrying functions are proven (e.g. 80)."
     required: false
     default: ""
+  pr-comment:
+    description: "On a pull_request event, post one comment holding the velaris audit of every changed .vel file, and edit that same comment on later runs (true/false). Needs pull-requests: write."
+    required: false
+    default: "false"
 
 runs:
   using: "composite"
@@ -71,3 +75,118 @@ runs:
           files=$(find . -name '*.vel' -not -path './.git/*' | sort)
         fi
         velaris fmt $files --check
+
+    # One comment per pull request, found again by the hidden marker
+    # and edited in place, so a long review does not fill up with
+    # audits. Runs after the checks whether they passed or not - the
+    # audit of a file that does not compile is still worth reading.
+    # Plain curl against the REST API; no third-party action.
+    - name: Audit the changed files and comment on the pull request
+      if: ${{ always() && inputs.pr-comment == 'true' && github.event_name == 'pull_request' }}
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        API_URL: ${{ github.api_url }}
+        REPO: ${{ github.repository }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        CHECKS_STATUS: ${{ job.status }}
+      run: |
+        set -u
+        marker="<!-- velaris-audit-comment -->"
+
+        # which .vel files the pull request changes; a shallow checkout
+        # may not hold the base, so fetch it, and fall back to every file
+        scope="changed"
+        if git fetch --no-tags --depth=1 origin "$BASE_SHA" >/dev/null 2>&1; then
+          files=$(git diff --name-only --diff-filter=AMR "$BASE_SHA" HEAD -- '*.vel' | sort)
+        else
+          scope="all (the base commit could not be fetched)"
+          files=$(find . -name '*.vel' -not -path './.git/*' | sed 's|^\./||' | sort)
+        fi
+        printf '%s\n' "$files" > /tmp/velaris_changed.txt
+        export SCOPE="$scope"
+
+        # the comment body, from the same audit the library gives
+        python - <<'PY' > /tmp/velaris_comment.json
+        import json, os, sys
+        import velaris
+        marker = "<!-- velaris-audit-comment -->"
+        files = [f for f in open("/tmp/velaris_changed.txt").read().split("\n") if f.strip()]
+        scope = os.environ.get("SCOPE", "changed")
+        head = os.environ["HEAD_SHA"][:7]
+        status = os.environ.get("CHECKS_STATUS", "")
+        L = [marker, f"## Velaris audit of {len(files)} changed file(s) at `{head}`", ""]
+        L.append(f"Checks: **{status}**. Audit scope: {scope} `.vel` files.")
+        L.append("")
+        if not files:
+            L.append("No `.vel` files changed in this pull request.")
+        for f in files:
+            try:
+                src = open(f, encoding="utf-8").read()
+                a = velaris.audit(src, path=f)
+            except Exception as e:  # the audit must never break the job
+                L.append(f"### `{f}`\n\ncould not audit: {type(e).__name__}: {e}\n")
+                continue
+            L.append(f"### `{f}`")
+            L.append("")
+            if not a.ok:
+                L.append(f"**Does not compile** ({len(a.problems)} problem(s)):")
+                for p in a.problems[:5]:
+                    L.append(f"- line {p.line}: `{p.code}` {p.message}")
+                L.append("")
+            effects = ", ".join(a.effects) if a.effects else "none"
+            if a.ffi_modules:
+                effects += " (python modules: " + ", ".join(a.ffi_modules) + ")"
+            share = "no promises" if a.proven_share is None else f"{a.proven_share:g}% proven"
+            L.append("| | |")
+            L.append("|---|---|")
+            L.append(f"| effects | {effects} |")
+            L.append(f"| promises | {share} |")
+            L.append(f"| safe command | `{a.safe_command.replace('<file>', f)}` |")
+            for w in a.warnings:
+                L.append(f"| warning | {w} |")
+            L.append("")
+        L.append("<sub>Posted by the Velaris action; this comment is edited in place on later runs.</sub>")
+        json.dump({"body": "\n".join(L)}, sys.stdout)
+        PY
+
+        auth=(-H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28")
+
+        # find our earlier comment, if any, by the marker (up to 1000
+        # comments back; the python prints the id, or "next" when a full
+        # page came back without it, or nothing)
+        comment_id=""
+        page=1
+        while [ "$page" -le 10 ]; do
+          curl -sS "${auth[@]}" \
+            "$API_URL/repos/$REPO/issues/$PR_NUMBER/comments?per_page=100&page=$page" \
+            > /tmp/velaris_comments.json
+          found=$(MARKER="$marker" python - <<'PY'
+        import json, os
+        marker = os.environ["MARKER"]
+        data = json.load(open("/tmp/velaris_comments.json"))
+        hit = next((c["id"] for c in data if marker in (c.get("body") or "")), None)
+        print(hit if hit is not None else ("next" if len(data) == 100 else ""))
+        PY
+        )
+          if [ "$found" = "next" ]; then
+            page=$((page + 1))
+          else
+            comment_id="$found"
+            break
+          fi
+        done
+
+        if [ -n "$comment_id" ]; then
+          echo "editing comment $comment_id"
+          curl -sS -o /dev/null -w "%{http_code}\n" "${auth[@]}" -X PATCH \
+            "$API_URL/repos/$REPO/issues/comments/$comment_id" \
+            --data @/tmp/velaris_comment.json
+        else
+          echo "posting a new comment"
+          curl -sS -o /dev/null -w "%{http_code}\n" "${auth[@]}" -X POST \
+            "$API_URL/repos/$REPO/issues/$PR_NUMBER/comments" \
+            --data @/tmp/velaris_comment.json
+        fi

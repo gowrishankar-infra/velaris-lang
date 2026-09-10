@@ -1,5 +1,66 @@
 # Velaris changelog
 
+## 2.63 - What a security reviewer looks for
+Nothing in the compiler changed. Six pieces for the person who has to
+decide whether agent-written Velaris may run on a machine they answer
+for.
+
+**THREAT_MODEL.md.** The trust boundary (the operator sets the budget,
+the program is untrusted, the compiler and the granted `ffi` modules
+are trusted in full), what is defended against with the mechanism and
+the suite that tests each, and what is explicitly not: anything a
+granted module does, side channels, use below the limits, request
+volume within `net`, logic errors with no contract, the meaning of
+text, code not written in Velaris, the memory cap on Windows, a
+tampered compiler. Two items that were not in any list before: `io`
+includes `env()`, so an `io`-only program can read and print the
+environment; and `fs` has no path list. Each residual risk has a
+recommendation. The benchmark numbers are cited; the misses are named.
+
+**COMPLIANCE.md.** One row per guarantee against the OWASP Top 10 for
+LLM Applications (2025) and NIST AI RMF functions - mechanism,
+framework item, suite, what it does not cover. Nearly every cell says
+"partially addresses", because that is the truth; the items Velaris
+does nothing for are listed by name.
+
+**Signed releases with an SBOM.** `release.yml` now signs the wheel and
+sdist through sigstore, the three executables and `velaris.mcpb`
+through cosign, attaches the bundles, signatures and certificates, adds
+a CycloneDX SBOM and SHA256 checksums, builds the wheel twice under
+the same `SOURCE_DATE_EPOCH` and fails if they differ, and publishes to
+PyPI the same files it signed. Every third-party action is pinned to a
+commit with the tag beside it. SECURITY.md says how to verify a
+download, with the exact identity string. None of this could be
+exercised locally; the v2.63 tag is its first run, and the recap of
+this release names what to watch.
+
+**A standing challenge.** SECURITY.md: make Velaris report "proven"
+for a promise that is false at runtime, or escape `--allow io`, and
+you are credited by name in the changelog and in HALL_OF_FAME.md, with
+the report treated as a security issue and fixed within a week. There
+is no money. HALL_OF_FAME.md opens with the three model-family reviews
+of August 2026 and the review bot of September; the changelog never
+recorded which family produced which review, and the file says so
+rather than guessing.
+
+**A card eval.** `evals/card_eval.py` gives a model LLM.md and five
+fixed tasks - a CSV total, a grade filter with a proven contract, a
+sandboxed file read, a JSON path read, a stack calculator using `pop`
+and `div_or_fail` - and checks, audits and runs each answer under
+`--allow io` with a 10 s timeout, writing compiled-first-try, ran
+correctly and proven promises to `evals/RESULTS.md`. It skips with one
+line when no key is set, and was not run against any API for this
+release; the results file holds only the three August reviews, marked
+as reported rather than reproduced.
+
+**PR audit comments.** The GitHub Action gains `pr-comment`: on a pull
+request it posts one comment with the audit of every changed `.vel`
+file - effects, modules, proven share, safe command, warnings - and
+edits that comment on later runs, found by a hidden marker. Plain
+`curl` against the REST API with the job's token; no third-party
+action. The comment builder was exercised locally against real files,
+including one that does not compile; the posting itself was not.
+
 ## 2.62 - Loops that provably end, and a corpus built to fool it
 The 2.61 benchmark named three programs Velaris could not catch. Two
 stay misses, by construction: an off-by-one that stops early instead of

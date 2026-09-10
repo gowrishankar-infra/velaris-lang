@@ -2,7 +2,7 @@
   "manifest_version": "0.2",
   "name": "velaris",
   "display_name": "Velaris",
-  "version": "2.62.0",
+  "version": "2.63.0",
   "description": "Write Velaris, see what it can touch, and run it in a box.",
   "long_description": "Velaris is a language where a function's signature declares its types, the effects it may perform, whether it can fail, and promises a theorem prover checks before the program runs.\n\nThis connector gives four tools: read the language card (about 2,300 words, enough to write correct Velaris), check a program without running it, audit what it can touch and how much of its promises are proven, and run it under an effect budget you choose. A program run with allow: [\"io\"] cannot read files, reach the network or call Python, whatever its source claims - and a refusal cannot be caught by the program.\n\nNot a security boundary: allowing ffi grants everything Python can do.",
   "author": {

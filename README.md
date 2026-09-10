@@ -351,11 +351,12 @@ velaris proofs . --min 80   # fails the build below 80%
 ## Using Velaris in CI
 
 ```yaml
-- uses: gowrishankar-infra/velaris-lang@v2.33
+- uses: gowrishankar-infra/velaris-lang@v2.63
   with:
     files: "src/*.vel"     # optional; default is every .vel file
     format: "true"         # optional; also check formatting
     min-proven: "80"       # optional; fail below this proven share
+    pr-comment: "true"     # optional; audit every changed .vel on the PR
 ```
 
 Or without installing anything:
@@ -366,6 +367,20 @@ docker run --rm -v "$PWD:/work" velaris check /work/main.vel
 
 Installs Velaris with the prover and fails the build if anything does
 not compile or a promise cannot be kept.
+
+With `pr-comment: "true"` on a `pull_request` event the action posts
+one comment holding the `velaris audit` of every `.vel` file the pull
+request changes - effects and Python modules reached, proven share,
+the safe command, and any warnings such as a loop not shown to end -
+and edits that same comment on later runs instead of adding another.
+It uses the REST API with the job's own `GITHUB_TOKEN`, so the job
+needs `permissions: pull-requests: write`. The audit is posted whether
+or not the checks passed; a file that does not compile is reported as
+such.
+
+What a reviewer should read before allowing agent-written Velaris to
+run: [THREAT_MODEL.md](THREAT_MODEL.md), [COMPLIANCE.md](COMPLIANCE.md)
+and the verification steps in [SECURITY.md](SECURITY.md).
 
 ## Project
 
