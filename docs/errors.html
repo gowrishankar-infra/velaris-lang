@@ -105,7 +105,7 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 </style></head><body>
 <nav><div class="in"><a class="brand" href="index.html">
 <span class="dot"></span>Velaris</a><a href="index.html" class="">Home</a><a href="tutorial.html" class="">Tutorial</a><a href="spec.html" class="">Reference</a><a href="library.html" class="">Library</a><a href="errors.html" class="here">Errors</a><a href="floats.html" class="">Floats</a><a href="playground.html" class="">Playground</a>
-<span class="ver">v2.59.0</span></div></nav>
+<span class="ver">v2.60.0</span></div></nav>
 <main class=""><h1>Error reference</h1>
 <p class="lead">Every error Velaris can give &mdash; scraped from the compiler source itself, so this page cannot go stale. Braces are filled with your program&rsquo;s names and values; every error also arrives with numbered fixes, and as JSON with <code>--json</code>.</p><table><tr><th>Code</th><th>Message template</th></tr>
 <tr><td class="ecode">E000</td><td>unexpected character {source[pos]!r}</td></tr>
@@ -116,6 +116,7 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 <tr><td class="ecode">E200</td><td>&#x27;{ns}&#x27; has no function called &#x27;{fname}&#x27;</td></tr>
 <tr><td class="ecode">E300</td><td>function &#x27;{fn.name}&#x27; calls &#x27;{node.name}&#x27; which needs effect &#x27;{eff}&#x27;, but &#x27;{fn.name}&#x27; {declared}</td></tr>
 <tr><td class="ecode">E310</td><td>the &#x27;{where}&#x27; promise of &#x27;{fn.name}&#x27; calls &#x27;{node.name}&#x27; which has effects ({&#x27;, &#x27;.join(sorted(eff))}); promises must be pure</td></tr>
+<tr><td class="ecode">E311</td><td>&#x27;{what}&#x27; reaches into Python module &#x27;{module}&#x27;, which this run does not allow</td></tr>
 <tr><td class="ecode">E400</td><td>there is no &#x27;main&#x27; - a program needs somewhere to start</td></tr>
 <tr><td class="ecode">E401</td><td>&#x27;{node.name}&#x27; expects {len(ptypes)} argument(s) but got {len(node.args)}</td></tr>
 <tr><td class="ecode">E402</td><td>a function value cannot use &#x27;{node.name}&#x27; from the code around it</td></tr>

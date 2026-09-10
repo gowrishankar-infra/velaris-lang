@@ -29,7 +29,8 @@ migration that pointed at every call site needing an edit.
 ## If you are evaluating Velaris for an organisation
 
 Read [SPEC.md](SPEC.md), especially §13 (no concurrency) and §16 (what
-the language does not have). Then consider the real risk, which is not
+the language does not have). The effect budget can now name Python
+modules (`ffi:math,json`) and bound time and memory; see EMBEDDING.md. Then consider the real risk, which is not
 technical: one maintainer, few users, and a young ecosystem. That risk
 is genuine, and no feature list removes it.
 

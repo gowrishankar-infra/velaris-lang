@@ -20,7 +20,7 @@ VELARIS = HERE / "velaris.py"
 SCRATCH = HERE / "_sandbox_check.vel"
 WROTE = HERE / "_sandbox_wrote.txt"
 
-REFUSED = "E310"
+REFUSED = ("E310", "E311")
 
 # (name, flags, source, a file it must not manage to create)
 CASES = [
@@ -137,6 +137,60 @@ fn main() uses io, fs {
     print("WROTE IT")
 }
 ''', WROTE),
+    ("reaching a module outside the ffi allow-list",
+     ["--allow", "io,ffi:math"], '''
+fn main() uses io, ffi {
+    let none: List of Text = []
+    check py("os", "getcwd", none) {
+        ok d {
+            print("GOT THROUGH")
+        }
+        fail w {
+            print("failed")
+        }
+    }
+}
+''', None),
+    ("dodging the allow-list with a submodule path",
+     ["--allow", "io,ffi:math"], '''
+fn main() uses io, ffi {
+    let none: List of Text = []
+    check py("os.path", "getcwd", none) {
+        ok d {
+            print("GOT THROUGH")
+        }
+        fail w {
+            print("failed")
+        }
+    }
+}
+''', None),
+    ("dodging the allow-list through py_json",
+     ["--allow", "io,ffi:math"], '''
+fn main() uses io, ffi {
+    check py_json("subprocess", "getoutput", "[\\"echo GOT THROUGH\\"]") {
+        ok d {
+            print("GOT THROUGH")
+        }
+        fail w {
+            print("failed")
+        }
+    }
+}
+''', None),
+    ("dodging the allow-list through a handle",
+     ["--allow", "io,ffi:math"], '''
+fn main() uses io, ffi {
+    check py_new("subprocess", "Popen", "[[\\"echo\\"]]") {
+        ok h {
+            print("GOT THROUGH")
+        }
+        fail w {
+            print("failed")
+        }
+    }
+}
+''', None),
     ("denying several at once", ["--deny", "fs,net,ffi"], '''
 fn main() uses io, net {
     check fetch_status("https://example.com") {
@@ -184,6 +238,19 @@ fn main() uses io, clock {
     }
 }
 ''', "time moves"),
+    ("an allowed module works under the allow-list",
+     ["--allow", "io,ffi:math"], '''
+fn main() uses io, ffi {
+    check py_float("math", "sqrt", ["16"]) {
+        ok r {
+            print("root ok")
+        }
+        fail w {
+            print(w)
+        }
+    }
+}
+''', "root ok"),
     ("everything when nothing is restricted", [], '''
 fn main() uses io, clock, rand {
     if now() > 0 and random(6) >= 0 {
@@ -220,12 +287,12 @@ def main() -> int:
         elif shouted:
             print(f"  ESCAPED      {name} (the program carried on)")
             failed += 1
-        elif REFUSED in output and code != 0:
+        elif any(r in output for r in REFUSED) and code != 0:
             print(f"  ok refused   {name}")
             passed += 1
         else:
             print(f"  WRONG        {name}")
-            print(f"               expected {REFUSED}, got: "
+            print(f"               expected E310/E311, got: "
                   f"{output.strip().splitlines()[:1]}")
             failed += 1
         WROTE.unlink(missing_ok=True)

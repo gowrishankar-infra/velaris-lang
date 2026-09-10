@@ -31,8 +31,11 @@ clock. Not "shouldn't" — the runtime refuses, and a refusal cannot be
 caught and carried past. You do not have to read the code, understand
 it, or trust the compiler's analysis of it.
 
-It is not a security boundary: `--allow ffi` grants everything Python
-can do, and nothing here limits memory or time. It is a real guard for
+`--allow io,ffi:math,json` grants Python for those modules only; any
+other is refused. `--allow io --timeout 30` is available through the
+library and every door. It is still not a security boundary - but the
+two caveats every review raised, the ffi cliff and unbounded execution,
+are now precise permissions rather than holes. It is a real guard for
 the situation everyone is now in — running a program someone, or
 something, else wrote.
 

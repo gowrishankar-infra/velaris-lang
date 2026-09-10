@@ -106,7 +106,8 @@ Field meanings, all stable within `velaris.audit/1`:
 | `functions` | per function: effects, can_fail, contracts, and whether each contract is `proven` before running or `checked at runtime` |
 | `proven_share` | percent of promise-carrying functions proven, or null when there are no promises |
 | `safe_command` | the command that grants exactly what it declared |
-| `warnings` | human-readable cautions, currently the ffi cliff |
+| `warnings` | human-readable cautions, including which modules to grant |
+| `ffi_modules` | top-level Python packages named in py* calls, for `ffi:` grants (added in 2.60 within schema 1) |
 
 A new field may be added within version 1; a field will not change
 meaning or disappear without the schema name changing.

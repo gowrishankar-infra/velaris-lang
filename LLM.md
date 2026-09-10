@@ -376,6 +376,10 @@ now() uses clock                   random(n) uses rand
 velaris program.vel                      run it
 velaris program.vel --allow io           refuse every other effect (E310)
 velaris program.vel --deny net,ffi       allow everything but these
+velaris program.vel --allow io,ffi:math,json
+                                         ffi for THOSE modules only (E311
+                                         for any other); plain ffi grants
+                                         every module
 velaris check program.vel [--json]       every problem, as data
 velaris check program.vel --strict       refuse ANY promise left to
                                          runtime; without it an

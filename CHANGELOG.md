@@ -1,5 +1,30 @@
 # Velaris changelog
 
+## 2.60 - The ffi cliff becomes a permission
+Every review of this project, from three model families and one
+automated reviewer, raised the same caveat: `allow ffi` grants
+everything Python can do. That was true, and it was the sentence a
+security reviewer would stop reading at.
+
+The budget can now name modules. `--allow io,ffi:math,json` grants the
+ffi effect for those top-level packages only; anything else is refused
+with E311, and the message names the exact flag that would permit it.
+Plain `ffi` still grants every module, for programs whose author you
+trust. The library takes the same form: `run(source, allow={"io",
+"ffi:math"})`, and `refused_effect` reports `"ffi:os"` when that is
+what was reached for.
+
+The audit reads the modules a program names in its py* calls and
+reports them as `ffi_modules`; its `safe_command` grants exactly those.
+A reviewer no longer has to choose between "no Python" and "all of
+Python".
+
+Four ways around it were tried and refused, in `check_sandbox.py`: a
+module outside the list, a submodule path (`os.path`), the same module
+through `py_json`, and through a handle via `py_new`. All three FFI
+import sites go through one gate, and the bounded child process
+receives the same list. An allowed module still works.
+
 ## 2.59 - Time and memory limits, prompted by a review bot
 The CrewAI pull request's automated reviewer flagged what three human
 reviews had also noted and this project kept deferring: the effect

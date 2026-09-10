@@ -1,6 +1,6 @@
 {
   "name": "velaris-lang",
-  "version": "2.59.0",
+  "version": "2.60.0",
   "description": "Run code you did not write. A language where a signature declares its effects and promises, and the runtime refuses anything you did not allow.",
   "keywords": [
     "velaris",

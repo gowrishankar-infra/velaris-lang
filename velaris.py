@@ -255,7 +255,7 @@ Usage:
 import json
 import os
 
-VERSION = "2.59.0"
+VERSION = "2.60.0"
 import re
 import sys
 from dataclasses import dataclass, field
@@ -1231,6 +1231,49 @@ PROGRAM_ARGS: list = []    # filled by the CLI: velaris prog.vel a b c
 
 ALL_EFFECTS = ("io", "fs", "net", "clock", "rand", "ffi")
 EFFECT_BUDGET: set = set(ALL_EFFECTS)   # everything, unless you say less
+FFI_MODULES: set | None = None          # None = any module; a set = only
+                                        # these top-level packages
+
+
+def parse_budget(spec: str) -> tuple:
+    """'io,fs,ffi:math,json' -> ({'io','fs','ffi'}, {'math','json'})
+
+    Plain 'ffi' grants every module. 'ffi:a,b' grants the ffi effect for
+    those top-level packages only - the one caveat every security review
+    of this project raised, made into a precise permission.
+    """
+    effects: set = set()
+    modules: set | None = None
+    for item in spec.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        if item.startswith("ffi:"):
+            effects.add("ffi")
+            modules = set() if modules is None else modules
+            modules.add(item[len("ffi:"):].strip().split(".")[0])
+        elif modules is not None and "ffi" in effects and \
+                item not in ALL_EFFECTS:
+            modules.add(item.split(".")[0])   # continuation of ffi:a,b
+        else:
+            effects.add(item)
+    return effects, modules
+
+
+def allow_module(module: str, what: str, line: int) -> None:
+    """Refuse a Python module this run did not grant."""
+    if FFI_MODULES is None:
+        return
+    top = module.split(".")[0]
+    if top in FFI_MODULES:
+        return
+    raise VelarisError("E311",
+        f"'{what}' reaches into Python module '{module}', which this run "
+        f"does not allow", line,
+        fixes=[f"allow it: --allow ffi:{top}"
+               + ("," + ",".join(sorted(FFI_MODULES)) if FFI_MODULES
+                  else ""),
+               "or use a program that does not need it"])
 
 
 def spend(effect: str, what: str, line: int) -> None:
@@ -4717,6 +4760,7 @@ def run_builtin(name: str, args: list, line: int):
             parts = str(module).split(".")
             for cut in range(len(parts), 0, -1):
                 try:
+                    allow_module(".".join(parts[:cut]), name, line)
                     mod = importlib.import_module(".".join(parts[:cut]))
                     rest = ".".join(parts[cut:])
                     break
@@ -4920,6 +4964,7 @@ def run_builtin(name: str, args: list, line: int):
         parts = str(module).split(".")
         for cut in range(len(parts), 0, -1):
             try:
+                allow_module(".".join(parts[:cut]), name, line)
                 mod = importlib.import_module(".".join(parts[:cut]))
                 rest = ".".join(parts[cut:])
                 break
@@ -4952,6 +4997,7 @@ def run_builtin(name: str, args: list, line: int):
         parts = str(module).split(".")
         for cut in range(len(parts), 0, -1):     # datetime.date works:
             try:                                  # import what imports,
+                allow_module(".".join(parts[:cut]), name, line)
                 mod = importlib.import_module(".".join(parts[:cut]))
                 rest = ".".join(parts[cut:])      # reach the rest by name
                 break
@@ -7048,15 +7094,16 @@ def main() -> int:
     as_json = "--json" in sys.argv
     if "--allow" in sys.argv or "--deny" in sys.argv:
         allowed = set()
+        modules = None
         if "--allow" in sys.argv:
-            for name in sys.argv[sys.argv.index("--allow") + 1].split(","):
-                name = name.strip()
-                if name and name not in ALL_EFFECTS:
-                    print(f"'{name}' is not an effect. They are: "
-                          f"{', '.join(ALL_EFFECTS)}", file=sys.stderr)
-                    return 2
-                if name:
-                    allowed.add(name)
+            allowed, modules = parse_budget(
+                sys.argv[sys.argv.index("--allow") + 1])
+            bad = allowed - set(ALL_EFFECTS)
+            if bad:
+                print(f"'{sorted(bad)[0]}' is not an effect. They are: "
+                      f"{', '.join(ALL_EFFECTS)} (or ffi:module,module)",
+                      file=sys.stderr)
+                return 2
         else:
             allowed = set(ALL_EFFECTS)
         if "--deny" in sys.argv:
@@ -7069,6 +7116,7 @@ def main() -> int:
                 allowed.discard(name)
         EFFECT_BUDGET.clear()
         EFFECT_BUDGET.update(allowed)
+        globals()["FFI_MODULES"] = modules
     FLAGS = {"--json", "--no-native", "--time", "--check"}
     PROGRAM_ARGS[:] = [a for a in sys.argv[2:] if a not in FLAGS]
     try:
@@ -7170,7 +7218,8 @@ class AuditResult:
     """What a program can touch, promise and fail at - before running."""
 
     __slots__ = ("schema", "velaris_version", "ok", "problems", "effects",
-                 "functions", "proven_share", "safe_command", "warnings")
+                 "functions", "proven_share", "safe_command", "warnings",
+                 "ffi_modules")
 
     def __init__(self, **kw):
         for k in self.__slots__:
@@ -7222,6 +7271,38 @@ def _source_to_file(source: str, path: str | None):
     return tmp.name, tmp.name
 
 
+def _ffi_modules_named(path: str, source: str | None) -> set:
+    """Top-level Python packages a program names in py* calls.
+
+    Only literal module names can be read without running; a module
+    built from text at runtime cannot, and the audit says so.
+    """
+    try:
+        funcs, _ = load_program(path, source)
+    except Exception:
+        return set()
+    found: set = set()
+    import dataclasses as _dc
+
+    def visit(node):
+        if isinstance(node, (list, tuple)):
+            for x in node:
+                visit(x)
+            return
+        if not _dc.is_dataclass(node):
+            return
+        if isinstance(node, Call) and node.name in (
+                "py", "py_int", "py_float", "py_json", "py_new") \
+                and node.args and isinstance(node.args[0], Str):
+            found.add(node.args[0].value.split(".")[0])
+        for f in _dc.fields(node):
+            visit(getattr(node, f.name))
+
+    for fn in funcs:
+        visit(fn.body)
+    return found
+
+
 def check(source: str, *, path: str | None = None,
           prove: bool = True) -> CheckResult:
     """Compile without running. Every problem, plus what was proven."""
@@ -7267,10 +7348,21 @@ def audit(source: str, *, path: str | None = None) -> AuditResult:
         share = round(100.0 * len(proven) / len(promising), 1) \
             if promising else None
         warnings = []
+        modules_named = sorted(_ffi_modules_named(where, source if path
+                                                  else None))
         if "ffi" in effects:
-            warnings.append(
-                "this program calls Python, which can do anything Python "
-                "can; an effect budget cannot contain that")
+            if modules_named:
+                warnings.append(
+                    "this program calls Python modules "
+                    + ", ".join(modules_named)
+                    + "; grant exactly those with ffi:"
+                    + ",".join(modules_named)
+                    + " rather than plain ffi")
+            else:
+                warnings.append(
+                    "this program calls Python through a module name the "
+                    "audit cannot read statically; plain ffi grants "
+                    "everything Python can do")
         return AuditResult(
             schema=AUDIT_SCHEMA, velaris_version=VERSION,
             ok=not report["errors"],
@@ -7287,8 +7379,14 @@ def audit(source: str, *, path: str | None = None) -> AuditResult:
                         "requires": f["requires"], "ensures": f["ensures"],
                         "status": f["status"]} for f in own],
             proven_share=share,
-            safe_command=("velaris <file> --allow " + (",".join(effects)
-                                                       or "''")),
+            safe_command=("velaris <file> --allow " + (
+                ",".join(
+                    [e for e in effects if e != "ffi"]
+                    + (["ffi:" + ",".join(modules_named)] if modules_named
+                       and "ffi" in effects
+                       else ["ffi"] if "ffi" in effects else []))
+                or "''")),
+            ffi_modules=modules_named,
             warnings=warnings)
     finally:
         if temp:
@@ -7324,21 +7422,27 @@ def run(source: str, *, path: str | None = None,
                             args=args, stdin=stdin, native=native,
                             timeout=timeout, max_memory_mb=max_memory_mb)
     where, temp = _source_to_file(source, path)
-    budget = set(ALL_EFFECTS) if allow is None else set(allow)
+    if allow is None:
+        budget, modules = set(ALL_EFFECTS), None
+    else:
+        budget, modules = parse_budget(",".join(sorted(allow)))
     for name in (deny or ()):
         budget.discard(name)
     unknown = (budget | set(deny or ())) - set(ALL_EFFECTS)
     if unknown:
         raise ValueError(f"not an effect: {', '.join(sorted(unknown))}; "
-                         f"they are {', '.join(ALL_EFFECTS)}")
+                         f"they are {', '.join(ALL_EFFECTS)} "
+                         f"(or ffi:module)")
 
     saved_budget = set(EFFECT_BUDGET)
+    saved_modules = FFI_MODULES
     saved_args = list(PROGRAM_ARGS)
     out, err = _io.StringIO(), _io.StringIO()
     problems, refused, code = [], None, 0
     try:
         EFFECT_BUDGET.clear()
         EFFECT_BUDGET.update(budget)
+        globals()["FFI_MODULES"] = modules
         PROGRAM_ARGS[:] = list(args or [])
         result = check(source, path=path)
         if not result.ok:
@@ -7363,6 +7467,9 @@ def run(source: str, *, path: str | None = None,
         if e.code == "E310":
             refused = e.message.split("'")[3] \
                 if e.message.count("'") >= 4 else None
+        elif e.code == "E311":
+            m = re.search(r"module '([^']+)'", e.message)
+            refused = "ffi:" + m.group(1) if m else "ffi"
         code = 1
     except FailSignal as e:
         problems = [Problem("E521", f"a failure escaped: {e.reason}", 0,
@@ -7371,6 +7478,7 @@ def run(source: str, *, path: str | None = None,
     finally:
         EFFECT_BUDGET.clear()
         EFFECT_BUDGET.update(saved_budget)
+        globals()["FFI_MODULES"] = saved_modules
         PROGRAM_ARGS[:] = saved_args
         if temp:
             os.unlink(temp)
@@ -7383,7 +7491,9 @@ def _run_bounded(source, *, path, allow, deny, args, stdin, native,
     """run() in a child process that can be killed."""
     import subprocess
     where, temp = _source_to_file(source, path)
-    budget = set(ALL_EFFECTS) if allow is None else set(allow)
+    spec = ",".join(sorted(ALL_EFFECTS)) if allow is None \
+        else ",".join(sorted(allow))
+    budget, modules = parse_budget(spec)
     for name in (deny or ()):
         budget.discard(name)
     unknown = (budget | set(deny or ())) - set(ALL_EFFECTS)
@@ -7391,7 +7501,8 @@ def _run_bounded(source, *, path, allow, deny, args, stdin, native,
         if temp:
             os.unlink(temp)
         raise ValueError(f"not an effect: {', '.join(sorted(unknown))}; "
-                         f"they are {', '.join(ALL_EFFECTS)}")
+                         f"they are {', '.join(ALL_EFFECTS)} "
+                         f"(or ffi:module)")
 
     # compile first, in this process: a program that does not compile
     # never needs a child, and the problems come back the normal way
@@ -7401,8 +7512,13 @@ def _run_bounded(source, *, path, allow, deny, args, stdin, native,
             os.unlink(temp)
         return RunResult(False, "", "", result.problems, None, 1)
 
+    flag = ",".join(sorted(budget - {"ffi"}))
+    if "ffi" in budget:
+        flag += ("," if flag else "") + (
+            "ffi" if modules is None
+            else ",".join("ffi:" + m for m in sorted(modules)))
     cmd = [sys.executable, os.path.abspath(__file__), where,
-           "--allow", ",".join(sorted(budget)) or "''"]
+           "--allow", flag or "''"]
     if not native:
         cmd.append("--no-native")
     cmd += list(args or [])
@@ -7452,6 +7568,9 @@ def _run_bounded(source, *, path, allow, deny, args, stdin, native,
             if m.group(1) == "E310":
                 q = re.search(r"needs the '(\w+)' effect", m.group(2))
                 refused = q.group(1) if q else None
+            elif m.group(1) == "E311":
+                q = re.search(r"module '([^']+)'", m.group(2))
+                refused = "ffi:" + q.group(1) if q else "ffi"
         elif "MemoryError" in text or code in (-9, 137) or \
                 "Cannot allocate" in text:
             out_of_memory = True
