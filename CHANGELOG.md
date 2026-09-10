@@ -1,5 +1,44 @@
 # Velaris changelog
 
+## 3.1.1 - A pool test that passed for the wrong reason
+
+`check_pool.py` claimed to hold a program that reaches into the
+compiler through a granted `ffi` module, adds `fs` to the live budget,
+and is then unable to leave it added for the next program. It did not.
+The program named `py("velaris", "EFFECT_BUDGET.add", ["fs"])`, and a
+worker runs `velaris.py` as `__main__` - so that name imported a
+*second* copy of the module and widened that copy's budget, never the
+one the interpreter was enforcing. The next program was refused `fs`
+because it had never been granted, not because anything was reset. The
+check passed, and would have passed just as well with
+`reset_program_state` deleted.
+
+It now names `__main__`, which is the live module, and reads a file
+immediately afterwards so the suite can assert the widening really took
+hold before it asserts that the next program is refused. Two checks
+where there was one:
+
+    ok  a program CAN widen its own budget through ffi - the cliff is
+        real, and this is what the next check is against
+    ok  ...and it cannot widen it for the next program
+
+The reset was correct the whole time - the counted-grant check
+(`fs:read:<dir>@2`, spent per program rather than per worker) was
+already exercising the same reinstall from a different angle, and it
+still passes. What was wrong was a test whose label was stronger than
+its body, which is worse than no test at all: it is the one thing that
+makes a suite untrustworthy about everything else in it. The 3.1 entry
+below says "the suite has one that does exactly this"; of 3.1.0 that
+sentence was false, and it is true from 3.1.1.
+
+Also here: `check_library.py`'s skip messages said "(needs the prover)"
+for skips that had nothing to do with the prover - the macOS memory cap
+and the POSIX-only symlink escape now say why they were actually
+skipped.
+
+39 checks in `check_pool.py`, all passing with and without the prover.
+Nothing in `velaris.py` changed.
+
 ## 3.1 - A pool that keeps its budget, memory caps on Windows, and a lockfile
 
 **velaris.Pool: bounded runs without a new interpreter every time.**

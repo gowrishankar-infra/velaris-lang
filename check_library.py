@@ -84,8 +84,8 @@ def _json_version(path) -> str:
 def main() -> int:
     passed = failed = 0
 
-    def skip(label):
-        print(f"  skip     {label} (needs the prover)")
+    def skip(label, why="needs the prover"):
+        print(f"  skip     {label} ({why})")
 
     def ok(label, condition, detail=""):
         nonlocal passed, failed
@@ -223,11 +223,11 @@ def main() -> int:
            "did it",
            sys.platform == "linux" or os.name == "nt", sys.platform)
     elif sys.platform == "darwin":
-        skip("a memory cap stops a program that eats memory (RLIMIT_AS "
-             "is best-effort on macOS)")
+        skip("a memory cap stops a program that eats memory",
+             "RLIMIT_AS is best-effort on macOS")
     else:
-        skip("a memory cap stops a program that eats memory (no job "
-             "object could be made on this Windows)")
+        skip("a memory cap stops a program that eats memory",
+             "no job object could be made on this Windows")
 
     r = velaris.run(READS_A_FILE, allow={"io"}, timeout=30)
     ok("the budget still holds inside the bounded child process",
@@ -322,9 +322,9 @@ def main() -> int:
                     reads(link.as_posix()), ["io", f"fs:read:{data}"],
                     "E313", "fs:")
         except OSError:
-            skip("run REFUSES a symlink escape (no symlinks here)")
+            skip("run REFUSES a symlink escape", "no symlinks on this file system")
     else:
-        skip("run REFUSES a symlink escape (POSIX only)")
+        skip("run REFUSES a symlink escape", "POSIX only")
     refused("run REFUSES a host not in the list (E314)",
             fetches(f"http://localhost:{gp}/"), ["io", f"net:127.0.0.1:{gp}"],
             "E314", "net:")

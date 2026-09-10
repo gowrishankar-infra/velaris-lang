@@ -62,15 +62,24 @@ LEAKS_A_HANDLE = (
     '        ok h { print(h) }\n'
     '        fail w { print("failed " + w) }\n    }\n}\n')
 
-# the ffi cliff, used deliberately: this program reaches into the
-# compiler and grants itself fs. THREAT_MODEL.md says a granted module
-# can do whatever that module can do - the pool's promise is only that
-# it cannot do it to the NEXT program.
+# The ffi cliff, used deliberately: this program reaches into the
+# compiler and grants itself fs, then reads a file to show the widening
+# really took - a check that has to be here, because the first version
+# of this test named "velaris" instead of "__main__" and so mutated a
+# SECOND import of the module rather than the live budget. It passed,
+# and proved nothing. A worker runs velaris.py as __main__, so that is
+# the name that reaches the budget the interpreter is enforcing.
+# THREAT_MODEL.md says a granted module can do whatever that module can
+# do; the pool promises only that it cannot do it to the NEXT program.
 WIDENS_ITS_BUDGET = (
-    'fn main() uses io, ffi {\n'
-    '    check py("velaris", "EFFECT_BUDGET.add", ["fs"]) {\n'
+    'fn main() uses io, ffi, fs {\n'
+    '    check py("__main__", "EFFECT_BUDGET.add", ["fs"]) {\n'
     '        ok v { print("widened") }\n'
-    '        fail w { print("failed " + w) }\n    }\n}\n')
+    '        fail w { print("failed " + w) }\n'
+    '    }\n'
+    '    check read_file("velaris.py") {\n'
+    '        ok t { print("READ IT") }\n'
+    '        fail w { print("could not read") }\n    }\n}\n')
 
 MOVES_DIRECTORY = (
     'fn main() uses io, ffi {\n'
@@ -301,17 +310,19 @@ def main() -> int:                        # noqa: C901 - a suite, not logic
            and "READ IT" not in one.output + two.output,
            str(one.as_dict())[:140])
 
-    with velaris.Pool(size=1, allow={"io", "ffi:velaris"},
+    with velaris.Pool(size=1, allow={"io", "ffi:__main__"},
                       timeout=TIMEOUT) as cliff:
         widened = cliff.run(WIDENS_ITS_BUDGET)
+        ok("a program CAN widen its own budget through ffi - the cliff "
+           "is real, and this is what the next check is against",
+           widened.ok and "READ IT" in widened.output,
+           str(widened.as_dict())[:160])
         then = cliff.run(READS_A_FILE)
-        ok("a program that widens the budget through ffi cannot widen "
-           "it for the next program",
-           widened.ok and "widened" in widened.output
-           and not then.ok and then.refused_effect == "fs"
+        ok("...and it cannot widen it for the next program",
+           not then.ok and then.refused_effect == "fs"
+           and "READ IT" not in then.output
            and cliff.started == 1,
-           f"{widened.output!r}, then {then.as_dict()}, "
-           f"started {cliff.started}")
+           f"{then.as_dict()}, started {cliff.started}")
 
     with velaris.Pool(size=1, allow={"io", f"fs:read:{box.as_posix()}@2"},
                       timeout=TIMEOUT) as counted:
