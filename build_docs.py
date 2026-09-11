@@ -421,14 +421,15 @@ def capability_page() -> str:
   "predicate": {
     "producer": {"name": "velaris-lang",
                  "uri": "https://github.com/gowrishankar-infra/velaris-lang"},
-    "specification": "velaris-spec 0.4",
-    "auditedAt": "2026-09-11T10:07:06Z",
-    "audit": {"schema": "velaris.audit/1", "velaris_version": "4.1.0",
+    "specification": "velaris-spec 0.5",
+    "auditedAt": "2026-09-11T00:00:00Z",
+    "audit": {"schema": "velaris.audit/1", "velaris_version": "%s",
               "ok": true, "effects": ["clock", "fs", "io", "rand"],
               "safe_command": "velaris <file> --allow clock,fs:read:report.txt,fs:write:report.txt,io,rand",
+              "counts": {"fs": 2, "net": 0}, "prover": true,
               "...": "the rest of the audit"}
   }
-}""" % PREDICATE_TYPE)
+}""" % (PREDICATE_TYPE, velaris.VERSION))
     return f"""
 <div class="eyebrow">An in-toto predicate type</div>
 <h1>capability/v1</h1>
@@ -468,7 +469,7 @@ of the implementation that wrote the audit, and optionally
 <code>uri</code>; its version is the audit's
 <code>velaris_version</code></td></tr>
 <tr><td><code>predicate.specification</code></td><td>no</td><td>the
-velaris-spec version followed, as <code>velaris-spec 0.4</code></td></tr>
+velaris-spec version followed, as <code>velaris-spec 0.5</code></td></tr>
 <tr><td><code>predicate.auditedAt</code></td><td>no</td><td>when the audit
 was made, RFC 3339 in UTC, by the producer's clock</td></tr>
 <tr><td><code>predicate.conformance</code></td><td>no</td><td>the
@@ -490,12 +491,16 @@ runtime will enforce the budget in <code>safe_command</code>. When
 do. It says that the signer ran the producer on these bytes and got this
 audit.</p>
 
-<h2>Status</h2>
-<p>velaris-lang {velaris.VERSION} publishes this type and its schema. It
-does not yet write Statements of it; one can be assembled from
-<code>velaris audit FILE --json</code> and the file's digest, as
+<h2>A producer</h2>
+<p>velaris-lang writes Statements of this type, from 4.2:</p>
+<pre><code>velaris attest program.vel --output program.intoto.json</code></pre>
+<p>It signs none; cosign (<code>cosign attest-blob --statement</code>)
+and sigstore-python sign them, as
+<a href="https://github.com/gowrishankar-infra/velaris-lang/blob/main/EMBEDDING.md">EMBEDDING.md</a>
+shows. Every release of velaris-lang carries one for an example program,
+signed by its release workflow and verified there;
 <a href="{SPEC_REPO}/blob/main/examples/capability-statement.json">velaris-spec's
-example</a> was.</p>
+example</a> was written by <code>velaris attest</code>.</p>
 """
 
 

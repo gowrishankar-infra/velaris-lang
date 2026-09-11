@@ -117,6 +117,25 @@ EMBEDDING.md says what it does and does not tell you. The signature can
 also be checked on its own with the `sigstore verify identity` command
 above, naming the manifest and its bundle.
 
+**An attestation of one example program** (from 4.2).
+`velaris-attestation-X.Y.Z.intoto.json` is the in-toto Statement
+`velaris attest examples/effects.vel` writes at the tagged commit, and
+the release workflow signs it twice as a DSSE envelope, keylessly: with
+cosign (`velaris-attestation-X.Y.Z.cosign.sigstore.json`) and with
+sigstore-python (`velaris-attestation-X.Y.Z.sigstore-python.sigstore.json`),
+verifying both before it attaches them. With `examples/effects.vel`
+from the tagged source:
+
+    cosign verify-blob-attestation \
+      --bundle velaris-attestation-4.2.0.cosign.sigstore.json \
+      --type https://gowrishankar-infra.github.io/velaris-lang/capability/v1 \
+      --certificate-identity https://github.com/gowrishankar-infra/velaris-lang/.github/workflows/release.yml@refs/tags/v4.2.0 \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+      examples/effects.vel
+
+It fails when the file is not the one the Statement names, by digest.
+What the Statement says, and what it does not, is in EMBEDDING.md.
+
 **Checksums.** `SHA256SUMS` (for the wheel, sdist, SBOM and tool manifest) and
 `<asset>.sha256` (for each binary and the bundle) are attached too;
 `sha256sum -c` checks them. A checksum proves the file is intact, not

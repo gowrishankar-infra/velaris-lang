@@ -27,10 +27,12 @@ major version.
   `velaris.invocation/1`, `velaris.mcp-tools/1` and, from 4.1,
   `velaris.conformance/1`.
 - **The library API**: `velaris.check`, `velaris.audit`, `velaris.run`,
-  `velaris.Pool` and `velaris.card` - their names, their parameters,
-  and the fields of what they return (`CheckResult`, `AuditResult`,
-  `RunResult`, `Problem`). A new optional parameter or a new field is
-  an addition, not a break.
+  `velaris.Pool`, `velaris.card` and, from 4.2, `velaris.attest` - their
+  names, their parameters, and the fields of what they return
+  (`CheckResult`, `AuditResult`, `RunResult`, `Problem`, and the in-toto
+  Statements `attest` returns, whose predicate velaris-spec section 8.5
+  defines). A new optional parameter or a new field is an addition, not
+  a break.
 - **The budget grammar**: SPEC.md section 7.1, stated in full in
   velaris-spec sections 4 and 5. A budget that parses keeps parsing,
   and grants the same thing.

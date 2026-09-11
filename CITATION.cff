@@ -13,12 +13,12 @@ abstract: >-
   implementation of the Velaris capability format (velaris-spec).
 type: software
 authors:
-  - given-names: Gowri
-    family-names: Shankar
+  - family-names: Palakurthi
+    given-names: Gowri shankar
 repository-code: "https://github.com/gowrishankar-infra/velaris-lang"
 url: "https://gowrishankar-infra.github.io/velaris-lang/"
 license: MIT
-version: 4.1.0
+version: 4.2.0
 date-released: "2026-09-11"
 keywords:
   - programming language

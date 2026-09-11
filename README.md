@@ -220,12 +220,17 @@ one. The rules are stated in full in [EMBEDDING.md](EMBEDDING.md).
 ```
 velaris card > card.md          # ~3,300 words: paste into any model
 velaris audit script.vel        # what it can touch, before you run it
+velaris attest script.vel --output script.intoto.json   # the same, bound to its bytes
 velaris script.vel --allow io   # it cannot touch anything else
 ```
 
 `velaris audit` is written for the reviewer: what the program reaches,
 what it promises, how much of that is *proven* rather than checked
 while running, what can fail, and the exact command to run it safely.
+`velaris attest` (4.2) puts that audit in an in-toto Statement whose
+subjects are the program's files by sha256, ready to sign with cosign
+or sigstore-python; [EMBEDDING.md](EMBEDDING.md) shows both, and every
+release carries one, signed, for an example program.
 `agent_loop.py` closes the circle — a model writes it, `velaris check
 --json` hands back errors with fixes, and it iterates until the program
 compiles and its promises prove.
@@ -450,7 +455,7 @@ permissions:
 
 steps:
   - uses: actions/checkout@v5
-  - uses: gowrishankar-infra/velaris-lang@v4.1.0
+  - uses: gowrishankar-infra/velaris-lang@v4.2.0
     with:
       files: "src/*.vel"     # optional; default is every .vel file
       format: "true"         # optional; also check formatting
@@ -545,6 +550,7 @@ in [SUPPORT.md](SUPPORT.md).
 
 ## Cite this repository
 
+The author is Palakurthi Gowri shankar (family name Palakurthi).
 [CITATION.cff](CITATION.cff) holds the citation, and GitHub offers it as
 "Cite this repository" beside the file list. A preprint describing
 Velaris is forthcoming; until it is published, cite the repository. The
@@ -578,4 +584,4 @@ velaris fmt examples/*.vel stdlib/*.vel --check
 
 ## License
 
-[MIT](LICENSE) © Gowri Shankar
+[MIT](LICENSE) © Palakurthi Gowri shankar

@@ -3,13 +3,21 @@ name: release
 # Every artifact a release publishes is signed with sigstore (keyless,
 # through this workflow's OIDC identity), the wheel is built twice and
 # compared, and a CycloneDX SBOM travels with the release, as does a
-# signed manifest of the MCP server's tools (velaris mcp-verify). Every
-# third-party action is pinned to a commit; the tag it was resolved
-# from is in the comment beside it. SECURITY.md says how to verify.
+# signed manifest of the MCP server's tools (velaris mcp-verify) and a
+# signed in-toto attestation of one example program (velaris attest).
+# Every third-party action is pinned to a commit; the tag it was
+# resolved from is in the comment beside it. SECURITY.md says how to
+# verify.
+#
+# Run by hand (workflow_dispatch) on a branch, only the attestation job
+# runs: it signs and verifies the attestation under this workflow's
+# identity at that branch, and publishes nothing - the way to see that
+# a release can produce one before a tag asks it to.
 
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -17,6 +25,7 @@ permissions:
 jobs:
   dist:
     name: wheel and sdist, signed, with SBOM
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write            # attach files to the release
@@ -96,6 +105,7 @@ jobs:
 
   reproducible:
     name: the wheel builds the same twice
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
@@ -123,6 +133,7 @@ jobs:
 
   bundle:
     name: the double-click bundle, signed
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -152,6 +163,7 @@ jobs:
 
   binaries:
     name: standalone executable, signed
+    if: startsWith(github.ref, 'refs/tags/v')
     strategy:
       fail-fast: false
       matrix:
@@ -220,6 +232,7 @@ jobs:
 
   pypi:
     name: publish to PyPI
+    if: startsWith(github.ref, 'refs/tags/v')
     needs: [dist, reproducible]
     runs-on: ubuntu-latest
     # until a pending publisher exists on pypi.org this cannot succeed,
@@ -242,7 +255,7 @@ jobs:
     name: publish the VS Code extension
     runs-on: ubuntu-latest
     # needs a one-time VSCE_TOKEN secret; until then this is skipped
-    if: ${{ github.repository_owner != '' }}
+    if: ${{ startsWith(github.ref, 'refs/tags/v') && github.repository_owner != '' }}
     continue-on-error: true
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
@@ -273,3 +286,91 @@ jobs:
           fi
         env:
           VSCE_TOKEN: ${{ secrets.VSCE_TOKEN }}
+
+  attestation:
+    name: a signed in-toto attestation of one example program
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write            # attach files to the release, on a tag
+      id-token: write            # sigstore keyless signing
+    env:
+      PREDICATE_TYPE: https://gowrishankar-infra.github.io/velaris-lang/capability/v1
+      OIDC_ISSUER: https://token.actions.githubusercontent.com
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
+        with:
+          python-version: "3.12"
+      # with the prover, as a reviewer's machine would have it: the
+      # audit says whether one ran (prover), so the Statement differs
+      # without it
+      - name: This commit's Velaris with its prover, and sigstore-python
+        run: pip install ".[full]" "sigstore==4.5.0"
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6  # v4.1.2
+      # the Statement, unsigned, as velaris attest writes it; the time is
+      # the commit's, so two runs of one commit write the same bytes
+      - name: The Statement, from velaris attest
+        run: |
+          V=$(python -c "import velaris; print(velaris.VERSION)")
+          echo "ATT=velaris-attestation-$V" >> "$GITHUB_ENV"
+          SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) \
+            velaris attest examples/effects.vel --output "velaris-attestation-$V.intoto.json"
+          cat "velaris-attestation-$V.intoto.json"
+      - name: Signed with cosign, as a DSSE envelope (keyless)
+        run: |
+          cosign attest-blob --yes --statement "$ATT.intoto.json" \
+            --bundle "$ATT.cosign.sigstore.json"
+      # sigstore-python's command line attests only SLSA provenance, so
+      # this uses its library, as EMBEDDING.md shows
+      - name: Signed with sigstore-python, as a DSSE envelope (keyless)
+        run: |
+          python - "$ATT.intoto.json" "$ATT.sigstore-python.sigstore.json" <<'EOF'
+          import sys
+          from sigstore.dsse import Statement
+          from sigstore.models import ClientTrustConfig
+          from sigstore.oidc import IdentityToken, detect_credential
+          from sigstore.sign import SigningContext
+          statement_file, bundle_file = sys.argv[1], sys.argv[2]
+          statement = Statement(open(statement_file, "rb").read())
+          context = SigningContext.from_trust_config(ClientTrustConfig.production())
+          with context.signer(IdentityToken(detect_credential())) as signer:
+              bundle = signer.sign_dsse(statement)
+          open(bundle_file, "w").write(bundle.to_json())
+          EOF
+      # both must verify as this workflow at this ref, over this exact
+      # Statement, naming the digest of the file it attests
+      - name: Both verify, as this workflow, against the example's bytes
+        run: |
+          IDENTITY="https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@$GITHUB_REF"
+          echo "identity: $IDENTITY"
+          cosign verify-blob-attestation --bundle "$ATT.cosign.sigstore.json" \
+            --type "$PREDICATE_TYPE" --certificate-identity "$IDENTITY" \
+            --certificate-oidc-issuer "$OIDC_ISSUER" examples/effects.vel
+          python - "$ATT.sigstore-python.sigstore.json" "$ATT.intoto.json" "$IDENTITY" <<'EOF'
+          import hashlib, json, os, sys
+          from sigstore.models import Bundle
+          from sigstore.verify import Verifier
+          from sigstore.verify.policy import Identity
+          bundle_file, statement_file, identity = sys.argv[1:4]
+          bundle = Bundle.from_json(open(bundle_file, "rb").read())
+          kind, payload = Verifier.production().verify_dsse(
+              bundle, Identity(identity=identity, issuer=os.environ["OIDC_ISSUER"]))
+          signed = json.loads(payload)
+          assert kind == "application/vnd.in-toto+json", kind
+          assert signed == json.load(open(statement_file, encoding="utf-8")), "not this Statement"
+          assert signed["predicateType"] == os.environ["PREDICATE_TYPE"]
+          digest = hashlib.sha256(open("examples/effects.vel", "rb").read()).hexdigest()
+          assert signed["subject"][0]["digest"]["sha256"] == digest, "another file"
+          print("sigstore-python: verified, as", identity)
+          EOF
+      - name: Keep them
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: attestation
+          path: velaris-attestation-*
+          if-no-files-found: error
+      - name: Attach to the GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2
+        with:
+          files: velaris-attestation-*

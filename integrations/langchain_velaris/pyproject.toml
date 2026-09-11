@@ -9,7 +9,7 @@ description = "Run agent-written code in a box: Velaris tools for LangChain."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
-authors = [{ name = "Gowri Shankar", email = "gowrishankar@gowrishankar.dev" }]
+authors = [{ name = "Palakurthi Gowri shankar", email = "gowrishankar@gowrishankar.dev" }]
 keywords = ["langchain", "velaris", "sandbox", "agents", "code-execution"]
 dependencies = ["langchain-core>=0.2", "velaris-lang>=2.57"]
 

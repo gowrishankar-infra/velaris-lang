@@ -220,6 +220,8 @@ Field meanings, all stable within `velaris.audit/1`:
 | `fs_paths` | `{"read": [...], "write": [...], "read_any": bool, "write_any": bool}` - the path literals a program reads and writes; a flag says a path was built at runtime (added in 3.0) |
 | `net_hosts` | `{"hosts": [...], "any": bool}` - the hosts (with ports when given) named in URL literals (added in 3.0) |
 | `ffi_any` | true when a py* call names its module with a value built while running, which `ffi_modules` cannot list (added in 4.0) |
+| `counts` | `{"fs": n, "net": n}`: the most file and network operations one call to any of the file's functions can perform, by velaris-spec 9.4's fixed rules - `0` for an effect none of them declares, `null` where the text fixes no bound; the whole field `null` when the file does not compile (added in 4.2) |
+| `prover` | true when a prover checked the promises; false without one, when no status is `proven` and a `proven_share` of 0 says nothing about what could be proven - and false when the file does not compile (added in 4.2) |
 
 A new field may be added within version 1; a field will not change
 meaning or disappear without the schema name changing. `effects` and
@@ -806,6 +808,115 @@ against velaris-spec's schemas needs `jsonschema`; without it those
 cases are skipped and the level is reported as not shown. A case that
 needs a symbolic link is skipped where the system will not make one,
 and the verdict says so.
+
+## An in-toto Statement of what a program may do
+
+```
+velaris attest examples/effects.vel --output effects.intoto.json
+velaris attest examples/effects.vel --json          # the Statement on stdout
+velaris attest src --output src.jsonl               # one Statement per file
+```
+
+`velaris attest` writes an in-toto Statement v1 whose predicate type is
+`https://gowrishankar-infra.github.io/velaris-lang/capability/v1`
+(velaris-spec section 8.5; the URL is the type's description and
+schema). Its subjects are the audited file and every file it imports,
+each by the sha256 of its bytes - a file of the standard library named
+`<stdlib>/NAME` - and its predicate is
+
+```json
+{"producer": {"name": "velaris-lang", "uri": "https://github.com/gowrishankar-infra/velaris-lang"},
+ "specification": "velaris-spec 0.5",
+ "auditedAt": "2026-09-11T00:00:00Z",
+ "audit": { "...": "the velaris.audit/1 document of that file" }}
+```
+
+The audit is `audit()`'s output for those bytes, as it stands - effects,
+`fs_paths`, `net_hosts`, `ffi_modules`, `ffi_any`, `counts`,
+`proven_share`, `prover`, the Velaris version - so the Statement cannot
+say more than the audit, or differ from it. What the audit cannot
+determine it says in its own fields, and the Statement carries them: a
+module named while running is `ffi_any: true`, not a shorter list of
+modules; a path or URL built while running is `read_any`, `write_any`
+or `any`; a count the text does not fix is `null`; a program that does
+not compile is `ok: false` with its problems, `counts: null` and
+`prover: false`; and without a prover `prover` is `false`, so a
+`proven_share` of 0 is not read as proofs that failed. A file that
+changes while it is being attested is an error, not a Statement.
+
+A directory gives one Statement per `.vel` file, found as `velaris
+capabilities` finds them, one Statement to a line (JSON Lines), since
+the predicate type has one audit per Statement. An in-toto Bundle
+(`.intoto.jsonl`) is JSON Lines too, of signed envelopes: sign each line
+and write the envelopes one to a line to make one. `SOURCE_DATE_EPOCH`, when
+set, fixes `auditedAt`, so one commit gives the same bytes twice.
+`velaris.attest(path)` in the library returns the same Statements as a
+list.
+
+**Signing.** Velaris writes the Statement and signs nothing. Signing it
+turns it into an attestation: a DSSE envelope over the Statement, in a
+Sigstore bundle.
+
+With cosign (v3), keyless - a browser sign-in on a workstation, the
+job's identity in CI:
+
+```
+cosign attest-blob --yes --statement effects.intoto.json \
+    --bundle effects.intoto.sigstore.json
+cosign verify-blob-attestation --bundle effects.intoto.sigstore.json \
+    --type https://gowrishankar-infra.github.io/velaris-lang/capability/v1 \
+    --certificate-identity you@example.com \
+    --certificate-oidc-issuer https://github.com/login/oauth \
+    examples/effects.vel
+```
+
+or with a key pair (`cosign generate-key-pair`):
+
+```
+cosign attest-blob --yes --key cosign.key --statement effects.intoto.json \
+    --bundle effects.intoto.sigstore.json
+cosign verify-blob-attestation --key cosign.pub --bundle effects.intoto.sigstore.json \
+    --type https://gowrishankar-infra.github.io/velaris-lang/capability/v1 \
+    examples/effects.vel
+```
+
+`verify-blob-attestation` checks that the file given is the Statement's
+subject by digest and that the predicate type is this one, and fails
+otherwise. Both forms record the signature in Sigstore's public
+transparency log unless a signing config says not to.
+
+With sigstore-python (4.x): its command line's `sigstore attest` takes
+only SLSA provenance predicates, so use its library - the same calls the
+release workflow makes:
+
+```python
+from sigstore.dsse import Statement
+from sigstore.models import ClientTrustConfig
+from sigstore.oidc import IdentityToken, Issuer, detect_credential
+from sigstore.sign import SigningContext
+
+statement = Statement(open("effects.intoto.json", "rb").read())
+trust = ClientTrustConfig.production()
+token = detect_credential()                 # the job's identity in CI,
+identity = (IdentityToken(token) if token   # else a browser sign-in
+            else Issuer(trust.signing_config.get_oidc_url()).identity_token())
+context = SigningContext.from_trust_config(trust)
+with context.signer(identity) as signer:
+    bundle = signer.sign_dsse(statement)
+open("effects.intoto.sigstore.json", "w").write(bundle.to_json())
+```
+
+and to verify, `Verifier.production().verify_dsse(bundle,
+Identity(identity=..., issuer=...))` returns the signed Statement, whose
+first subject's digest must then be the sha256 of the file.
+`sigstore sign effects.intoto.json` also works, and signs the Statement
+file as bytes rather than as a DSSE envelope, the way the release signs
+its other files.
+
+Every release carries one: `velaris-attestation-X.Y.Z.intoto.json` for
+`examples/effects.vel`, signed both ways by the release workflow's
+identity and verified in that workflow before it is attached
+([SECURITY.md](SECURITY.md)).
 
 ## As a commit hook
 

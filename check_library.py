@@ -2026,8 +2026,11 @@ def main() -> int:
     # effects, and a safe_command whose grants parse.
     import tempfile as _tf
     audit_validator = None
-    audit_schema = (HERE.parent / "velaris-spec" / "schemas"
-                    / "velaris.audit.1.schema.json")
+    # velaris-spec beside this checkout, or inside it where CI puts it
+    spec_dir = next((d for d in (HERE.parent / "velaris-spec",
+                                 HERE / "velaris-spec")
+                     if (d / "schemas").is_dir()), HERE.parent / "velaris-spec")
+    audit_schema = spec_dir / "schemas" / "velaris.audit.1.schema.json"
     try:
         from jsonschema import Draft202012Validator as _V
         if audit_schema.exists():
@@ -2075,6 +2078,157 @@ def main() -> int:
         import shutil as _sh
         _sh.rmtree(box, ignore_errors=True)
         ok(f"audit: {case['description']}", not diffs, "; ".join(diffs))
+
+    print()
+    print("velaris attest: the audit as an in-toto Statement (4.2)")
+    print("-" * 62)
+    # A Statement's subjects are the audited file and what it imports, by
+    # sha256; its predicate is velaris-spec 8.5's capability/v1, whose
+    # audit must be audit() of the same bytes and nothing more. Checked
+    # against three schemas: in-toto's Statement v1 (written from its
+    # spec, tests/in-toto-statement-v1.schema.json), the predicate's as
+    # this repository publishes it, and velaris.audit/1's.
+    import hashlib as _hashlib
+    import shutil as _sh
+    try:
+        from jsonschema import Draft202012Validator as _V2
+    except ImportError:
+        _V2 = None
+    box = Path(_tf.mkdtemp(prefix="velaris-attest-"))
+    fetch_loop = ('fn ping() -> Int uses net or fail {\n'
+                  '    return try fetch_status("https://api.example.com")\n'
+                  '}\n\n'
+                  'fn main() uses io, net {\n'
+                  '    for i in 0 to 3 {\n'
+                  '        check ping() {\n'
+                  '            ok c {\n'
+                  '                print(to_text(c))\n'
+                  '            }\n'
+                  '            fail w {\n'
+                  '                print(w)\n'
+                  '            }\n'
+                  '        }\n'
+                  '    }\n}\n')
+    progs = {
+        "hello.vel": 'fn main() uses io {\n    print("hi")\n}\n',
+        "poll.vel": fetch_loop,
+        "poll_args.vel": fetch_loop.replace("for i in 0 to 3 {",
+                                            "for a in args() {"),
+        "computed.vel": ('fn main() uses io, ffi {\n'
+                         '    check py(lower("MATH"), "sqrt", ["9"]) {\n'
+                         '        ok r {\n'
+                         '            print(r)\n'
+                         '        }\n'
+                         '        fail w {\n'
+                         '            print(w)\n'
+                         '        }\n'
+                         '    }\n}\n'),
+        "broken.vel": 'fn main() {\n    print("no effect declared")\n}\n',
+    }
+    for fname, text in progs.items():
+        (box / fname).write_text(text, encoding="utf-8", newline="\n")
+    statements = velaris.attest(str(box))
+    by_file = {Path(s["subject"][0]["name"]).name: s for s in statements}
+    ok("a directory gives one Statement per .vel file, each with that "
+       "file as its one subject",
+       sorted(by_file) == sorted(progs)
+       and all(len(s["subject"]) == 1 for s in statements),
+       [[x["name"] for x in s["subject"]] for s in statements])
+    digests_right = all(
+        x["digest"]["sha256"] == _hashlib.sha256(
+            (box / Path(x["name"]).name).read_bytes()).hexdigest()
+        for s in statements for x in s["subject"])
+    ok("every subject's digest is the sha256 of that file's bytes",
+       digests_right)
+    same = [f for f, s in by_file.items()
+            if s["predicate"]["audit"] != velaris.audit(
+                progs[f], path=str(box / f)).as_dict()]
+    ok("each predicate's audit is audit() of the same program, field for "
+       "field", not same, same)
+    if _V2 is None:
+        skip("the Statements validate against the in-toto, predicate and "
+             "audit schemas", "jsonschema is not installed")
+    else:
+        checks = [("in-toto Statement v1",
+                   HERE / "tests" / "in-toto-statement-v1.schema.json",
+                   lambda s: s),
+                  ("capability/v1 predicate",
+                   HERE / "docs" / "capability" / "v1" / "schema.json",
+                   lambda s: s["predicate"])]
+        if audit_schema.exists():
+            checks.append(("velaris.audit/1", audit_schema,
+                           lambda s: s["predicate"]["audit"]))
+        else:
+            skip("each predicate's audit validates against velaris.audit/1",
+                 f"{audit_schema} is not present")
+        for label, schema_file, part in checks:
+            v = _V2(json.loads(schema_file.read_text(encoding="utf-8")))
+            errs = [(Path(s["subject"][0]["name"]).name, e.message)
+                    for s in statements for e in v.iter_errors(part(s))]
+            ok(f"every Statement validates against the {label} schema",
+               not errs, errs[:3])
+    comp = by_file["computed.vel"]["predicate"]["audit"]
+    ok("a module named while running is represented as ffi_any, not as a "
+       "list of modules", comp["ffi_any"] is True
+       and comp["ffi_modules"] == [] and comp["ok"] is True, comp)
+    ok("a count the text fixes is its number, and one it does not fix is "
+       "null, not left out",
+       by_file["poll.vel"]["predicate"]["audit"]["counts"]
+       == {"fs": 0, "net": 3}
+       and by_file["poll_args.vel"]["predicate"]["audit"]["counts"]
+       == {"fs": 0, "net": None},
+       [by_file[f]["predicate"]["audit"]["counts"]
+        for f in ("poll.vel", "poll_args.vel")])
+    bad = by_file["broken.vel"]["predicate"]["audit"]
+    ok("a program that does not compile is attested as not compiling: ok "
+       "false, its problem, counts null, prover false",
+       bad["ok"] is False and bad["counts"] is None
+       and bad["prover"] is False
+       and any(p["code"] == "E300" for p in bad["problems"]), bad)
+    ok("prover says whether a prover checked the promises",
+       by_file["hello.vel"]["predicate"]["audit"]["prover"]
+       is bool(velaris.HAVE_Z3))
+    app = box / "app"
+    (app / "lib").mkdir(parents=True)
+    (app / "main.vel").write_text('import "lib/greet.vel"\n\n'
+                                  'fn main() uses io {\n'
+                                  '    print(greet("x"))\n}\n',
+                                  encoding="utf-8", newline="\n")
+    (app / "lib" / "greet.vel").write_text(
+        'fn greet(n: Text) -> Text {\n    return "hi " + n\n}\n',
+        encoding="utf-8", newline="\n")
+    one = velaris.attest_statement(str(app / "main.vel"), "app/main.vel")
+    ok("a file that imports another names it as the next subject, with "
+       "its own digest",
+       [x["name"] for x in one["subject"]] == ["app/main.vel",
+                                               "app/lib/greet.vel"]
+       and one["subject"][1]["digest"]["sha256"] == _hashlib.sha256(
+           (app / "lib" / "greet.vel").read_bytes()).hexdigest(),
+       one["subject"])
+    fixed = dict(os.environ, SOURCE_DATE_EPOCH="1789000000")
+    cli = subprocess.run([sys.executable, str(HERE / "velaris.py"), "attest",
+                          str(box / "poll.vel"), "--json"],
+                         capture_output=True, text=True, encoding="utf-8",
+                         timeout=300, env=fixed)
+    saved = os.environ.get("SOURCE_DATE_EPOCH")
+    os.environ["SOURCE_DATE_EPOCH"] = "1789000000"
+    try:
+        lib_st = velaris.attest_statement(str(box / "poll.vel"))
+    finally:
+        if saved is None:
+            os.environ.pop("SOURCE_DATE_EPOCH", None)
+        else:
+            os.environ["SOURCE_DATE_EPOCH"] = saved
+    try:
+        cli_st = json.loads(cli.stdout)
+    except ValueError:
+        cli_st = {"_stderr": cli.stderr}
+    ok("the command line's --json is the library's Statement, and "
+       "SOURCE_DATE_EPOCH fixes its time",
+       cli.returncode == 0 and cli_st == lib_st
+       and lib_st["predicate"]["auditedAt"] == "2026-09-10T00:26:40Z",
+       str(cli_st)[:200])
+    _sh.rmtree(box, ignore_errors=True)
 
     print()
     print("the CLI's audit --json is velaris.audit/1 (3.3)")

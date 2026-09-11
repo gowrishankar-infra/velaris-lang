@@ -1,6 +1,6 @@
 ---
 title: "Velaris: effects in signatures, budgets at run time, and a baseline for a repository's capability surface"
-author: "Gowri Shankar"
+author: "Palakurthi Gowri shankar"
 date: "Draft of 2026-09-11 - not submitted"
 bibliography: references.bib
 link-citations: true
@@ -240,7 +240,9 @@ tool with no runtime can conform at L1 and L3. No level requires a
 prover. Conformance is shown by running a corpus of JSON cases,
 described in section 4.2. velaris-spec also defines an in-toto predicate
 type that binds an audit to the digests of the files audited, so that a
-signed statement can say which source an audit describes.
+signed statement can say which source an audit describes; velaris-lang
+4.2.0 writes such statements, unsigned (`velaris attest`), and leaves
+signing to Sigstore's tools.
 
 ## 3. Implementation
 
@@ -497,8 +499,9 @@ artifacts to subjects identified by digest [@torresarias2019intoto;
 @intoto_attestation], and SLSA defines levels of build integrity and a
 provenance predicate [@slsa]. Velaris's documents describe what a source
 text declares, not how or by whom an artifact was built. velaris-spec
-defines an in-toto predicate type for the audit; velaris-lang 4.1.0
-publishes the type and does not yet write statements of it.
+defines an in-toto predicate type for the audit, and velaris-lang 4.2.0
+writes statements of it; its release workflow signs one for an example
+program with Sigstore's tools and verifies it.
 
 **SARIF.** SARIF is a common format for the findings of static analysis
 tools [@sarif2020]. velaris-lang writes its compile errors, unproven

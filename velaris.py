@@ -173,6 +173,8 @@ Usage:
                                            surface, proofs, risk (--json)
   velaris conformance [--level 1|2|3]      run velaris-spec's conformance
         [--json] [--corpus DIR]            corpus against this Velaris
+  velaris attest <path> [--output FILE]    the audit as an in-toto Statement,
+        [--json]                           each file by its sha256 (unsigned)
   velaris explain <folder>                 a map of every file
   velaris doctor                           check the installation
   velaris new <name>                       start a fresh project
@@ -276,7 +278,7 @@ Usage:
 import json
 import os
 
-VERSION = "4.1.0"
+VERSION = "4.2.0"
 import re
 import sys
 from dataclasses import dataclass, field
@@ -1253,7 +1255,11 @@ def unknown_function(name: str, line: int, known) -> VelarisError:
                                "check the spelling of the name"])
 
 
-def load_program(entry: str, entry_source: str | None = None):
+def load_program(entry: str, entry_source: str | None = None,
+                 loaded: list | None = None):
+    """(functions, records) of the entry file and everything it imports.
+    `loaded`, when given, gets the path of each file read, in the order
+    they were read - the entry first."""
     funcs, records = [], []
     fn_src, rec_src = {}, {}
     visited = set()
@@ -1287,6 +1293,8 @@ def load_program(entry: str, entry_source: str | None = None):
                 fixes=["check the path in the import line",
                        "paths are relative to the importing file"],
                 file=importer)
+        if loaded is not None:
+            loaded.append(path)
         try:
             tokens = lex(source)
             fs, rs, imports = Parser(tokens).parse_program()
@@ -8268,6 +8276,8 @@ def main() -> int:
         return review_main(argv[1:])
     if argv[:1] == ["conformance"]:
         return conformance_main(argv[1:])
+    if argv[:1] == ["attest"]:
+        return attest_main(argv[1:])
     if argv[:1] == ["mcp-manifest"]:
         return mcp_manifest_main(argv[1:])
     if argv[:1] == ["mcp-verify"]:
@@ -8857,7 +8867,7 @@ class AuditResult:
     __slots__ = ("schema", "velaris_version", "ok", "problems", "effects",
                  "functions", "proven_share", "safe_command", "warnings",
                  "ffi_modules", "loops_unshown", "contract_coverage",
-                 "fs_paths", "net_hosts", "ffi_any")
+                 "fs_paths", "net_hosts", "ffi_any", "counts", "prover")
 
     def __init__(self, **kw):
         for k in self.__slots__:
@@ -9143,6 +9153,27 @@ def audit(source: str, *, path: str | None = None) -> AuditResult:
         modules_named = sorted(named)
         paths_named, hosts_named = _fs_net_named(where, source if path
                                                  else None)
+        # counts (4.2): the most fs and net operations one call to any of
+        # the audited file's functions can perform, by velaris-spec 9.4's
+        # fixed rules - 0 for an effect none of them declares, None where
+        # the text fixes no bound. The whole field is None when the file
+        # does not compile: then nothing was determined. prover (4.2):
+        # whether a prover checked the promises; without one no status is
+        # "proven", and a proven_share of 0 says nothing about what could
+        # be proven.
+        counts = None
+        compiled = not report["errors"]
+        if compiled:
+            try:
+                loaded_funcs, _ = load_program(where, source if path
+                                               else None)
+                bounds, _ = _operation_bounds(loaded_funcs)
+                names = [f["name"] for f in own if f["name"] in bounds]
+                counts = {e: _as_count(max([bounds[n][e] for n in names]
+                                           or [0]))
+                          for e in COUNTED_EFFECTS}
+            except Exception:
+                counts = None
         if "ffi" in effects:
             if modules_named:
                 warnings.append(
@@ -9195,6 +9226,8 @@ def audit(source: str, *, path: str | None = None) -> AuditResult:
             net_hosts={"hosts": sorted(hosts_named["hosts"]),
                        "any": hosts_named["any"]},
             ffi_any=ffi_any,
+            counts=counts,
+            prover=bool(compiled and report.get("proofs")),
             warnings=warnings)
     finally:
         if temp:
@@ -13253,6 +13286,201 @@ def conformance_main(argv: list) -> int:
             print(f"skip  {r['id']}: {r['detail']}")
     print(report["verdict"])
     return 0 if ok else 1
+
+
+# ---------------------------------------------------------------------------
+# 19. ATTESTATION - the audit, bound to the bytes it describes
+#
+#     `velaris attest` wraps velaris.audit/1 in an in-toto Statement v1 of
+#     the predicate type velaris-spec 8.5 defines: the audited file and
+#     every file it loads are the subjects, by sha256, and the predicate's
+#     audit is audit()'s own output - not a copy recomputed here - so the
+#     attestation and the audit cannot disagree, and the attestation says
+#     nothing the audit does not. What the audit could not determine it
+#     says so in its own fields (ffi_any, read_any, any, a null count, ok
+#     false), and the Statement carries them as they are. Nothing here
+#     signs: EMBEDDING.md shows how, with cosign or sigstore-python, and
+#     the release workflow does it for one example program.
+# ---------------------------------------------------------------------------
+
+INTOTO_STATEMENT_TYPE = "https://in-toto.io/Statement/v1"
+CAPABILITY_PREDICATE_TYPE = ("https://gowrishankar-infra.github.io/"
+                             "velaris-lang/capability/v1")
+CAPABILITY_SPEC = "velaris-spec 0.5"
+
+
+def _attested_at() -> str:
+    """When the audit was made, RFC 3339 in UTC to the second - from
+    SOURCE_DATE_EPOCH when it is set, so a build that fixes that gets the
+    same Statement twice."""
+    import datetime
+    epoch = os.environ.get("SOURCE_DATE_EPOCH", "")
+    when = (datetime.datetime.fromtimestamp(int(epoch), datetime.timezone.utc)
+            if epoch.isdigit() else
+            datetime.datetime.now(datetime.timezone.utc))
+    return when.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _sha256_of(path: str) -> str:
+    import hashlib
+    with open(path, "rb") as fh:
+        return hashlib.sha256(fh.read()).hexdigest()
+
+
+def _subject_name(path: str, entry: str, entry_name: str) -> str:
+    """How a Statement names a file the audited program loads: in the
+    terms the audited file was named in, or <stdlib>/NAME for the
+    standard library this Velaris ships, whose place on disk is this
+    machine's business."""
+    import posixpath
+    full = os.path.abspath(path)
+    base = os.path.dirname(os.path.abspath(entry))
+    std = os.path.join(os.path.dirname(os.path.abspath(__file__)), "stdlib")
+    try:
+        rel = os.path.relpath(full, base).replace(os.sep, "/")
+    except ValueError:                     # another drive, on Windows
+        rel = None
+    if rel is not None and rel != ".." and not rel.startswith("../"):
+        return posixpath.normpath(posixpath.join(
+            posixpath.dirname(entry_name), rel))
+    if full.startswith(std + os.sep):
+        return "<stdlib>/" + os.path.relpath(full, std).replace(os.sep, "/")
+    if rel is not None:
+        return posixpath.normpath(posixpath.join(
+            posixpath.dirname(entry_name), rel))
+    return full.replace(os.sep, "/")
+
+
+def attest_statement(path: str, name: str | None = None) -> dict:
+    """The in-toto Statement for one .vel file (velaris-spec 8.5): the
+    file first among the subjects, then each file it imports, each by
+    the sha256 of its bytes; the predicate, audit() of those bytes.
+    ValueError when the file is not UTF-8, or changed while it was being
+    attested."""
+    import hashlib
+    import posixpath
+    name = name or posixpath.normpath(path.replace(os.sep, "/"))
+    with open(path, "rb") as fh:
+        raw = fh.read()
+    try:
+        source = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        raise ValueError(f"{path} is not UTF-8 text")
+    entry_digest = hashlib.sha256(raw).hexdigest()
+
+    def imports() -> list:
+        read: list = []
+        try:
+            load_program(path, source, loaded=read)
+        except Exception:          # the audit reports why; what could be
+            pass                   # read is still what it read
+        out, seen = [], {os.path.abspath(path)}
+        for p in read:
+            if os.path.abspath(p) not in seen:
+                seen.add(os.path.abspath(p))
+                out.append((p, _sha256_of(p)))
+        return out
+
+    before = imports()
+    doc = audit(source, path=path).as_dict()
+    # the audit read the imported files from disk; if one changed while it
+    # did, a digest would name bytes the audit may not have read
+    if imports() != before or _sha256_of(path) != entry_digest:
+        raise ValueError(f"{path}, or a file it imports, changed while it "
+                         f"was being attested; attest it again")
+    subjects = [{"name": name, "digest": {"sha256": entry_digest}}]
+    subjects += [{"name": _subject_name(p, path, name),
+                  "digest": {"sha256": d}} for p, d in before]
+    return {"_type": INTOTO_STATEMENT_TYPE,
+            "subject": subjects,
+            "predicateType": CAPABILITY_PREDICATE_TYPE,
+            "predicate": {"producer": {"name": "velaris-lang",
+                                       "uri": REPOSITORY},
+                          "specification": CAPABILITY_SPEC,
+                          "auditedAt": _attested_at(),
+                          "audit": doc}}
+
+
+def attest(path: str) -> list:
+    """One in-toto Statement per .vel file: the file itself, or every
+    .vel file under a directory, as `velaris capabilities` finds them
+    (.git and what git ignores left out). ValueError when there is
+    nothing to attest."""
+    import posixpath
+    if os.path.isdir(path):
+        base = posixpath.normpath(path.replace(os.sep, "/"))
+        files = _capability_files(path)
+        if not files:
+            raise ValueError(f"no .vel file under {path}")
+        return [attest_statement(os.path.join(path, *rel.split("/")),
+                                 rel if base == "." else f"{base}/{rel}")
+                for rel in files]
+    if not os.path.isfile(path):
+        raise ValueError(f"{path}: no such file or directory")
+    return [attest_statement(path)]
+
+
+def attest_main(argv: list) -> int:
+    """velaris attest <path> [--output FILE] [--json]"""
+    usage = "usage: velaris attest <path> [--output FILE] [--json]"
+    places, output, as_json = [], None, False
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--output" and i + 1 < len(argv):
+            output = argv[i + 1]
+            i += 2
+            continue
+        if a == "--json":
+            as_json = True
+        elif a.startswith("-"):
+            print(usage, file=sys.stderr)
+            return 2
+        else:
+            places.append(a)
+        i += 1
+    if len(places) != 1:
+        print(usage, file=sys.stderr)
+        return 2
+    target = places[0]
+    try:
+        statements = attest(target)
+    except (ValueError, OSError) as e:
+        print(f"velaris attest: {e}", file=sys.stderr)
+        return 2
+    # a file gives one Statement; a directory gives one per file, one to a
+    # line (JSON Lines; an in-toto Bundle is the same, of signed envelopes)
+    if os.path.isdir(target):
+        text = "".join(json.dumps(s, ensure_ascii=False,
+                                  separators=(",", ":")) + "\n"
+                       for s in statements)
+    else:
+        text = json.dumps(statements[0], indent=2, ensure_ascii=False) + "\n"
+    if output:
+        with open(output, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
+    if as_json:
+        sys.stdout.write(text)
+        return 0
+    print(f"velaris attest: {len(statements)} in-toto Statement(s) of "
+          f"{CAPABILITY_PREDICATE_TYPE}")
+    for s in statements:
+        a = s["predicate"]["audit"]
+        first = s["subject"][0]
+        state = ("compiles" if a["ok"] else
+                 "does not compile: " + ", ".join(
+                     sorted({p["code"] for p in a["problems"]})))
+        print(f"  {first['name']}  sha256:{first['digest']['sha256'][:16]}"
+              f"  {state}")
+        print(f"      effects: {', '.join(a['effects']) or 'none'}"
+              + ("; a module named while running (ffi_any)"
+                 if a.get("ffi_any") else ""))
+        for extra in s["subject"][1:]:
+            print(f"      also read: {extra['name']}  "
+                  f"sha256:{extra['digest']['sha256'][:16]}")
+    print(f"written to {output}" if output else
+          "not written: pass --output FILE, or --json to print it")
+    return 0
 
 
 def card() -> str:

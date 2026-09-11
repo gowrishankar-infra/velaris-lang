@@ -105,7 +105,7 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 </style></head><body>
 <nav><div class="in"><a class="brand" href="../../index.html">
 <span class="dot"></span>Velaris</a><a href="../../index.html" class="">Home</a><a href="../../tutorial.html" class="">Tutorial</a><a href="../../spec.html" class="">Reference</a><a href="../../library.html" class="">Library</a><a href="../../errors.html" class="">Errors</a><a href="../../floats.html" class="">Floats</a><a href="../../playground.html" class="">Playground</a>
-<span class="ver">v4.1.0</span></div></nav>
+<span class="ver">v4.2.0</span></div></nav>
 <main class="">
 <div class="eyebrow">An in-toto predicate type</div>
 <h1>capability/v1</h1>
@@ -138,11 +138,12 @@ so.</p>
   &quot;predicate&quot;: {
     &quot;producer&quot;: {&quot;name&quot;: &quot;velaris-lang&quot;,
                  &quot;uri&quot;: &quot;https://github.com/gowrishankar-infra/velaris-lang&quot;},
-    &quot;specification&quot;: &quot;velaris-spec 0.4&quot;,
-    &quot;auditedAt&quot;: &quot;2026-09-11T10:07:06Z&quot;,
-    &quot;audit&quot;: {&quot;schema&quot;: &quot;velaris.audit/1&quot;, &quot;velaris_version&quot;: &quot;4.1.0&quot;,
+    &quot;specification&quot;: &quot;velaris-spec 0.5&quot;,
+    &quot;auditedAt&quot;: &quot;2026-09-11T00:00:00Z&quot;,
+    &quot;audit&quot;: {&quot;schema&quot;: &quot;velaris.audit/1&quot;, &quot;velaris_version&quot;: &quot;4.2.0&quot;,
               &quot;ok&quot;: true, &quot;effects&quot;: [&quot;clock&quot;, &quot;fs&quot;, &quot;io&quot;, &quot;rand&quot;],
               &quot;safe_command&quot;: &quot;velaris &lt;file&gt; --allow clock,fs:read:report.txt,fs:write:report.txt,io,rand&quot;,
+              &quot;counts&quot;: {&quot;fs&quot;: 2, &quot;net&quot;: 0}, &quot;prover&quot;: true,
               &quot;...&quot;: &quot;the rest of the audit&quot;}
   }
 }</code></pre>
@@ -162,7 +163,7 @@ of the implementation that wrote the audit, and optionally
 <code>uri</code>; its version is the audit's
 <code>velaris_version</code></td></tr>
 <tr><td><code>predicate.specification</code></td><td>no</td><td>the
-velaris-spec version followed, as <code>velaris-spec 0.4</code></td></tr>
+velaris-spec version followed, as <code>velaris-spec 0.5</code></td></tr>
 <tr><td><code>predicate.auditedAt</code></td><td>no</td><td>when the audit
 was made, RFC 3339 in UTC, by the producer's clock</td></tr>
 <tr><td><code>predicate.conformance</code></td><td>no</td><td>the
@@ -184,12 +185,16 @@ runtime will enforce the budget in <code>safe_command</code>. When
 do. It says that the signer ran the producer on these bytes and got this
 audit.</p>
 
-<h2>Status</h2>
-<p>velaris-lang 4.1.0 publishes this type and its schema. It
-does not yet write Statements of it; one can be assembled from
-<code>velaris audit FILE --json</code> and the file's digest, as
+<h2>A producer</h2>
+<p>velaris-lang writes Statements of this type, from 4.2:</p>
+<pre><code>velaris attest program.vel --output program.intoto.json</code></pre>
+<p>It signs none; cosign (<code>cosign attest-blob --statement</code>)
+and sigstore-python sign them, as
+<a href="https://github.com/gowrishankar-infra/velaris-lang/blob/main/EMBEDDING.md">EMBEDDING.md</a>
+shows. Every release of velaris-lang carries one for an example program,
+signed by its release workflow and verified there;
 <a href="https://github.com/gowrishankar-infra/velaris-spec/blob/main/examples/capability-statement.json">velaris-spec's
-example</a> was.</p>
+example</a> was written by <code>velaris attest</code>.</p>
 </main>
 <footer>Velaris is MIT-licensed open source &middot;
 <a href="https://github.com/gowrishankar-infra/velaris-lang">GitHub</a>

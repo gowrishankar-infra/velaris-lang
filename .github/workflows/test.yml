@@ -29,6 +29,14 @@ jobs:
         run: pip install ".[test]"
       - name: Version
         run: velaris --version
+      # velaris-spec: its conformance corpus, and the schemas the library
+      # suite holds audits and attestations to. It holds no .vel file, so
+      # the capability check below still sees this repository alone.
+      - name: velaris-spec, for its corpus and schemas
+        uses: actions/checkout@v5
+        with:
+          repository: gowrishankar-infra/velaris-spec
+          path: velaris-spec
       - name: Test suite
         run: python run_tests.py
       - name: Native and interpreted agree (random programs)
@@ -49,14 +57,6 @@ jobs:
         run: python check_ratchet.py
       - name: This repository needs nothing its velaris.capabilities does not declare
         run: velaris capabilities check .
-      # The conformance corpus lives in velaris-spec, written from this
-      # repository's suites by build_conformance.py. Checked out after
-      # the capability check, so that check sees this repository alone.
-      - name: velaris-spec, for its conformance corpus
-        uses: actions/checkout@v5
-        with:
-          repository: gowrishankar-infra/velaris-spec
-          path: velaris-spec
       - name: velaris-spec's corpus is what these suites say (drift test)
         run: python build_conformance.py --check velaris-spec/tests
       - name: Conformant at L1, L2 and L3 against velaris-spec's corpus

@@ -1,5 +1,174 @@
 # Velaris changelog
 
+## 4.2 - A producer for the capability predicate
+
+A minor version. 4.1 published an in-toto predicate type for the audit
+and wrote no Statements of it; `velaris attest` writes them, and the
+release workflow signs one. The author's name is corrected everywhere
+it appears.
+
+**`velaris attest <path> [--output FILE] [--json]`** writes an in-toto
+Statement v1 of the predicate type
+`https://gowrishankar-infra.github.io/velaris-lang/capability/v1`
+(velaris-spec 0.5, section 8.5). Its subjects are the audited file and
+every file it imports, each by the sha256 of its bytes - a standard
+library file named `<stdlib>/NAME`, since where it sits on disk is the
+machine's business. Its predicate is the published shape: `producer`
+(`velaris-lang` and this repository), `specification` (`velaris-spec
+0.5`), `auditedAt` - from `SOURCE_DATE_EPOCH` when it is set, so one
+commit gives the same bytes twice - and `audit`, which is `audit()`'s
+own `velaris.audit/1` document for those bytes, not a copy recomputed
+beside it: effects, `fs_paths`, `net_hosts`, `ffi_modules`, `ffi_any`,
+`counts`, `proven_share`, `prover` and `velaris_version` are the
+audit's. It sets no `conformance` claim, since it runs no corpus. A
+directory gives one Statement per `.vel` file, found as `velaris
+capabilities` finds them, one to a line (JSON Lines), because the
+predicate type holds one audit per Statement. A file that is not UTF-8,
+or that changes while it is being attested, is an error (exit 2), not a
+Statement. Without `--output` or `--json` it prints a summary: each
+file's digest, whether it compiles, its effects, and `ffi_any` when
+set. `velaris.attest(path)` in the library returns the Statements as a
+list; STABILITY.md adds it to the stable API.
+
+**When the audit cannot tell, the Statement says so.** Two fields are
+added to `velaris.audit/1`, optional within version 1 (velaris-spec
+8.2), so that an attestation can state what was not determined instead
+of leaving it out:
+
+- `counts`: for `fs` and `net`, the most operations one call to a
+  function the file defines can perform, by velaris-spec 9.4's rules -
+  the same code (`_operation_bounds`) the capability baseline uses. `0`
+  for an effect none of them declares; `null` where the text fixes no
+  bound, such as a loop over `args()`; and `null` as a whole when the
+  file does not compile.
+- `prover`: whether a prover decided the promises' status. It is false
+  without one, where no status is `proven` and a `proven_share` of 0
+  says nothing about what could be proven; and false when the file does
+  not compile.
+
+With the fields already there - `ok` false and its problems, `ffi_any`
+for a module named while running rather than a shorter module list,
+`read_any`, `write_any` and `any` for a path or URL built while
+running - the Statement carries whatever the audit could not determine
+as the audit states it. EMBEDDING.md's table of audit fields has both.
+`load_program` takes an optional list it appends each file it reads
+to, which is how `attest` names the imports it digests.
+
+**Signing is left to Sigstore's tools.** Nothing here signs.
+EMBEDDING.md gives working commands for cosign 3 (`cosign attest-blob
+--statement`, keyless and with a key pair, and `cosign
+verify-blob-attestation`, which fails when the file is not the
+Statement's subject by digest) and for sigstore-python 4, whose command
+line attests only SLSA provenance, so the library's `sign_dsse` and
+`verify_dsse` are used. The cosign key-pair commands were run here
+against a Statement from this build with cosign v3.0.6, offline - a
+signing config naming no transparency log, and `--insecure-ignore-tlog`
+to verify: it signed, verified, and refused an edited `effects.vel`
+("provided artifact digest does not match any digest in statement").
+The sigstore-python snippet was run as far as the browser sign-in,
+which needs a person.
+
+**The release signs one.** `release.yml` has a new job, `attestation`:
+it installs this commit with the prover, writes `velaris attest
+examples/effects.vel` with `SOURCE_DATE_EPOCH` at the commit's time,
+signs the Statement keylessly as a DSSE envelope with cosign and with
+sigstore-python, verifies both bundles against the workflow's own
+identity - cosign against the example's bytes, sigstore-python by
+comparing the signed Statement and the first subject's digest - and
+attaches `velaris-attestation-X.Y.Z.intoto.json` and the two
+`.sigstore.json` bundles to the release. The workflow can also be run
+by hand (`workflow_dispatch`); then only this job runs, signing and
+verifying under the branch's identity and publishing nothing, and the
+jobs that build and publish packages run only for a tag. SECURITY.md
+gives the command to verify the attestation.
+
+**Tests.** `check_library.py` gains 12 checks on five programs in a
+scratch directory and a two-file program: a directory gives one
+Statement per `.vel` file; every digest is the sha256 of the file's
+bytes; each predicate's audit equals `audit()` of the same program,
+field for field; every Statement validates against in-toto's Statement
+v1 schema, the capability/v1 predicate schema this repository
+publishes, and velaris-spec's `velaris.audit/1` schema; a module named
+while running is `ffi_any`, with an empty module list; a count the text
+fixes is its number and one it does not is `null`; a program that does
+not compile is `ok` false with its problem, `counts` null and `prover`
+false; `prover` matches whether a prover is installed; an imported file
+is the next subject, with its own digest; and the command line's
+`--json` is the library's Statement, its time fixed by
+`SOURCE_DATE_EPOCH`. in-toto publishes its Statement schema as prose and
+protobuf, not JSON Schema, so `tests/in-toto-statement-v1.schema.json`
+is written from its `statement.md`, `resource_descriptor.md` and
+`digest_set.md` at commit `2dcd055e`, which the file names. CI checks
+out velaris-spec before the suites run, so `check_library.py` holds the
+audit to the spec's schema on every leg.
+
+**velaris-spec 0.5** records the producer in section 8.5 and the two
+fields in 8.2 and its audit schema; its `examples/capability-statement.json`
+is now what `velaris attest examples/effects.vel` writes at this tag,
+and REGISTRY_SUBMISSION.md names the producer, the command that fetches
+the signed Statement, and embeds that Statement. Still not submitted.
+
+**The author's name.** The author is Palakurthi Gowri shankar: family
+name Palakurthi, given name Gowri shankar. `CITATION.cff` in both
+repositories now says `family-names: Palakurthi` and `given-names:
+Gowri shankar`, and both validate against the CFF 1.2.0 schema (with
+`jsonschema` and with `cffconvert --validate`). The full name replaces
+the earlier forms in LICENSE, the VS Code extension's LICENSE,
+README.md, SUPPORT.md, MAINTAINERS.md, PROVENANCE.md, pyproject.toml,
+the npm, MCP bundle and winget manifests, the LangChain integration's
+metadata, `paper/velaris.md` and `paper/references.bib` (as
+`{Palakurthi, Gowri shankar}`, the comma form: without the comma BibTeX
+would read `shankar` as a particle like "van"), and in velaris-spec's
+NOTICE, README.md and REGISTRY_SUBMISSION.md. In a reference list the
+family name leads - "Palakurthi, Gowri shankar" in full; abbreviated,
+BibTeX writes "Palakurthi, G. s." and `cffconvert`'s APA-like form
+"Palakurthi G.s." - and a citation in the text is "(Palakurthi, 2026)".
+A CSL processor (citeproc-js) abbreviates only a capitalised given
+name, so its APA style writes "Palakurthi, G. shankar".
+
+**Provenance.** Both PROVENANCE.md files record the second pair of
+Software Heritage saves, 2471049 and 2471050, taken after the 4.1.0 and
+0.4 push, with their snapshots, beside the first pair.
+
+**Sources, named** (CONTRIBUTING.md rule): the parts of this release
+were specified by the maintainer. The Statement follows in-toto's
+Statement v1 and ResourceDescriptor specifications, and its directory
+form the JSON Lines layout of in-toto's Bundle specification, at commit
+`2dcd055e`; the signing commands follow cosign's and sigstore-python's
+own documentation and were checked against cosign v3.0.6 and
+sigstore-python 4.5.0.
+
+**Verified**, on Windows 11 with Python 3.13, with the proof cache
+cleared first. With the prover (z3 5.1.0, llvmlite 0.49.0):
+`run_tests.py` 92/92, `check_library.py` 196 correct (one skipped: its
+symbolic-link case is POSIX only), `check_sandbox.py` 49 (its
+symbolic-link case skipped: this machine will not make a link),
+`check_fallible.py` 26, `check_refusals.py` 21, `check_termination.py`
+44, `check_pool.py` 39, `check_ratchet.py` 114, none wrong;
+`fuzz_native.py 30` agrees; `benchmark/run.py --quick --check` matches
+`results.json`; `velaris test examples/std_test.vel` 7/7, `velaris
+examples/edges.vel` 20/20, `velaris fmt --check` clean, `velaris
+capabilities check .` passes; `velaris conformance` reports L1, L2 and
+L3 conformant, 443 of the 444 cases run and the symbolic-link case
+skipped, and `--level 1`, `--level 2` and `--level 3` each report their
+level conformant; `build_conformance.py --check` matches velaris-spec's
+corpus. Without the prover, in a fresh virtual environment holding this
+tree and jsonschema and no z3 or llvmlite, all of the same pass, with
+`check_library.py` 193 correct (two skipped for needing the prover, one
+POSIX only) and `check_refusals.py` 11 with 10 skipped for needing the
+prover. With the prover and without it, `velaris attest
+examples/effects.vel` at a fixed `SOURCE_DATE_EPOCH` writes the same
+Statement except `prover`. The audits of the 107 `.vel` files directly
+in `examples/` and `stdlib/` (73 compile, with `counts` set and `prover`
+true; 34 do not, with `counts` null and `prover` false) validate against velaris-spec 0.5's audit schema through its
+`tools/validate.py --audits`, as does this repository's
+`velaris.capabilities`; its `tools/validate.py` (schemas, examples, the
+example Statement, the 444 cases) and `tools/check_sync.py` pass. Both
+`CITATION.cff` files validate against the CFF 1.2.0 schema. The
+release workflow's `attestation` job has not run before this commit's
+push, so whether it signs and verifies in GitHub's runners is for that
+run to say.
+
 ## 4.1 - Conformance you can run, provenance you can check
 
 A minor version. Conformance to the capability format stops being a

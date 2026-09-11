@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/gowrishankar-infra/velaris-lang/blob/main/tests/in-toto-statement-v1.schema.json",
+  "title": "in-toto Statement v1",
+  "$comment": "The in-toto project publishes the Statement v1 layer as prose and protobuf, not as JSON Schema. This schema was written from the prose, at in-toto/attestation commit 2dcd055e9f72e746687c306e35f4e59720ff45be: spec/v1/statement.md, spec/v1/resource_descriptor.md and spec/v1/digest_set.md. It states each MUST of those three documents that JSON Schema can state: _type is the v1 URI; subject is a non-empty array of ResourceDescriptors, each with digest set; predicateType is a string; predicate, when present, is an object; a ResourceDescriptor has at least one of uri, digest and content; a DigestSet maps algorithm names to strings, lowercase hex for the named hash algorithms. It does not state the SHOULDs (unique names within subject) or the parsing rules.",
+  "type": "object",
+  "required": ["_type", "subject", "predicateType"],
+  "properties": {
+    "_type": {"const": "https://in-toto.io/Statement/v1"},
+    "subject": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "allOf": [
+          {"$ref": "#/$defs/resourceDescriptor"},
+          {"required": ["digest"]}
+        ]
+      }
+    },
+    "predicateType": {"type": "string", "minLength": 1},
+    "predicate": {"type": "object"}
+  },
+  "$defs": {
+    "resourceDescriptor": {
+      "type": "object",
+      "properties": {
+        "name": {"type": "string"},
+        "uri": {"type": "string"},
+        "digest": {"$ref": "#/$defs/digestSet"},
+        "content": {"type": "string", "contentEncoding": "base64"},
+        "downloadLocation": {"type": "string"},
+        "mediaType": {"type": "string"},
+        "annotations": {"type": "object"}
+      },
+      "anyOf": [
+        {"required": ["uri"]},
+        {"required": ["digest"]},
+        {"required": ["content"]}
+      ]
+    },
+    "digestSet": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"type": "string"},
+      "properties": {
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "sha224": {"type": "string", "pattern": "^[0-9a-f]{56}$"},
+        "sha384": {"type": "string", "pattern": "^[0-9a-f]{96}$"},
+        "sha512": {"type": "string", "pattern": "^[0-9a-f]{128}$"},
+        "sha512_224": {"type": "string", "pattern": "^[0-9a-f]{56}$"},
+        "sha512_256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "sha3_224": {"type": "string", "pattern": "^[0-9a-f]{56}$"},
+        "sha3_256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "sha3_384": {"type": "string", "pattern": "^[0-9a-f]{96}$"},
+        "sha3_512": {"type": "string", "pattern": "^[0-9a-f]{128}$"},
+        "sha1": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "md5": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+        "gitCommit": {"type": "string", "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"},
+        "gitTree": {"type": "string", "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"},
+        "gitBlob": {"type": "string", "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"},
+        "gitTag": {"type": "string", "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"}
+      }
+    }
+  }
+}

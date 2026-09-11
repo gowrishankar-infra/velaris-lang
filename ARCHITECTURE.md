@@ -61,7 +61,8 @@ prover could not settle.
 | SARIF, the invocation log, the MCP tool manifest | section 16, after the pool: `_SarifRun` and `sarif_check`/`sarif_proofs`/`sarif_audit`; `InvocationLog`; `mcp_manifest_main` and `mcp_verify_main`, kept out of `velaris_mcp.py` so the server file cannot vouch for itself |
 | The capability ratchet | section 17: `_program_capabilities` derives one file's needs (`_needs` for the grants, `_operation_bounds` for the counts), `capability_scan` a tree's, `capabilities_compare` holds a tree to a baseline - never to a previous commit - and `review` compares a git ref with the working tree. velaris-spec section 9 is the text of every rule there |
 | A removed error code | `REMOVED_ERRORS`, beside `ERROR_TABLE`: STABILITY.md rule 3 |
-| Conformance | section 18, at the end: `conformance` runs velaris-spec's corpus through the budget parser, the audit, the command line and the baseline writer and check; `build_conformance.py` writes that corpus from the tables of `check_sandbox.py`, `check_library.py` and `check_ratchet.py` |
+| Conformance | section 18: `conformance` runs velaris-spec's corpus through the budget parser, the audit, the command line and the baseline writer and check; `build_conformance.py` writes that corpus from the tables of `check_sandbox.py`, `check_library.py` and `check_ratchet.py` |
+| The attestation | section 19, at the end: `attest_statement` wraps `audit()`'s own output in an in-toto Statement, the audited file and its imports as subjects by sha256; `attest` does a file or a directory, `attest_main` is the command. It signs nothing; the release workflow's `attestation` job signs one with cosign and with sigstore-python and verifies both |
 
 ## The suites, and what each one is for
 
