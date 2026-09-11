@@ -2,7 +2,7 @@
 
 ## Today
 
-- **Palakurthi Gowri shankar** ([@gowrishankar-infra](https://github.com/gowrishankar-infra))
+- **Palakurthi Gowri Shankar** ([@gowrishankar-infra](https://github.com/gowrishankar-infra))
   — author, and currently the only maintainer.
 
 That is a real risk for anyone depending on this project, stated

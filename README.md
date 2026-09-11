@@ -455,7 +455,7 @@ permissions:
 
 steps:
   - uses: actions/checkout@v5
-  - uses: gowrishankar-infra/velaris-lang@v4.2.0
+  - uses: gowrishankar-infra/velaris-lang@v4.2.1
     with:
       files: "src/*.vel"     # optional; default is every .vel file
       format: "true"         # optional; also check formatting
@@ -550,7 +550,7 @@ in [SUPPORT.md](SUPPORT.md).
 
 ## Cite this repository
 
-The author is Palakurthi Gowri shankar (family name Palakurthi).
+The author is Palakurthi Gowri Shankar (family name Palakurthi).
 [CITATION.cff](CITATION.cff) holds the citation, and GitHub offers it as
 "Cite this repository" beside the file list. A preprint describing
 Velaris is forthcoming; until it is published, cite the repository. The
@@ -584,4 +584,4 @@ velaris fmt examples/*.vel stdlib/*.vel --check
 
 ## License
 
-[MIT](LICENSE) © Palakurthi Gowri shankar
+[MIT](LICENSE) © Palakurthi Gowri Shankar

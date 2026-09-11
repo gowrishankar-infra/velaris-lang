@@ -1,6 +1,6 @@
 ---
 title: "Velaris: effects in signatures, budgets at run time, and a baseline for a repository's capability surface"
-author: "Palakurthi Gowri shankar"
+author: "Palakurthi Gowri Shankar"
 date: "Draft of 2026-09-11 - not submitted"
 bibliography: references.bib
 link-citations: true

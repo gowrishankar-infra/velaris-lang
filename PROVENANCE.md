@@ -1,6 +1,6 @@
 # Provenance
 
-Author: Palakurthi Gowri shankar.
+Author: Palakurthi Gowri Shankar.
 
 Dates and identifiers for this repository and the specification it
 implements. Commit and tag dates are the ones git records, from the
@@ -17,7 +17,8 @@ those services.
 | Budgets scoped to paths, hosts and counts; `env` its own effect | `a76c217d0cf5dd1539e5c895576ad507740ab2a3`, v3.0.0 | 2026-09-10T23:00:21+05:30 |
 | The capability ratchet (`velaris.capabilities/1`) | `ae7a04102cc9d0704be659036bcd2c535983f036`, v4.0.0; GitHub release published 2026-09-11T08:11:46Z | 2026-09-11T13:41:12+05:30 |
 | The conformance corpus, citation files, the predicate type | `3c81ed1353d3dc1aeec2779329ce59e324f39114`, v4.1.0; GitHub release published 2026-09-11T10:40:34Z | 2026-09-11T16:09:50+05:30 |
-| This version: `velaris attest`, a producer of the predicate type | 4.2.0, tag `v4.2.0` | 2026-09-11 |
+| `velaris attest`, a producer of the predicate type | `53fa3cb5c008d202dec6abf56e76d496d4221da3`, v4.2.0; GitHub release published 2026-09-11T14:52:36Z | 2026-09-11T19:50:49+05:30 |
+| This version: the author's name with a capital S | 4.2.1, tag `v4.2.1` | 2026-09-11 |
 
 ## velaris-spec
 
@@ -26,7 +27,8 @@ those services.
 | Repository | <https://github.com/gowrishankar-infra/velaris-spec> | created on GitHub 2026-09-11T03:29:01Z |
 | v0.1, the capability format as first written down, extracted from velaris-lang 3.1.1 (`25d2c051bb5f6925006fed2d44ba8fe809b8cf36`) | annotated tag `v0.1` on commit `f4e7babe7e961d35f6b31450c6d42f3860123acf` | tagged 2026-09-11T08:58:50+05:30 |
 | v0.4, with the conformance corpus | tag `v0.4` on commit `2bf8bbe189a81582772b5c6549cef6fda18524e2` | tagged 2026-09-11T16:09:41+05:30 |
-| v0.5, recording this version's producer | tag `v0.5` | 2026-09-11 |
+| v0.5, recording the producer `velaris attest` | tag `v0.5` on commit `f6ac9896b9204ea3b658b3d685c5b21ee257069f` | tagged 2026-09-11T19:51:32+05:30 |
+| v0.5.1, the author's name with a capital S | tag `v0.5.1` | 2026-09-11 |
 
 velaris-lang is the reference implementation of velaris-spec.
 

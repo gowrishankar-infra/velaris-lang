@@ -2,7 +2,7 @@
 
 ## What you can expect
 
-Velaris is maintained by one person, Palakurthi Gowri shankar, in his own time.
+Velaris is maintained by one person, Palakurthi Gowri Shankar, in his own time.
 Being honest about what that means:
 
 - **Bugs**: reported bugs get looked at, usually within a few days. A

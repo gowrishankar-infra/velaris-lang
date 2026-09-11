@@ -1,5 +1,47 @@
 # Velaris changelog
 
+## 4.2.1 - The author name, capitalised correctly
+
+A patch version, and a text change only. The compiler, the runtime and
+every document format are as in 4.2.0; in `velaris.py` only `VERSION`
+changes. Beside the six version files, the README's Action reference,
+`velaris.capabilities` and the documentation pages carry the new
+version.
+
+The author is Palakurthi Gowri Shankar: family name Palakurthi, given
+name Gowri Shankar, with a capital S. 4.2.0 wrote the given name as
+"Gowri shankar". Corrected in `CITATION.cff` (`given-names: Gowri
+Shankar`), LICENSE, `editor/vscode/LICENSE`, README.md (twice),
+SUPPORT.md, MAINTAINERS.md, PROVENANCE.md, `pyproject.toml`,
+`integrations/langchain_velaris/pyproject.toml`, `npm/package.json`,
+`mcpb/manifest.json`, `packaging/winget.yaml` (`Publisher`; the
+`PackageIdentifier` is an identifier and is unchanged),
+`paper/velaris.md`, and `paper/references.bib`, still in the comma form
+`{Palakurthi, Gowri Shankar}` so that BibTeX reads Shankar as a given
+name and not as a particle. velaris-spec 0.5.1 makes the same
+correction. The 4.2 entry below keeps the form 4.2.0 used.
+
+**How it renders, checked.** Both `CITATION.cff` files validate against
+the CFF 1.2.0 schema, with jsonschema and with `cffconvert --validate`.
+`cffconvert` 2.0.0 writes the BibTeX author as `{Palakurthi, Gowri
+Shankar}` and its APA-like line as "Palakurthi G.S. (2026)" - "G.S."
+where 4.2.0's file gave "G.s."; that writer puts no comma after the
+family name and no space between initials, for any name. BibTeX's
+`apalike.bst`, run over `references.bib`, writes "Palakurthi, G. S."
+and `IEEEtran.bst` writes "G. S. Palakurthi" (the styles from CTAN, run
+by pybtex's implementation of BibTeX). A CSL processor, citeproc-js,
+writes "Palakurthi, G. S." in APA and "G. S. Palakurthi" in IEEE from
+`CITATION.cff`'s names; a citation in the text is "(Palakurthi, 2026)".
+
+**Verified**, on Windows 11 with Python 3.13 and the prover (z3 5.1.0),
+with the proof cache cleared first: `run_tests.py` 92/92,
+`check_library.py` 196 correct (one skipped: its symbolic-link case is
+POSIX only), and `velaris conformance` conformant at L1, L2 and L3, 443
+of the 444 cases run and the symbolic-link case skipped because this
+machine will not make a link. `velaris capabilities check .` passes
+against the regenerated baseline, and velaris-spec 0.5.1's
+`tools/validate.py` and `tools/check_sync.py` pass.
+
 ## 4.2 - A producer for the capability predicate
 
 A minor version. 4.1 published an in-toto predicate type for the audit
