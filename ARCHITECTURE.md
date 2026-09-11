@@ -59,8 +59,9 @@ prover could not settle.
 | A new error code | `ERROR_TABLE`, beside `VelarisError`: one line saying what it means. `check_library.py` fails if a code is raised that is not there; the errors page and the SARIF rules are built from it |
 | The HTTP door | `serve_main`: the token, `--no-auth`, the ceilings, the endpoints. The time and memory ceilings both doors share are `door_ceilings` and `run_limits`, just above it |
 | SARIF, the invocation log, the MCP tool manifest | section 16, after the pool: `_SarifRun` and `sarif_check`/`sarif_proofs`/`sarif_audit`; `InvocationLog`; `mcp_manifest_main` and `mcp_verify_main`, kept out of `velaris_mcp.py` so the server file cannot vouch for itself |
-| The capability ratchet | section 17, at the end: `_program_capabilities` derives one file's needs (`_needs` for the grants, `_operation_bounds` for the counts), `capability_scan` a tree's, `capabilities_compare` holds a tree to a baseline - never to a previous commit - and `review` compares a git ref with the working tree. velaris-spec section 9 is the text of every rule there |
+| The capability ratchet | section 17: `_program_capabilities` derives one file's needs (`_needs` for the grants, `_operation_bounds` for the counts), `capability_scan` a tree's, `capabilities_compare` holds a tree to a baseline - never to a previous commit - and `review` compares a git ref with the working tree. velaris-spec section 9 is the text of every rule there |
 | A removed error code | `REMOVED_ERRORS`, beside `ERROR_TABLE`: STABILITY.md rule 3 |
+| Conformance | section 18, at the end: `conformance` runs velaris-spec's corpus through the budget parser, the audit, the command line and the baseline writer and check; `build_conformance.py` writes that corpus from the tables of `check_sandbox.py`, `check_library.py` and `check_ratchet.py` |
 
 ## The suites, and what each one is for
 
@@ -76,17 +77,25 @@ prover could not settle.
 | `check_termination.py` | does each loop get the termination verdict it must |
 | `check_ratchet.py` | does every widening of the capability surface fail, against the declared baseline and not the previous commit, and does every change that does not widen pass |
 | `velaris test examples/std_test.vel` | does the standard library behave |
+| `velaris conformance` | does this implementation pass velaris-spec's corpus, at L1, L2 and L3 |
+| `build_conformance.py --check` | is velaris-spec's corpus still what these suites' tables say |
 
+Conformance to [velaris-spec](https://github.com/gowrishankar-infra/velaris-spec),
+the capability format published separately, is its corpus: from 4.1,
+444 JSON cases in velaris-spec's `tests/`, at three levels its
+CONFORMANCE.md defines, which an implementation in any language runs
+its own way. Until 4.1 it was six suites of this repository -
 `check_termination.py`, `check_sandbox.py`, `check_refusals.py`,
-`check_fallible.py`, `check_library.py` and - from 4.0, for
-`velaris.capabilities/1` - `check_ratchet.py` together constitute the
-conformance suite for [velaris-spec](https://github.com/gowrishankar-infra/velaris-spec),
-the capability format published separately. An implementation claiming
-velaris.capabilities compliance must pass the subset that does not
-require the prover: each of the six as it runs with no z3 installed
-(rule 7 below says how to make that Python). velaris-spec's SPEC.md
-section 10 says what the claim covers and what the suites do not yet
-test.
+`check_fallible.py`, `check_library.py` and `check_ratchet.py` - run
+without the prover, which only an implementation driven through this
+command line and library could run. The corpus is written by
+`build_conformance.py` from the tables of three of those suites -
+`check_sandbox.py` for level 2, `check_library.py` and
+`check_ratchet.py` for levels 1 and 3 - where each entry is asserted
+against this implementation, so a case says what its suite says.
+`velaris conformance` runs the corpus against this implementation, and
+CI runs it and `build_conformance.py --check` on every leg. None of it
+needs the prover.
 
 ## The rules this project holds
 
@@ -126,6 +135,15 @@ test.
    Better than skipping the proof-dependent checks is asserting the
    FALLBACK - that the promise breaks while running instead - which is
    what `check_library.py` does now.
+
+8. **A scenario in a suite's table is a conformance case.** An entry
+   added to or changed in `ESCAPES`/`HONEST` (`check_sandbox.py`),
+   `BUDGETS`/`AUDITS`/`malformed_budgets()` (`check_library.py`), or a
+   table of `check_ratchet.py` changes velaris-spec's corpus. Regenerate
+   it (`python build_conformance.py ../velaris-spec/tests`) and commit it
+   there in step; CI's drift test fails until the two agree. A case
+   that depends on Python itself says so in `not_in_corpus`, and is left
+   out with the reason.
 
 ## Working on it
 

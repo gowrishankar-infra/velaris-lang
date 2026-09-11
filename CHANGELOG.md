@@ -1,5 +1,192 @@
 # Velaris changelog
 
+## 4.1 - Conformance you can run, provenance you can check
+
+A minor version. Conformance to the capability format stops being a
+sentence naming this repository's suites and becomes a corpus any
+implementation can run; `velaris conformance` runs it here, on every CI
+leg. The project gets citation files, an entry in an independent
+archive, and a predicate type whose URL resolves; and a preprint is
+drafted, for the maintainer to read. One defect, found by writing the
+corpus, is fixed.
+
+4.0.1 was committed and pushed but never tagged, so it was never
+published; its fix to `velaris review` ships in 4.1.0.
+
+**The conformance corpus.** velaris-spec 0.4 holds `tests/`: 444 JSON
+cases, each with an id, its level, a description, the input - budget
+text, Velaris source, a tree of files and a change to it - and the
+outcome an implementation must produce: the grants a budget parses to
+or its refusal, an audit's effect surface, a refusal and its code, a
+baseline, or a verdict with every widening and the rules it fails. 298
+cases at L1, declaration (280 budgets, 18 audits); 37 at L2,
+enforcement (programs run under a budget, with a fixture of files and
+two local HTTP servers); 109 at L3, the ratchet (14 baselines to write,
+51 changes to check, two sequences, the writer's guard, and 32
+covering, 3 reduction and 6 operation-bound cases). velaris-spec's
+CONFORMANCE.md defines the levels and the behaviours each requires, and
+says plainly that no level requires a prover; `tests/README.md` is the
+runner contract. Five L3 cases are the ratchet's known limits from the
+4.0 entry below, recorded with the outcome the check gives today - two
+widenings that pass, three non-widenings that fail - so that another
+implementation matches it rather than guessing.
+
+The corpus is not written by hand. `build_conformance.py` transcribes
+it from tables in three suites, where the same entries are asserted
+against this implementation, and computes nothing itself; `--check`
+regenerates it and fails when it differs from what velaris-spec
+commits. For that, the suites became tables, and asserting them made
+them stricter:
+
+- `check_sandbox.py` holds each case as data, with placeholders for its
+  paths and ports, and asserts the refusal code each must carry. Until
+  4.1 it accepted any of the five codes, so a runtime refusing a path
+  outside its prefix with E310 rather than E313 would have passed. It
+  runs its fixture in a temporary directory rather than in the
+  repository, and its symbolic-link case wherever the system will make
+  a link, not only on POSIX. Four cases are new, the four rules
+  velaris-spec 0.3 listed as untested (its Q9): `@0`, a count spent by
+  an operation that then fails, a URL with no scheme taken as HTTPS, and
+  an existence check under a write-only grant. 34 escape attempts and
+  16 honest programs.
+- `check_library.py` gains `BUDGETS`, 55 budgets each held to what
+  velaris-spec sections 4 and 5 say it means - the grants for 51, a
+  refusal for 4 - including the spec's own examples and denials (until
+  4.1 the awkward ones were checked to round-trip, not for what they
+  parse to); and `AUDITS`, 18 programs each held to the effect surface
+  its audit must report, and to the schema. The malformed-budget list
+  moved out of `main()` so the corpus can be written from it.
+- `check_ratchet.py`'s scenarios became `DERIVE`, `CHECKS`, `SEQUENCES`,
+  `WRITE_GUARD`, `COVERING`, `REDUCE` and `BOUNDS`. Each check now
+  asserts the complete list of widenings, with the rules each fails,
+  where most cases asserted one finding; each derivation asserts the
+  whole baseline. New: 14 baselines written for trees; the writer
+  refusing, unasked, to write a baseline for a tree that needs more; a
+  new effect; a new program outside the surface (W1 alone); `fs`
+  declared with no file named, which needs plain `fs`; another spelling
+  of a path; a port under a portless grant; 9 covering and 2 reduction
+  cases; and the five known limits. What only this implementation
+  says, such as the call chain, `velaris review`, SARIF and warning
+  text, is asserted after, on the same scenarios.
+
+Thirteen scenarios are left out of the corpus, and `tests/index.json`
+says why each: six attempts to reach an ungranted Python module through
+a granted one, which depend on Python's object model; four honest
+programs that need a Python host; a run given no budget, which the
+format leaves to the implementation; and two about this command line's
+flags.
+
+**`velaris conformance [--level 1|2|3] [--json] [--corpus DIR]`** runs
+the corpus against this implementation, through the doors another
+implementation would use: the budget parser, the audit, the command
+line under a budget, the baseline writer and the check. It finds the
+corpus beside the working directory or the installation, prints a line
+per level and a one-line verdict, and exits 1 if any case of a level
+asked for fails. `--json` is `velaris.conformance/1`, one result per
+case, the report shape `tests/README.md` gives any runner. `--level N`
+runs the cases a claim at level N needs: L1 and N. A case that needs a
+symbolic link is skipped where none can be made, and the verdict says
+so; without `jsonschema` the cases that validate a document against
+velaris-spec's schemas are skipped too, and the level is reported as
+not shown. It passes at all three levels. Run against a copy of the
+corpus with twelve expectations broken, covering all ten kinds of case,
+and one case given a kind no runner knows, it fails exactly those 13
+cases and exits 1.
+
+**CI.** Every one of the twelve legs checks out velaris-spec, runs the
+drift test and `velaris conformance` against its corpus. velaris-spec's
+own CI runs the drift test and this implementation's conformance
+against its corpus, beside its schema and sync checks.
+
+**Found by the corpus, and fixed.** The audit of a program refused for
+naming something that is not an effect in a `uses` clause (`uses io,
+teleport`, E300) still listed that name in `effects` and in the
+function's `effects`, and wrote a `safe_command` that does not parse.
+velaris-spec had said since 0.2 that `effects` holds only the seven
+names and that `safe_command` always parses; 3.3 had fixed the compile
+check and not the document that reports it. From 4.1 `audit` leaves any
+name that is not an effect out of all three; the E300 still names it.
+This is not a breaking change under STABILITY.md: the fields' documented
+meaning is unchanged, and it is the implementation that now matches it;
+what changes is the content of a document whose `ok` is false, which
+velaris-spec says bounds nothing. HALL_OF_FAME.md credits the corpus.
+velaris-spec 0.4 corrects the sentences that had inferred from 3.3's
+rejection more than the implementation did.
+
+**Provenance.** `CITATION.cff` in both repositories (CFF 1.2.0, checked
+against the format's schema), with the author, the repository, the
+version and its date, and a note that a preprint is forthcoming; both
+READMEs say "Cite this repository". Both repositories were submitted to
+Software Heritage through its save-code-now API, and `PROVENANCE.md` in
+each records the save requests' ids and dates beside the first commit
+of the effect system, the date velaris-spec 0.1 was tagged, and that
+velaris-lang is the reference implementation.
+
+**A resolvable predicate type.** velaris-spec 0.4 section 8.5 defines
+an in-toto predicate type for `velaris.audit/1` bound to the digests of
+the files audited, and its URL is on this repository's documentation
+site: `https://gowrishankar-infra.github.io/velaris-lang/capability/v1`,
+which `build_docs.py` now writes, with `schema.json` beside it,
+identical to velaris-spec's `schemas/capability-predicate.v1.schema.json`
+(velaris-spec's `tools/check_sync.py` fails if they differ).
+`velaris.dev` was not used: on 2026-09-11 it answered every path with a
+Vercel `DEPLOYMENT_NOT_FOUND`, and nothing here says who controls it.
+This implementation publishes the type and does not yet write
+Statements of it; velaris-spec's example was assembled from `velaris
+audit --json` and a file's digest. A pull request listing the type in
+in-toto's predicate registry is prepared in velaris-spec's
+REGISTRY_SUBMISSION.md, and not sent.
+
+**A preprint, drafted.** `paper/velaris.md` and `paper/references.bib`:
+the problem, the design, the implementation, the evaluation, related
+work, limitations and a reproducibility section, with a table naming
+the file each number comes from. Not submitted anywhere.
+
+**Also corrected.** The documentation site's benchmark table said
+"Velaris 3.1" and the README's did too, where `benchmark/RESULTS.md`
+said the table was produced by 3.0.0. The table was regenerated with
+4.1.0: every verdict and every line of evidence is what 3.0.0 produced,
+and only the version line of `RESULTS.md` and `results.json` changed;
+the pages now say 4.1. EMBEDDING.md's table of audit fields lacked
+`ffi_any`, added in 4.0. velaris-spec's PRIOR_ART.md said this
+implementation emits no SARIF, untrue since 3.4.
+
+**Sources, named** (CONTRIBUTING.md rule): the parts of this release
+were specified by the maintainer. The runner contract follows no
+published harness. in-toto's `docs/new_predicate_guidelines.md` and
+predicate template, read on 2026-09-11, shaped REGISTRY_SUBMISSION.md.
+Hills, Caspary and Cooper Stickland, "Distributed Attacks in
+Persistent-State AI Control" (arXiv:2607.02514), is cited by the paper
+and by velaris-spec's PRIOR_ART.md as the gradual-attack result the
+ratchet addresses; the record does not say it influenced the ratchet's
+design in 4.0, and this entry does not claim it did.
+
+**Verified**, on Windows 11 with Python 3.13, with the proof cache
+cleared first. With the prover: `run_tests.py` 92/92,
+`check_library.py` 184 correct (one skipped: its symbolic-link case is
+POSIX only), `check_sandbox.py` 49 (its symbolic-link case skipped: this
+machine will not make a link), `check_fallible.py` 26,
+`check_refusals.py` 21, `check_termination.py` 44, `check_pool.py` 39,
+`check_ratchet.py` 114, none wrong; `fuzz_native.py 30` agrees;
+`benchmark/run.py --check` over the whole table and `--quick --check`
+match `results.json`; `velaris test examples/std_test.vel` 7/7,
+`velaris examples/edges.vel` 20/20, `velaris fmt --check` clean,
+`velaris capabilities check .` passes; `velaris conformance` reports
+L1, L2 and L3 conformant, 443 of the 444 cases run and the
+symbolic-link case skipped; `build_conformance.py --check` matches
+velaris-spec's corpus. Without the prover, in a fresh virtual
+environment with jsonschema and no z3 or llvmlite, the same pass - the
+benchmark with `--quick --check` only - with `check_library.py` 181
+correct (two skipped for needing the prover, one POSIX only),
+`check_refusals.py` 11 with 10 skipped for needing the prover, and
+`velaris conformance` again conformant at L1, L2 and L3. velaris-spec
+0.4's `tools/validate.py` (schemas, examples, the example Statement,
+all 444 cases against the case schema) and `tools/check_sync.py` (the
+quoted sections, and the predicate schema against
+`docs/capability/v1/schema.json`) pass against this tree. The symbolic-link cases run where a link can be made - the
+Linux and macOS runners, and the Windows runners if they allow it -
+and whether they pass there is for this commit's CI to say.
+
 ## 4.0.1 - The review read the old files from the wrong place
 
 4.0.0's CI failed on its four Windows legs, in `check_ratchet.py`: the

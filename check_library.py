@@ -76,6 +76,569 @@ fn main() {
 '''
 
 
+# ---- tables velaris-spec's conformance corpus is written from (4.1) --------
+#
+# build_conformance.py writes every entry below as a case in velaris-spec
+# tests/L1, with the expectation written here; main() holds this
+# implementation to each of them. Nothing in these tables depends on
+# Python: they are budget text and Velaris source.
+
+def grants(*effects, ffi=None, fs=None, net=None, counts=None) -> dict:
+    """A parsed budget as the corpus writes one. `ffi`, `fs` and `net` are
+    "any" (unscoped) or a list: module names; (direction, path) pairs,
+    path None for any path in that direction, and path as written after
+    its %-escapes are decoded, before velaris-spec 5.1 resolves it; (host,
+    port) pairs, port None for any port."""
+    out = {"effects": sorted(effects)}
+    if ffi is not None:
+        out["ffi"] = ffi if ffi == "any" else sorted(ffi)
+    if fs is not None:
+        out["fs"] = fs if fs == "any" else [
+            {"direction": d, "path": p} for d, p in fs]
+    if net is not None:
+        out["net"] = net if net == "any" else [
+            {"host": h, "port": p} for h, p in net]
+    out["counts"] = dict(counts or {})
+    for scoped in ("ffi", "fs", "net"):
+        assert (scoped in out) == (scoped in out["effects"]), (scoped, out)
+    return out
+
+
+# (id, what it shows, allow, deny, the budget it parses to - or None when
+# the whole budget must be refused). allow None means no grants were
+# given, so the budget starts from all seven effects (velaris-spec 4.4).
+BUDGETS = [
+    # the grammar's forms (velaris-spec 4.1, 4.2)
+    ("spec-example", "the example of velaris-spec 4: a path, a host with a "
+     "port, and a count", "io,fs:read:./data,net:api.example.com:443@100",
+     None, grants("fs", "io", "net", fs=[("read", "./data")],
+                  net=[("api.example.com", 443)], counts={"net": 100})),
+    ("all-seven", "every effect, unscoped", "io,env,fs,net,clock,rand,ffi",
+     None, grants("clock", "env", "ffi", "fs", "io", "net", "rand",
+                  ffi="any", fs="any", net="any")),
+    ("empty", "an empty budget grants nothing", "", None, grants()),
+    ("empty-single-quotes", "'' is an empty budget, as a child process "
+     "receives it", "''", None, grants()),
+    ("empty-double-quotes", '"" is an empty budget', '""', None, grants()),
+    ("empty-items-skipped", "an empty item between commas is skipped",
+     "io,,env", None, grants("env", "io")),
+    ("whitespace-trimmed", "whitespace around an item is removed",
+     " io , env ", None, grants("env", "io")),
+    ("ffi-continuation", "ffi:math,json names two modules", "ffi:math,json",
+     None, grants("ffi", ffi=["json", "math"])),
+    ("ffi-continuation-stops-at-effect", "ffi:math,io names one module and "
+     "grants io", "ffi:math,io", None, grants("ffi", "io", ffi=["math"])),
+    ("ffi-module-named-random", "ffi:math,random names the Python module "
+     "random", "ffi:math,random", None, grants("ffi", ffi=["math",
+                                                             "random"])),
+    ("ffi-effect-rand-after-module", "ffi:math,rand grants the effect rand",
+     "ffi:math,rand", None, grants("ffi", "rand", ffi=["math"])),
+    ("ffi-two-items", "two ffi:M items grant both modules",
+     "ffi:math,ffi:json", None, grants("ffi", ffi=["json", "math"])),
+    ("ffi-plain-then-scoped", "ffi,ffi:math grants every module: the wider "
+     "grant wins", "ffi,ffi:math", None, grants("ffi", ffi="any")),
+    ("ffi-scoped-then-plain", "ffi:math,ffi grants every module, in either "
+     "order", "ffi:math,ffi", None, grants("ffi", ffi="any")),
+    ("ffi-dotted-module", "ffi:os.path grants os, all of it", "ffi:os.path",
+     None, grants("ffi", ffi=["os"])),
+    ("fs-plain-absorbs-scope", "fs,fs:read:./a@5 is any path, at most 5 "
+     "operations", "fs,fs:read:./a@5", None,
+     grants("fs", fs="any", counts={"fs": 5})),
+    ("fs-scope-then-plain", "a plain fs after a scoped one makes fs "
+     "unscoped", "fs:read:./a,fs", None, grants("fs", fs="any")),
+    ("fs-smallest-count", "the smallest count given for an effect is its "
+     "count", "fs:read:./a@5,fs:write:./b@3", None,
+     grants("fs", fs=[("read", "./a"), ("write", "./b")],
+            counts={"fs": 3})),
+    ("fs-direction-any-path", "fs:read is one direction, any path",
+     "fs:read", None, grants("fs", fs=[("read", None)])),
+    ("fs-both-directions-scoped", "fs:read,fs:write grants both directions "
+     "as two grants, not plain fs", "fs:read,fs:write", None,
+     grants("fs", fs=[("read", None), ("write", None)])),
+    ("fs-count-on-path", "a path whose last @ is followed by digits has a "
+     "count", "fs:read:./x@2", None,
+     grants("fs", fs=[("read", "./x")], counts={"fs": 2})),
+    ("fs-count-zero", "@0 grants the effect and no operation", "fs@0", None,
+     grants("fs", fs="any", counts={"fs": 0})),
+    ("fs-windows-drive-path", "a path is everything after the second "
+     "colon, drive letter included", "fs:read:C:\\data", None,
+     grants("fs", fs=[("read", "C:\\data")])),
+    ("fs-literal-percent-2c", "%252C is the literal text %2C",
+     "fs:read:./x%252C", None, grants("fs", fs=[("read", "./x%2C")])),
+    ("net-count-only", "net@7 is any host, at most 7 requests", "net@7",
+     None, grants("net", net="any", counts={"net": 7})),
+    ("net-host-lowercased", "a host is lower-cased and its trailing dots "
+     "removed", "net:API.Example.COM.", None,
+     grants("net", net=[("api.example.com", None)])),
+    ("net-wildcard-with-port", "a wildcard may take a port",
+     "net:*.example.com:8443", None,
+     grants("net", net=[("*.example.com", 8443)])),
+    # awkward grants that must survive a round trip (3.3; spec Q5)
+    ("ipv6", "an IPv6 address in brackets", "net:[::1]", None,
+     grants("net", net=[("::1", None)])),
+    ("ipv6-port", "an IPv6 address with a port", "net:[::1]:443", None,
+     grants("net", net=[("::1", 443)])),
+    ("ipv6-long-port", "a longer IPv6 address with a port",
+     "net:[2001:db8::1]:8080", None,
+     grants("net", net=[("2001:db8::1", 8080)])),
+    ("ipv6-zone", "an IPv6 zone identifier's % written %25",
+     "net:[fe80::1%25eth0]", None, grants("net", net=[("fe80::1%eth0",
+                                                            None)])),
+    ("ipv6-count", "an IPv6 grant with a count", "net:[::1]@3", None,
+     grants("net", net=[("::1", None)], counts={"net": 3})),
+    ("ipv6-words", "an IPv6 address holding hex words",
+     "net:[2001:db8::dead:beef]", None,
+     grants("net", net=[("2001:db8::dead:beef", None)])),
+    ("path-comma", "a comma in a path written %2C", "fs:read:./a%2Cb.txt",
+     None, grants("fs", fs=[("read", "./a,b.txt")])),
+    ("path-at", "an @ in a path written %40", "fs:write:./mail%40host",
+     None, grants("fs", fs=[("write", "./mail@host")])),
+    ("path-space", "a space in a path", "fs:read:./with a space", None,
+     grants("fs", fs=[("read", "./with a space")])),
+    ("path-non-ascii", "a path with a non-ASCII letter", "fs:read:./café",
+     None, grants("fs", fs=[("read", "./café")])),
+    ("path-trailing-slash", "a path with a trailing separator",
+     "fs:read:./data/", None, grants("fs", fs=[("read", "./data/")])),
+    ("path-parent", "a path above the working directory", "fs:read:../up",
+     None, grants("fs", fs=[("read", "../up")])),
+    ("path-percent", "a % in a path written %25", "fs:read:./100%25.txt",
+     None, grants("fs", fs=[("read", "./100%.txt")])),
+    ("path-two-escapes", "an @ and a comma in one path",
+     "fs:read:./a%40b%2Cc", None, grants("fs", fs=[("read", "./a@b,c")])),
+    ("path-count", "a write grant with a count", "fs:write:./out@5", None,
+     grants("fs", fs=[("write", "./out")], counts={"fs": 5})),
+    ("path-tab", "a tab in a path", "fs:read:./tab\tsep", None,
+     grants("fs", fs=[("read", "./tab\tsep")])),
+    ("host-comma", "a comma in a host written %2C", "net:host%2Cname", None,
+     grants("net", net=[("host,name", None)])),
+    ("host-at", "an @ in a host written %40", "net:user%40host", None,
+     grants("net", net=[("user@host", None)])),
+    ("host-percent", "a % in a host written %25", "net:%25pct", None,
+     grants("net", net=[("%pct", None)])),
+    ("host-port", "a host and a port", "net:api.example.com:443", None,
+     grants("net", net=[("api.example.com", 443)])),
+    ("host-wildcard", "a wildcard over one label", "net:*.example.com",
+     None, grants("net", net=[("*.example.com", None)])),
+    ("mixed-awkward", "an escaped path, an IPv6 host with a port and a "
+     "module in one budget", "io,fs:read:./x%2Cy,net:[::1]:8443,ffi:math",
+     None, grants("ffi", "fs", "io", "net", ffi=["math"],
+                  fs=[("read", "./x,y")], net=[("::1", 8443)])),
+    # refused as a whole (velaris-spec 4.2), beyond the generated list below
+    ("ffi-continuation-after-effect", "ffi:math,io,json is refused: json "
+     "comes after io, so it is not a module", "ffi:math,io,json", None,
+     None),
+    ("path-raw-comma", "a raw comma ends an item: fs:read:./a,b.txt holds "
+     "b.txt, which is not an effect", "fs:read:./a,b.txt", None, None),
+    # denials (velaris-spec 4.4)
+    ("deny-from-all-seven", "denying net and ffi, with no grants given, "
+     "leaves the other five unscoped", None, "net,ffi",
+     grants("clock", "env", "fs", "io", "rand", fs="any")),
+    ("deny-removes-scope", "a denial removes the effect with its scope "
+     "and count", "io,fs:read:./a@5", "fs", grants("io")),
+    ("deny-scoped-refused", "a denial cannot be scoped: fs:write is not an "
+     "effect", None, "fs:write", None),
+    ("deny-unknown-refused", "a denial names one of the seven effects",
+     None, "banana", None),
+]
+
+
+def malformed_budgets() -> list:
+    """Budgets that must each be refused with a readable budget error and
+    never a traceback (spec Q6): `fs@²` used to stop the parser with a
+    ValueError from int(); an unknown effect, a doubled colon, a stray
+    bracket, a count on ffi, a scope on io. Every one is refused whole."""
+    out = []
+    out += ["fs::", "fs:::", "net::", "net:::1", "net:::", "fs:read:",
+            "fs:write:", ":", "@5", "net:[]", "net:[]:80"]
+    for d in ["²", "³", "٣", "⁵", "۲", "５"]:
+        out += [f"fs@{d}", f"net@{d}", f"fs:read:x@{d}", f"net:h@{d}"]
+    for t in ["x", "1x", "-1", "1.5", "0x1", "1_000", "1e9", "", "  ",
+              "one", "+3", "1,2", "9x", "0o7", "3.0", "٤",
+              "₂", " 5", "0b1", "1'0"]:
+        out += [f"fs@{t}", f"net@{t}", f"fs:write:x@{t}"]
+    out += ["fs@-1", "net@-5", "fs:read:x@-2", "net:h:80@-1"]
+    for p in ["0", "65536", "70000", "99999", "100000", "-1", "x", "8o",
+              "66000", "123456", "1e3", "80.0", " 80", "0x50"]:
+        out += [f"net:h:{p}", f"net:[::1]:{p}"]
+    out += ["net:", "net:h:x", "net:[::1", "net:[a]b", "net:[a][b]",
+            "net:[", "net:h/path", "net:a:b:c", "net:h:1:2"]
+    out += ["fs:read:a@b@c", "net:h@1@2", "fs@1@2", "net@3@4"]
+    out += ["ffi@5", "ffi@1", "ffi:@5", "ffi:", "ffi:math@5",
+            "ffi:math@", "ffi:.@2", "ffi:@", "ffi:a@9", "ffi@2", "ffi@0"]
+    for e in ["io", "env", "clock", "rand"]:
+        out += [f"{e}:x", f"{e}@1", f"{e}:", f"{e}@0", f"{e}:read",
+                f"{e}@2", f"{e}:scope"]
+    out += ["IO", "Fs", "NET", "Ffi", "banana", "io2", "fss", "nett",
+            "clockk", "randd", "envv", "xyz", "fs1", "net1",
+            "fs:reed:x", "net:*.com", "net:*", "net:*.*",
+            "fs:read:x,,net:*.com,ffi@2", "net:*.", "net:*.1.2.3",
+            "net:a*b.com", "net:*a.com", "Io", "ENV", "Clock", "RAND",
+            "http", "web", "sql", "exec", "shell", "sys", "net2",
+            "fs_", "ff", "f", "n", "e", "io.", "io-x", "read",
+            "write", "path", "host", "port", "module", "count"]
+    return sorted(set(out))
+
+
+def _fns(*rows) -> list:
+    return [{"name": n, "effects": sorted(e), "can_fail": f}
+            for n, e, f in rows]
+
+
+def _paths(read=(), write=(), read_any=False, write_any=False) -> dict:
+    return {"read": sorted(read), "write": sorted(write),
+            "read_any": read_any, "write_any": write_any}
+
+
+def _hosts(*hosts, any_host=False) -> dict:
+    return {"hosts": sorted(hosts), "any": any_host}
+
+
+def surface(effects, functions, safe_command, ffi_modules=(),
+            ffi_any=False, fs_paths=None, net_hosts=None) -> dict:
+    """What velaris.audit/1 must say of a program that compiles: the
+    fields that do not depend on a prover (velaris-spec 8.2)."""
+    return {"ok": True, "effects": sorted(effects), "functions": functions,
+            "ffi_modules": sorted(ffi_modules), "ffi_any": ffi_any,
+            "fs_paths": fs_paths or _paths(),
+            "net_hosts": net_hosts or _hosts(),
+            "safe_command": safe_command}
+
+
+def refused(*codes) -> dict:
+    """What velaris.audit/1 must say of a program that does not compile:
+    ok is false and a problem carries each code."""
+    return {"ok": False, "problems_include": list(codes)}
+
+
+# Programs and the effect surface velaris.audit/1 must report for each
+# (velaris-spec 3.2, 8). `files` maps names to source; the first is the
+# file audited.
+AUDITS = [
+    dict(id="pure", description="a program with no uses clause declares "
+         "nothing, and its safe_command grants nothing",
+         files={"main.vel": '''fn add(a: Int, b: Int) -> Int {
+    return a + b
+}
+
+fn main() {
+    let x = add(1, 2)
+}
+'''},
+         expect=surface([], _fns(("add", [], False), ("main", [], False)),
+                        "velaris <file> --allow ''")),
+    dict(id="transitive", description="effects is the union of the "
+         "functions' declarations; a helper's fs reaches main's signature",
+         files={"main.vel": '''fn load() -> Text uses fs or fail {
+    return try read_file("data/in.csv")
+}
+
+fn show() -> Text uses fs {
+    check load() {
+        ok t {
+            return t
+        }
+        fail w {
+            return w
+        }
+    }
+}
+
+fn main() uses io, fs {
+    print(show())
+}
+'''},
+         expect=surface(["fs", "io"],
+                        _fns(("load", ["fs"], True), ("show", ["fs"], False),
+                             ("main", ["fs", "io"], False)),
+                        "velaris <file> --allow fs:read:data/in.csv,io",
+                        fs_paths=_paths(read=["data/in.csv"]))),
+    dict(id="undeclared-effect", description="an operation in a function "
+         "that declares nothing is refused before running (T1, E300)",
+         files={"main.vel": '''fn main() {
+    print("x")
+}
+'''},
+         expect=refused("E300")),
+    dict(id="declaration-propagates", description="a callee that declares "
+         "net and never uses it still requires net of its caller (T2, "
+         "E300)",
+         files={"main.vel": '''fn quiet() uses net {
+    let x = 1
+}
+
+fn main() uses io {
+    quiet()
+    print("done")
+}
+'''},
+         expect=refused("E300")),
+    dict(id="unknown-effect-name", description="a uses clause naming "
+         "anything but the seven is refused (E300); the audit that reports "
+         "it still lists only the seven, and its safe_command still parses",
+         files={"main.vel": '''fn main() uses io, teleport {
+    print("x")
+}
+'''},
+         expect=refused("E300")),
+    dict(id="effectful-function-as-value", description="a function that "
+         "declares an effect cannot be passed as a value (T4, E530)",
+         files={"main.vel": '''fn shout(t: Text) -> Text uses io {
+    print(t)
+    return t
+}
+
+fn main() uses io {
+    let f = shout
+    print("x")
+}
+'''},
+         expect=refused("E530")),
+    dict(id="effectful-call-in-contract", description="a promise may call "
+         "only pure functions (T5, E310 at compile time)",
+         files={"main.vel": '''fn stamp() -> Int uses clock {
+    return now()
+}
+
+fn later(t: Int) -> Int
+    requires t > stamp()
+{
+    return t
+}
+
+fn main() uses io {
+    print(later(5))
+}
+'''},
+         expect=refused("E310")),
+    dict(id="declared-not-used", description="an effect declared and never "
+         "performed is still in effects: a declaration is an upper bound; "
+         "net with no host named is plain net",
+         files={"main.vel": '''fn main() uses io, net {
+    print("never asks")
+}
+'''},
+         expect=surface(["io", "net"], _fns(("main", ["io", "net"], False)),
+                        "velaris <file> --allow io,net")),
+    dict(id="path-built-while-running", description="a path that is not a "
+         "literal sets read_any, and safe_command grants the direction, "
+         "not a path",
+         files={"main.vel": '''fn main() uses io, fs {
+    for a in args() {
+        check read_file(a) {
+            ok t {
+                print(t)
+            }
+            fail w {
+                print(w)
+            }
+        }
+    }
+}
+'''},
+         expect=surface(["fs", "io"], _fns(("main", ["fs", "io"], False)),
+                        "velaris <file> --allow fs:read,io",
+                        fs_paths=_paths(read_any=True))),
+    dict(id="read-and-write-literals", description="file_exists reads, "
+         "write_file writes; both paths are listed as written",
+         files={"main.vel": '''fn main() uses io, fs {
+    if file_exists("data/flag") {
+        write_file("out/report.txt", "done")
+        print("wrote")
+    }
+}
+'''},
+         expect=surface(["fs", "io"], _fns(("main", ["fs", "io"], False)),
+                        "velaris <file> --allow fs:read:data/flag,"
+                        "fs:write:out/report.txt,io",
+                        fs_paths=_paths(read=["data/flag"],
+                                        write=["out/report.txt"]))),
+    dict(id="net-literals", description="a host lower-cased with its "
+         "trailing dot removed, an IPv6 host bracketed with its port, and "
+         "request's URL as its second argument",
+         files={"main.vel": '''fn main() uses io, net {
+    check fetch("https://API.Example.com./v1") {
+        ok a {
+            print(a)
+        }
+        fail w {
+            print(w)
+        }
+    }
+    check fetch_status("http://[::1]:8080/x") {
+        ok s {
+            print(to_text(s))
+        }
+        fail w {
+            print(w)
+        }
+    }
+    check request("GET", "api.example.com:8443/y", "", "{}") {
+        ok r {
+            print(r)
+        }
+        fail w {
+            print(w)
+        }
+    }
+}
+'''},
+         expect=surface(["io", "net"], _fns(("main", ["io", "net"], False)),
+                        "velaris <file> --allow io,net:[::1]:8080,"
+                        "net:api.example.com,net:api.example.com:8443",
+                        net_hosts=_hosts("[::1]:8080", "api.example.com",
+                                         "api.example.com:8443"))),
+    dict(id="url-built-while-running", description="a URL that is not a "
+         "literal sets any, and safe_command grants plain net",
+         files={"main.vel": '''fn main() uses io, net {
+    for a in args() {
+        check fetch("https://" + a) {
+            ok b {
+                print(b)
+            }
+            fail w {
+                print(w)
+            }
+        }
+    }
+}
+'''},
+         expect=surface(["io", "net"], _fns(("main", ["io", "net"], False)),
+                        "velaris <file> --allow io,net",
+                        net_hosts=_hosts(any_host=True))),
+    dict(id="url-without-scheme", description="a URL with no scheme is "
+         "read as https, and its host listed",
+         files={"main.vel": '''fn main() uses io, net {
+    check fetch("api.example.com/x") {
+        ok b {
+            print(b)
+        }
+        fail w {
+            print(w)
+        }
+    }
+}
+'''},
+         expect=surface(["io", "net"], _fns(("main", ["io", "net"], False)),
+                        "velaris <file> --allow io,net:api.example.com",
+                        net_hosts=_hosts("api.example.com"))),
+    dict(id="ffi-literal-modules", description="literal modules are listed "
+         "up to their first dot, and safe_command scopes ffi to them",
+         files={"main.vel": '''fn main() uses io, ffi {
+    check py("math", "sqrt", ["16"]) {
+        ok r {
+            print(r)
+        }
+        fail w {
+            print(w)
+        }
+    }
+    check py_json("json", "dumps", "[1]") {
+        ok j {
+            print(j)
+        }
+        fail w {
+            print(w)
+        }
+    }
+    check py("os.path", "basename", ["a/b"]) {
+        ok b {
+            print(b)
+        }
+        fail w {
+            print(w)
+        }
+    }
+}
+'''},
+         expect=surface(["ffi", "io"], _fns(("main", ["ffi", "io"], False)),
+                        "velaris <file> --allow ffi:json,math,os,io",
+                        ffi_modules=["json", "math", "os"])),
+    dict(id="ffi-module-built-while-running", description="a module named by "
+         "a value built while running sets ffi_any (4.0); safe_command "
+         "still names only the literal module, and so errs toward refusal",
+         files={"main.vel": '''fn main() uses io, ffi {
+    check py("math", "sqrt", ["16"]) {
+        ok r {
+            print(r)
+        }
+        fail w {
+            print(w)
+        }
+    }
+    check py(lower("MATH"), "sqrt", ["9"]) {
+        ok r {
+            print(r)
+        }
+        fail w {
+            print(w)
+        }
+    }
+}
+'''},
+         expect=surface(["ffi", "io"], _fns(("main", ["ffi", "io"], False)),
+                        "velaris <file> --allow ffi:math,io",
+                        ffi_modules=["math"], ffi_any=True)),
+    dict(id="path-with-comma", description="a comma in a literal path is "
+         "percent-encoded in safe_command, so it parses back",
+         files={"main.vel": '''fn main() uses io, fs {
+    check read_file("data,cache.txt") {
+        ok t {
+            print(t)
+        }
+        fail w {
+            print(w)
+        }
+    }
+}
+'''},
+         expect=surface(["fs", "io"], _fns(("main", ["fs", "io"], False)),
+                        "velaris <file> --allow fs:read:data%2Ccache.txt,io",
+                        fs_paths=_paths(read=["data,cache.txt"]))),
+    dict(id="library-without-main", description="a file with no main is "
+         "audited as a library, and is not a problem",
+         files={"lib.vel": '''fn ping() -> Int uses net or fail {
+    return try fetch_status("https://status.example.org")
+}
+
+fn twice(n: Int) -> Int {
+    return n * 2
+}
+'''},
+         expect=surface(["net"], _fns(("ping", ["net"], True),
+                                      ("twice", [], False)),
+                        "velaris <file> --allow net:status.example.org",
+                        net_hosts=_hosts("status.example.org"))),
+    dict(id="two-scopes", description="effects and functions are the "
+         "audited file's; ffi_modules and net_hosts read every file loaded, "
+         "including a function in an import the program never calls",
+         files={"main.vel": '''import "lib.vel"
+
+fn main() uses io, net {
+    check fetch_it() {
+        ok b {
+            print(b)
+        }
+        fail w {
+            print(w)
+        }
+    }
+}
+''', "lib.vel": '''fn fetch_it() -> Text uses net or fail {
+    return try fetch("https://lib.example.org/x")
+}
+
+fn root(n: Text) -> Text uses ffi or fail {
+    let args = [n]
+    return try py("math", "sqrt", args)
+}
+'''},
+         expect=surface(["io", "net"], _fns(("main", ["io", "net"], False)),
+                        "velaris <file> --allow io,net:lib.example.org",
+                        ffi_modules=["math"],
+                        net_hosts=_hosts("lib.example.org"))),
+]
+
+
 def _json_version(path) -> str:
     import json as _j
     return _j.loads(path.read_text(encoding="utf-8"))["version"]
@@ -1383,42 +1946,8 @@ def main() -> int:
     print("malformed budgets fail cleanly (3.3)")
     print("-" * 62)
     # Every malformed budget must be a clean budget error, never an
-    # unhandled traceback (spec Q6). `fs@²` used to stop the parser
-    # with a ValueError from int(); an unknown effect, a doubled colon,
-    # a stray bracket, a count on ffi, a scope on io - each must raise a
-    # readable BudgetError and nothing else.
-    def malformed_budgets():
-        out = []
-        out += ["fs::", "fs:::", "net::", "net:::1", "net:::", "fs:read:",
-                "fs:write:", ":", "@5", "net:[]", "net:[]:80"]
-        for d in ["²", "³", "٣", "⁵", "۲", "５"]:
-            out += [f"fs@{d}", f"net@{d}", f"fs:read:x@{d}", f"net:h@{d}"]
-        for t in ["x", "1x", "-1", "1.5", "0x1", "1_000", "1e9", "", "  ",
-                  "one", "+3", "1,2", "9x", "0o7", "3.0", "٤",
-                  "₂", " 5", "0b1", "1'0"]:
-            out += [f"fs@{t}", f"net@{t}", f"fs:write:x@{t}"]
-        out += ["fs@-1", "net@-5", "fs:read:x@-2", "net:h:80@-1"]
-        for p in ["0", "65536", "70000", "99999", "100000", "-1", "x", "8o",
-                  "66000", "123456", "1e3", "80.0", " 80", "0x50"]:
-            out += [f"net:h:{p}", f"net:[::1]:{p}"]
-        out += ["net:", "net:h:x", "net:[::1", "net:[a]b", "net:[a][b]",
-                "net:[", "net:h/path", "net:a:b:c", "net:h:1:2"]
-        out += ["fs:read:a@b@c", "net:h@1@2", "fs@1@2", "net@3@4"]
-        out += ["ffi@5", "ffi@1", "ffi:@5", "ffi:", "ffi:math@5",
-                "ffi:math@", "ffi:.@2", "ffi:@", "ffi:a@9", "ffi@2", "ffi@0"]
-        for e in ["io", "env", "clock", "rand"]:
-            out += [f"{e}:x", f"{e}@1", f"{e}:", f"{e}@0", f"{e}:read",
-                    f"{e}@2", f"{e}:scope"]
-        out += ["IO", "Fs", "NET", "Ffi", "banana", "io2", "fss", "nett",
-                "clockk", "randd", "envv", "xyz", "fs1", "net1",
-                "fs:reed:x", "net:*.com", "net:*", "net:*.*",
-                "fs:read:x,,net:*.com,ffi@2", "net:*.", "net:*.1.2.3",
-                "net:a*b.com", "net:*a.com", "Io", "ENV", "Clock", "RAND",
-                "http", "web", "sql", "exec", "shell", "sys", "net2",
-                "fs_", "ff", "f", "n", "e", "io.", "io-x", "read",
-                "write", "path", "host", "port", "module", "count"]
-        return sorted(set(out))
-
+    # unhandled traceback (spec Q6); the list is malformed_budgets(),
+    # above, and each is a case in velaris-spec tests/L1.
     fuzz = malformed_budgets()
     fuzz_wrong = []
     for g in fuzz:
@@ -1442,6 +1971,110 @@ def main() -> int:
     except Exception as e:
         ok("a bad grant through the library is a ValueError", False,
            type(e).__name__)
+
+    print()
+    print("budgets parse to what velaris-spec 4 and 5 say (4.1)")
+    print("-" * 62)
+    # Each entry of BUDGETS is a case in velaris-spec tests/L1: the text,
+    # and the grants it parses to, or its refusal. Paths are compared
+    # after velaris-spec 5.1's resolution, as a runner of the corpus does.
+    def shape_of(b) -> dict:
+        out = {"effects": sorted(b.effects)}
+        if "ffi" in b.effects:
+            out["ffi"] = "any" if b.modules is None else sorted(b.modules)
+        if "fs" in b.effects:
+            out["fs"] = "any" if b.fs is None else [
+                {"direction": d, "path": p} for d, p in b.fs]
+        if "net" in b.effects:
+            out["net"] = "any" if b.net is None else [
+                {"host": h, "port": p} for h, p in b.net]
+        out["counts"] = {e: n for e, n in b.limits.items()
+                         if n is not None and e in b.effects}
+        return out
+
+    def resolved(shape: dict) -> dict:
+        out = dict(shape)
+        if isinstance(out.get("fs"), list):
+            out["fs"] = sorted({(g["direction"], None if g["path"] is None
+                                 else os.path.normcase(
+                                     os.path.realpath(g["path"])))
+                                for g in out["fs"]}, key=repr)
+        if isinstance(out.get("net"), list):
+            out["net"] = sorted({(g["host"], g["port"]) for g in out["net"]},
+                                key=repr)
+        return out
+
+    parse_wrong = []
+    for bid, _, allow, deny, want in BUDGETS:
+        try:
+            got = shape_of(velaris._budget_from(
+                None if allow is None else {allow},
+                None if deny is None else set(deny.split(","))))
+        except ValueError:
+            got = None
+        if (got is None) != (want is None) or (
+                want is not None and resolved(got) != resolved(want)):
+            parse_wrong.append((bid, got, want))
+    ok(f"{len(BUDGETS)} budgets parse to the grants velaris-spec gives "
+       f"them, or are refused whole", not parse_wrong, parse_wrong[:3])
+
+    print()
+    print("the effect surface velaris.audit/1 reports (4.1)")
+    print("-" * 62)
+    # Each entry of AUDITS is a case in velaris-spec tests/L1. Besides the
+    # fields a case names, every document must hold only the seven in
+    # effects, and a safe_command whose grants parse.
+    import tempfile as _tf
+    audit_validator = None
+    audit_schema = (HERE.parent / "velaris-spec" / "schemas"
+                    / "velaris.audit.1.schema.json")
+    try:
+        from jsonschema import Draft202012Validator as _V
+        if audit_schema.exists():
+            audit_validator = _V(json.loads(
+                audit_schema.read_text(encoding="utf-8")))
+    except ImportError:
+        pass
+    if audit_validator is None:
+        skip("each audit below validates against velaris-spec's schema",
+             "jsonschema or ../velaris-spec is not present")
+    for case in AUDITS:
+        box = Path(_tf.mkdtemp(prefix="velaris-audit-"))
+        for name, text in case["files"].items():
+            (box / name).write_text(text, encoding="utf-8", newline="\n")
+        entry = next(iter(case["files"]))
+        doc = velaris.audit(case["files"][entry],
+                            path=str(box / entry)).as_dict()
+        want, diffs = case["expect"], []
+        if doc["ok"] != want["ok"]:
+            diffs.append(f"ok is {doc['ok']}")
+        elif not want["ok"]:
+            codes = {p["code"] for p in doc["problems"]}
+            diffs += [f"no {c}" for c in want["problems_include"]
+                      if c not in codes]
+        else:
+            for key in ("effects", "ffi_modules", "ffi_any", "fs_paths",
+                        "net_hosts", "safe_command"):
+                if doc.get(key) != want[key]:
+                    diffs.append(f"{key} is {doc.get(key)!r}")
+            fns = [{"name": f["name"], "effects": f["effects"],
+                    "can_fail": f["can_fail"]} for f in doc["functions"]]
+            if fns != want["functions"]:
+                diffs.append(f"functions are {fns!r}")
+        if doc["effects"] != sorted(set(doc["effects"])) or not set(
+                doc["effects"]) <= set(velaris.ALL_EFFECTS):
+            diffs.append(f"effects {doc['effects']} is not a sorted subset "
+                         f"of the seven")
+        try:
+            velaris.Budget.parse(doc["safe_command"].split("--allow ", 1)[1])
+        except ValueError as e:
+            diffs.append(f"safe_command does not parse: {e}")
+        if audit_validator is not None:
+            diffs += [f"schema: {e.message}"
+                      for e in audit_validator.iter_errors(doc)][:2]
+        import shutil as _sh
+        _sh.rmtree(box, ignore_errors=True)
+        ok(f"audit: {case['description']}", not diffs, "; ".join(diffs))
 
     print()
     print("the CLI's audit --json is velaris.audit/1 (3.3)")

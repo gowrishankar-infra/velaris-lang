@@ -219,9 +219,14 @@ Field meanings, all stable within `velaris.audit/1`:
 | `contract_coverage` | functions that take or return data and promise nothing (added in 2.62) |
 | `fs_paths` | `{"read": [...], "write": [...], "read_any": bool, "write_any": bool}` - the path literals a program reads and writes; a flag says a path was built at runtime (added in 3.0) |
 | `net_hosts` | `{"hosts": [...], "any": bool}` - the hosts (with ports when given) named in URL literals (added in 3.0) |
+| `ffi_any` | true when a py* call names its module with a value built while running, which `ffi_modules` cannot list (added in 4.0) |
 
 A new field may be added within version 1; a field will not change
-meaning or disappear without the schema name changing.
+meaning or disappear without the schema name changing. `effects` and
+each function's `effects` hold only the seven effect names, even in the
+audit of a program that does not compile because it names another in
+a `uses` clause (from 4.1; until then that name was listed, and made
+`safe_command` a budget that does not parse).
 
 ## Setting it up in your assistant
 
@@ -775,6 +780,32 @@ What the ratchet does not see is in [THREAT_MODEL.md](THREAT_MODEL.md):
 it reads text, so what a granted `ffi` module does is beyond it, paths
 are compared as written, and a function renamed as it gains an effect
 is a new function.
+
+## Running velaris-spec's conformance corpus
+
+```
+velaris conformance                    # L1, L2 and L3; exit 1 if any case fails
+velaris conformance --level 3          # the cases a claim at L3 needs: L1 and L3
+velaris conformance --json             # velaris.conformance/1, one result per case
+velaris conformance --corpus DIR       # DIR is velaris-spec's tests/
+```
+
+[velaris-spec](https://github.com/gowrishankar-infra/velaris-spec)'s
+`tests/` is a conformance corpus for the capability format: JSON cases
+an implementation in any language runs its own way, at the three levels
+of its CONFORMANCE.md - L1 Declaration (the budget grammar, the effect
+surface, `velaris.audit/1`), L2 Enforcement (refusals at run time) and
+L3 Ratchet (`velaris.capabilities/1`). `velaris conformance` finds it
+beside the working directory or this installation (`velaris-spec/tests`
+or `../velaris-spec/tests`), or where `--corpus` or
+`VELARIS_CONFORMANCE_CORPUS` says, and runs every case through the
+budget parser, the audit, the command line under a budget, and the
+baseline writer and check. It prints one line per level and a verdict;
+a failure names the case and what differed. Validating documents
+against velaris-spec's schemas needs `jsonschema`; without it those
+cases are skipped and the level is reported as not shown. A case that
+needs a symbolic link is skipped where the system will not make one,
+and the verdict says so.
 
 ## As a commit hook
 

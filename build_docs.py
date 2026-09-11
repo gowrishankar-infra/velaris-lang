@@ -122,9 +122,12 @@ PAGES = [("index.html", "Home"), ("tutorial.html", "Tutorial"),
          ("playground.html", "Playground")]
 
 
-def shell(title: str, here: str, body: str, wide: bool = False) -> str:
+def shell(title: str, here: str, body: str, wide: bool = False,
+          root: str = "") -> str:
+    """A page of the site; `root` is the way back to the site's top from
+    a page in a subdirectory, such as "../../"."""
     links = "".join(
-        f'<a href="{p}" class="{"here" if p == here else ""}">{n}</a>'
+        f'<a href="{root}{p}" class="{"here" if p == here else ""}">{n}</a>'
         for p, n in PAGES)
     fav = ("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'"
            " viewBox='0 0 32 32'%3E%3Crect width='32' height='32'"
@@ -140,7 +143,7 @@ all in the signature.">
 <link rel="icon" href="{fav}">
 <title>{html.escape(title)} - Velaris</title>
 <style>{STYLE}</style></head><body>
-<nav><div class="in"><a class="brand" href="index.html">
+<nav><div class="in"><a class="brand" href="{root}index.html">
 <span class="dot"></span>Velaris</a>{links}
 <span class="ver">v{velaris.VERSION}</span></div></nav>
 <main class="{'wide' if wide else ''}">{body}</main>
@@ -369,7 +372,7 @@ what was caught while running, and what was missed.</p>
 <table>
 <tr><th></th><th>caught before running</th><th>caught while
 running</th><th>missed</th><th>false positives on the 7 controls</th></tr>
-<tr><td><b>Velaris 3.1</b></td><td>42</td><td>12</td><td>2</td>
+<tr><td><b>Velaris 4.1</b></td><td>42</td><td>12</td><td>2</td>
 <td>0</td></tr>
 <tr><td>Deno 2.9</td><td>5</td><td>27</td><td>24</td><td>0</td></tr>
 <tr><td>Python 3.13</td><td>0</td><td>28</td><td>28</td><td>0</td></tr>
@@ -398,6 +401,108 @@ scanning with <code>--sarif</code>.
 error table in the compiler source.</p>"""
 
 
+PREDICATE_TYPE = ("https://gowrishankar-infra.github.io/velaris-lang/"
+                  "capability/v1")
+SPEC_REPO = "https://github.com/gowrishankar-infra/velaris-spec"
+
+
+def capability_page() -> str:
+    """The page an in-toto predicate type URL resolves to. The definition
+    is velaris-spec SPEC.md section 8.5; the schema beside this page is
+    velaris-spec's schemas/capability-predicate.v1.schema.json, byte for
+    byte, and velaris-spec's tools/check_sync.py fails if they differ."""
+    example = html.escape("""{
+  "_type": "https://in-toto.io/Statement/v1",
+  "subject": [
+    {"name": "examples/effects.vel",
+     "digest": {"sha256": "e483365ce74a20770a1ef503f185f4de2c16b0524797408784a235e78b6baafb"}}
+  ],
+  "predicateType": "%s",
+  "predicate": {
+    "producer": {"name": "velaris-lang",
+                 "uri": "https://github.com/gowrishankar-infra/velaris-lang"},
+    "specification": "velaris-spec 0.4",
+    "auditedAt": "2026-09-11T10:07:06Z",
+    "audit": {"schema": "velaris.audit/1", "velaris_version": "4.1.0",
+              "ok": true, "effects": ["clock", "fs", "io", "rand"],
+              "safe_command": "velaris <file> --allow clock,fs:read:report.txt,fs:write:report.txt,io,rand",
+              "...": "the rest of the audit"}
+  }
+}""" % PREDICATE_TYPE)
+    return f"""
+<div class="eyebrow">An in-toto predicate type</div>
+<h1>capability/v1</h1>
+<p class="lead">A signed statement that a named tool read these Velaris
+source files, byte for byte, and reports this capability surface: the
+effects the program declares, the paths, hosts and modules it names,
+and the narrowest budget to run it under.</p>
+
+<p><b>Predicate type:</b> <code>{PREDICATE_TYPE}</code> - this
+page.<br><b>Schema:</b> <a href="schema.json">schema.json</a>, JSON Schema
+draft 2020-12, for the predicate.<br><b>Definition:</b>
+<a href="{SPEC_REPO}/blob/main/SPEC.md#85-the-audit-as-an-in-toto-predicate">velaris-spec
+SPEC.md section 8.5</a>, dedicated to the public domain under CC0.</p>
+
+<h2>What it is</h2>
+<p>A <code>velaris.audit/1</code> document (velaris-spec section 8) names
+no file and carries no signature. This predicate type puts one inside an
+<a href="https://github.com/in-toto/attestation">in-toto Statement v1</a>,
+whose subjects are the files audited, identified by digest, so that a
+signed Statement says which source the audit describes, and who says
+so.</p>
+
+<pre><code>{example}</code></pre>
+
+<h2>Fields</h2>
+<table>
+<tr><th>Field</th><th>Required</th><th>Meaning</th></tr>
+<tr><td><code>subject[0]</code></td><td>yes</td><td>the file audited:
+<code>name</code>, its path as the producer was given it,
+<code>/</code>-separated; <code>digest.sha256</code> of its bytes. The files
+it imports should follow, one subject each.</td></tr>
+<tr><td><code>predicate.audit</code></td><td>yes</td><td>a
+<code>velaris.audit/1</code> document produced from exactly the bytes the
+subjects name</td></tr>
+<tr><td><code>predicate.producer</code></td><td>yes</td><td><code>name</code>
+of the implementation that wrote the audit, and optionally
+<code>uri</code>; its version is the audit's
+<code>velaris_version</code></td></tr>
+<tr><td><code>predicate.specification</code></td><td>no</td><td>the
+velaris-spec version followed, as <code>velaris-spec 0.4</code></td></tr>
+<tr><td><code>predicate.auditedAt</code></td><td>no</td><td>when the audit
+was made, RFC 3339 in UTC, by the producer's clock</td></tr>
+<tr><td><code>predicate.conformance</code></td><td>no</td><td>the
+conformance levels the producer claims (velaris-spec CONFORMANCE.md) and
+the corpus it ran - a claim, not evidence</td></tr>
+</table>
+
+<h2>Parsing rules</h2>
+<p>In-toto's standard parsing rules apply. Ignore any field you do not
+know, in the predicate and in the audit. Fields may be added within v1; a
+change of meaning is a new type, <code>.../capability/v2</code>. Check
+that the first subject's digest is the digest of the file you mean to
+trust.</p>
+
+<h2>What it does not say</h2>
+<p>That the audit is right, that the program is safe to run, or that any
+runtime will enforce the budget in <code>safe_command</code>. When
+<code>audit.ok</code> is false, it says nothing about what the program may
+do. It says that the signer ran the producer on these bytes and got this
+audit.</p>
+
+<h2>Status</h2>
+<p>velaris-lang {velaris.VERSION} publishes this type and its schema. It
+does not yet write Statements of it; one can be assembled from
+<code>velaris audit FILE --json</code> and the file's digest, as
+<a href="{SPEC_REPO}/blob/main/examples/capability-statement.json">velaris-spec's
+example</a> was.</p>
+"""
+
+
+(OUT / "capability" / "v1").mkdir(parents=True, exist_ok=True)
+(OUT / "capability" / "v1" / "index.html").write_text(
+    shell("capability/v1 predicate type", "", capability_page(),
+          root="../../"), encoding="utf-8")
 (OUT / "index.html").write_text(
     shell("Velaris", "index.html", index_page()), encoding="utf-8")
 (OUT / "tutorial.html").write_text(

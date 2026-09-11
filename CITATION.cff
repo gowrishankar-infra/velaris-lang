@@ -1,0 +1,29 @@
+cff-version: 1.2.0
+message: >-
+  If you use Velaris, please cite this repository as below. A preprint
+  describing it is forthcoming; until it is published, this entry is the
+  citation.
+title: "Velaris"
+abstract: >-
+  A small programming language in which a function's signature declares
+  the effects it may perform, a runtime refuses any effect outside the
+  budget an operator grants, contracts are checked by a prover before
+  running, and a repository can declare the capability surface its
+  programs may have and fail any change that widens it. The reference
+  implementation of the Velaris capability format (velaris-spec).
+type: software
+authors:
+  - given-names: Gowri
+    family-names: Shankar
+repository-code: "https://github.com/gowrishankar-infra/velaris-lang"
+url: "https://gowrishankar-infra.github.io/velaris-lang/"
+license: MIT
+version: 4.1.0
+date-released: "2026-09-11"
+keywords:
+  - programming language
+  - effect system
+  - capabilities
+  - sandbox
+  - contracts
+  - verification

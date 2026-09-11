@@ -9,381 +9,53 @@ run a program they have not read.
 Needs no theorem prover: every case here is about the runtime, so this
 behaves identically with and without z3.
 
+Every case is data, and velaris-spec's conformance corpus is written
+from it (build_conformance.py writes velaris-spec tests/L2): the
+budget, the program, the code the refusal must carry, and what must
+not happen. A case this implementation passes, another implementation
+can run from the corpus without reading this file - except the ones
+marked `not_in_corpus`, which say why.
+
+Paths and ports are placeholders the fixture fills in, the same here
+and in any runner of the corpus:
+
+    {ROOT}      a fresh directory, the run's working directory
+    {DATA}      {ROOT}/box/data, holding a.txt ("inside\\n")
+    {OUT}       {ROOT}/box/out, empty
+    {OUTSIDE}   {ROOT}/outside.txt ("outside\\n")
+    {PORT_A}    a local HTTP server: GET /go answers 302 to
+                http://localhost:{PORT_B}/landed, anything else 200 "hello"
+    {PORT_B}    a second server, answering the same way
+
+Paths are written with "/" on every platform.
+
     python check_sandbox.py
 """
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).parent
 VELARIS = HERE / "velaris.py"
-SCRATCH = HERE / "_sandbox_check.vel"
-WROTE = HERE / "_sandbox_wrote.txt"
 
-REFUSED = ("E310", "E311", "E313", "E314", "E315")
+# words a program prints only if it got past the refusal
+MARKERS = ("READ IT", "WROTE IT", "REACHED IT", "CALLED IT", "OPENED IT",
+           "GOT THROUGH", "CARRIED ON", "SWALLOWED THE REFUSAL",
+           "FOLLOWED IT")
 
-# (name, flags, source, a file it must not manage to create)
-CASES = [
-    ("reading a file", ["--allow", "io"], '''
-fn peek(path: Text) -> Text uses fs or fail {
-    return try read_file(path)
-}
+# Why the attribute-chain cases are not in the corpus: each one depends
+# on Python's object model - which module owns codecs.encode, that
+# os.system lives in nt or posix, what __globals__ holds. The rule they
+# test (velaris-spec 5.3) binds every implementation, but the cases can
+# only be written against one host language.
+PYTHON_REACH = ("depends on Python's object model (which module a Python "
+                "attribute belongs to); velaris-spec 5.3 binds every "
+                "implementation, but this case is written against Python")
+PYTHON_HOST = ("needs a Python host to run the granted call; the corpus "
+               "runs no host code")
 
-fn main() uses io, fs {
-    check peek("velaris.py") {
-        ok body {
-            print("READ IT")
-        }
-        fail why {
-            print("failed")
-        }
-    }
-}
-''', None),
-    ("writing a file", ["--allow", "io"], '''
-fn main() uses io, fs {
-    write_file("_sandbox_wrote.txt", "escaped")
-    print("WROTE IT")
-}
-''', WROTE),
-    ("reaching the network", ["--allow", "io"], '''
-fn main() uses io, net {
-    check fetch_status("https://example.com") {
-        ok code {
-            print("REACHED IT")
-        }
-        fail why {
-            print("failed")
-        }
-    }
-}
-''', None),
-    ("calling Python", ["--allow", "io"], '''
-fn main() uses io, ffi {
-    check py("os", "getcwd", ["x"]) {
-        ok out {
-            print("CALLED IT")
-        }
-        fail why {
-            print("failed")
-        }
-    }
-}
-''', None),
-    ("opening a database through a handle", ["--allow", "io"], '''
-fn main() uses io, ffi {
-    check py_new("sqlite3", "connect", "[\\":memory:\\"]") {
-        ok conn {
-            print("OPENED IT")
-        }
-        fail why {
-            print("failed")
-        }
-    }
-}
-''', None),
-    ("asking the clock", ["--allow", "io"], '''
-fn main() uses io, clock {
-    print(now())
-}
-''', None),
-    ("asking for randomness", ["--allow", "io"], '''
-fn main() uses io, rand {
-    print(random(6))
-}
-''', None),
-    ("hiding the effect behind a helper", ["--allow", "io"], '''
-fn helper(path: Text) -> Int uses fs or fail {
-    let body = try read_file(path)
-    return length(body)
-}
-
-fn wrapper(path: Text) -> Int uses fs or fail {
-    return try helper(path)
-}
-
-fn main() uses io, fs {
-    check wrapper("velaris.py") {
-        ok n {
-            print("GOT THROUGH")
-        }
-        fail why {
-            print("failed")
-        }
-    }
-}
-''', None),
-    ("catching the refusal to carry on anyway", ["--allow", "io"], '''
-fn peek(path: Text) -> Text uses fs or fail {
-    return try read_file(path)
-}
-
-fn main() uses io, fs {
-    check peek("velaris.py") {
-        ok body {
-            print("READ IT")
-        }
-        fail why {
-            print("SWALLOWED THE REFUSAL")
-        }
-    }
-    print("CARRIED ON")
-}
-''', None),
-    ("denying one effect while allowing the rest",
-     ["--deny", "fs"], '''
-fn main() uses io, fs {
-    write_file("_sandbox_wrote.txt", "escaped")
-    print("WROTE IT")
-}
-''', WROTE),
-    ("reaching a module outside the ffi allow-list",
-     ["--allow", "io,ffi:math"], '''
-fn main() uses io, ffi {
-    let none: List of Text = []
-    check py("os", "getcwd", none) {
-        ok d {
-            print("GOT THROUGH")
-        }
-        fail w {
-            print("failed")
-        }
-    }
-}
-''', None),
-    ("dodging the allow-list with a submodule path",
-     ["--allow", "io,ffi:math"], '''
-fn main() uses io, ffi {
-    let none: List of Text = []
-    check py("os.path", "getcwd", none) {
-        ok d {
-            print("GOT THROUGH")
-        }
-        fail w {
-            print("failed")
-        }
-    }
-}
-''', None),
-    ("dodging the allow-list through py_json",
-     ["--allow", "io,ffi:math"], '''
-fn main() uses io, ffi {
-    check py_json("subprocess", "getoutput", "[\\"echo GOT THROUGH\\"]") {
-        ok d {
-            print("GOT THROUGH")
-        }
-        fail w {
-            print("failed")
-        }
-    }
-}
-''', None),
-    ("dodging the allow-list through a handle",
-     ["--allow", "io,ffi:math"], '''
-fn main() uses io, ffi {
-    check py_new("subprocess", "Popen", "[[\\"echo\\"]]") {
-        ok h {
-            print("GOT THROUGH")
-        }
-        fail w {
-            print("failed")
-        }
-    }
-}
-''', None),
-    ("denying several at once", ["--deny", "fs,net,ffi"], '''
-fn main() uses io, net {
-    check fetch_status("https://example.com") {
-        ok code {
-            print("REACHED IT")
-        }
-        fail why {
-            print("failed")
-        }
-    }
-}
-''', None),
-    # 3.3: an ffi:M grant is bounded to the module a call actually
-    # reaches, not merely the one it names. The attribute chain is checked
-    # step by step; an object owned by a module outside the grants is
-    # E311, naming that module, and an owner that cannot be placed is
-    # refused rather than allowed. These are the escapes that step 2.2's
-    # module-name-only check let through until 3.3.
-    ("reaching codecs through a granted json",
-     ["--allow", "io,ffi:json"], '''
-fn main() uses io, ffi {
-    check py("json", "codecs.encode", ["x"]) {
-        ok o { print("GOT THROUGH") }
-        fail w { print("failed") }
-    }
-}
-''', None),
-    ("reaching os.system through a granted os, subprocess-free",
-     ["--allow", "io,ffi:os"], '''
-fn main() uses io, ffi {
-    check py_int("os", "system", ["echo GOT THROUGH"]) {
-        ok n { print("GOT THROUGH") }
-        fail w { print("failed") }
-    }
-}
-''', None),
-    ("using a granted importlib to reach another module",
-     ["--allow", "io,ffi:importlib"], '''
-fn main() uses io, ffi {
-    check py_json("importlib", "import_module", "[\\"os\\"]") {
-        ok o { print("GOT THROUGH") }
-        fail w { print("failed") }
-    }
-}
-''', None),
-    ("reaching a builtins type through a granted module's value",
-     ["--allow", "io,ffi:math"], '''
-fn main() uses io, ffi {
-    let none: List of Text = []
-    check py("math", "pi.__class__", none) {
-        ok o { print("GOT THROUGH") }
-        fail w { print("failed") }
-    }
-}
-''', None),
-    ("laundering through __globals__ to reach builtins",
-     ["--allow", "io,ffi:json"], '''
-fn main() uses io, ffi {
-    let none: List of Text = []
-    check py("json", "dumps.__globals__.__class__", none) {
-        ok o { print("GOT THROUGH") }
-        fail w { print("failed") }
-    }
-}
-''', None),
-    ("a handle exposing an object from another module",
-     ["--allow", "io,ffi:json"], '''
-fn main() uses io, ffi {
-    check py_new("json", "decoder.JSONDecoder", "[]") {
-        ok h {
-            check py_field(h, "scan_once") {
-                ok f { print("GOT THROUGH") }
-                fail w { print("failed") }
-            }
-        }
-        fail w { print("failed") }
-    }
-}
-''', None),
-]
-
-# things that must still work: a budget must not break honest programs
-ALLOWED = [
-    ("pure work with no permission at all", ["--allow", ""], '''
-import "std.vel"
-
-fn total(n: Int) -> Int
-    requires n >= 0
-    ensures result >= 0
-{
-    let sum = 0
-    for i in 0 to n {
-        sum = sum + i
-    }
-    return sum
-}
-
-fn main() {
-    let answer = total(10)
-    let sorted = sort([3, 1, 2])
-}
-''', ""),
-    ("printing when io is allowed", ["--allow", "io"], '''
-fn main() uses io {
-    print("hello")
-}
-''', "hello"),
-    ("the clock when clock is allowed", ["--allow", "io,clock"], '''
-fn main() uses io, clock {
-    if now() > 0 {
-        print("time moves")
-    }
-}
-''', "time moves"),
-    ("an allowed module works under the allow-list",
-     ["--allow", "io,ffi:math"], '''
-fn main() uses io, ffi {
-    check py_float("math", "sqrt", ["16"]) {
-        ok r {
-            print("root ok")
-        }
-        fail w {
-            print(w)
-        }
-    }
-}
-''', "root ok"),
-    ("everything when nothing is restricted", [], '''
-fn main() uses io, clock, rand {
-    if now() > 0 and random(6) >= 0 {
-        print("all fine")
-    }
-}
-''', "all fine"),
-    # 3.3: the reach check must not break honest deep access inside a
-    # granted module, and must let a grant of two modules use both.
-    ("a legitimate deep attribute inside the granted module still works",
-     ["--allow", "io,ffi:json"], '''
-fn main() uses io, ffi {
-    check py_new("json", "decoder.JSONDecoder", "[]") {
-        ok h { print("made a decoder") }
-        fail w { print(w) }
-    }
-}
-''', "made a decoder"),
-    ("a two-module grant, each module used correctly",
-     ["--allow", "io,ffi:math,ffi:base64"], '''
-fn main() uses io, ffi {
-    check py_float("math", "sqrt", ["16"]) {
-        ok r {
-            check py("base64", "b64encode", ["aGk="]) {
-                ok b { print("both modules ok") }
-                fail w { print(w) }
-            }
-        }
-        fail w { print(w) }
-    }
-}
-''', "both modules ok"),
-    # 3.3: ffi is additive like fs and net (spec v0.2, Q2). A plain ffi
-    # grants every module, so ffi,ffi:math is every module - the wider
-    # grant wins, in either order, and a module other than math works.
-    ("additive ffi: a plain ffi widens a named-module grant",
-     ["--allow", "io,ffi,ffi:math"], '''
-fn main() uses io, ffi {
-    let none: List of Text = []
-    check py("os", "getcwd", none) {
-        ok d { print("wider ffi wins") }
-        fail w { print(w) }
-    }
-}
-''', "wider ffi wins"),
-    # until 2.62 `--allow io` leaked into args() as two extra words
-    ("args() carries the program's arguments, not the budget",
-     ["--allow", "io", "7", "eight"], '''
-fn main() uses io {
-    print(format("args: {}", args()))
-}
-''', "args: [7, eight]"),
-    ("args() is clean under --deny as well",
-     ["--deny", "fs,net", "only"], '''
-fn main() uses io {
-    print(format("args: {}", args()))
-}
-''', "args: [only]"),
-]
-
-
-# ---- scoped grants (3.0): paths, hosts, counts, and env on its own ----
-#
-# Built at runtime because they need a directory the test owns, a
-# symlink, and two local ports. Each entry has the CASES shape.
 
 def _read(path) -> str:
     return (
@@ -410,125 +82,615 @@ def _fetch(url) -> str:
         "    }\n}\n")
 
 
-def scoped_cases(box, granted_port: int, other_port: int) -> list:
-    data, out = box / "data", box / "out"
-    inside = (data / "a.txt").as_posix()
-    outside = (box.parent / "_sandbox_outside.txt")
-    fs_read = ["--allow", f"io,fs:read:{data.as_posix()}"]
-    net_one = ["--allow", f"io,net:127.0.0.1:{granted_port}"]
-    count_fs = (
-        "fn main() uses io, fs {\n    let i = 0\n    while i < 3 {\n"
-        f'        if file_exists("{inside}") {{\n'
-        "            print(\"looked\")\n        }\n        i = i + 1\n"
-        "    }\n    print(\"GOT THROUGH\")\n}\n")
-    count_net = (
-        "fn main() uses io, net {\n    let i = 0\n    while i < 3 {\n"
-        f'        check fetch_status("http://127.0.0.1:{granted_port}/") {{\n'
-        "            ok c {\n                print(\"asked\")\n            }\n"
-        "            fail w {\n                print(\"failed\")\n            }\n"
-        "        }\n        i = i + 1\n    }\n    print(\"GOT THROUGH\")\n}\n")
-    env_only_io = (
-        "fn main() uses io, env {\n"
-        '    print("READ IT " + env("PATH", ""))\n}\n')
-    cases = [
-        ("reading outside the granted prefix", fs_read,
-         _read(outside.as_posix()), None),
-        ("writing with only read granted", fs_read,
-         _write((data / "new.txt").as_posix()), data / "new.txt"),
-        ("escaping the prefix with ..", fs_read,
-         _read((data / ".." / ".." / outside.name).as_posix()), None),
-        ("a host not in the list", net_one,
-         _fetch(f"http://localhost:{granted_port}/"), None),
-        ("a wildcard must not match the parent domain",
-         ["--allow", "io,net:*.example.com"],
-         _fetch("http://example.com/"), None),
-        ("a port not in the list", net_one,
-         _fetch(f"http://127.0.0.1:{other_port}/"), None),
-        ("the file operation count reached",
-         ["--allow", f"io,fs:read:{data.as_posix()}@2"], count_fs, None),
-        ("the network operation count reached",
-         ["--allow", f"io,net:127.0.0.1:{granted_port}@2"], count_net, None),
-        ("env() with only io granted", ["--allow", "io"], env_only_io, None),
-    ]
-    link = data / "link.txt"
-    if os.name != "nt":
-        try:
-            if link.exists() or link.is_symlink():
-                link.unlink()
-            link.symlink_to(outside)
-            cases.append(("escaping the prefix through a symlink", fs_read,
-                          _read(link.as_posix()), None))
-        except OSError:
-            pass
-    return cases
+def escape(id, name, source, *, allow=None, deny=None, refused,
+           creates=None, stdout=(), requires=(), spec=(),
+           not_in_corpus=None):
+    """A program that must be refused with `refused`, print none of
+    MARKERS, create nothing at `creates`, and print each of `stdout`
+    before the refusal."""
+    return dict(id=id, name=name, source=source.lstrip(), allow=allow,
+                deny=deny, args=[], refused=refused, creates=creates,
+                stdout=list(stdout), requires=list(requires),
+                spec=list(spec), not_in_corpus=not_in_corpus)
 
 
-def scoped_allowed(box, granted_port: int, other_port: int) -> list:
-    data, out = box / "data", box / "out"
-    inside = (data / "a.txt").as_posix()
-    copy = (out / "copy.txt").as_posix()
-    honest = (
-        "fn main() uses io, env, fs, net {\n"
-        f'    check read_file("{inside}") {{\n'
-        "        ok t {\n"
-        f'            write_file("{copy}", t)\n'
-        f'            check fetch_status("http://127.0.0.1:{granted_port}/") {{\n'
-        "                ok c {\n"
-        '                    print(format("all grants used, status {}, path set: {}",\n'
-        '                                 c, length(env("PATH", "")) > 0))\n'
-        "                }\n"
-        "                fail w {\n                    print(\"fetch failed: \" + w)\n                }\n"
-        "            }\n        }\n"
-        "        fail w {\n            print(\"read failed: \" + w)\n        }\n"
-        "    }\n}\n")
-    redirect = (
-        "fn main() uses io, net {\n"
-        f'    check fetch("http://127.0.0.1:{granted_port}/go") {{\n'
-        "        ok b {\n            print(\"FOLLOWED IT\")\n        }\n"
-        "        fail w {\n            print(\"caught: \" + w)\n        }\n"
-        "    }\n}\n")
-    redirect_ok = redirect.replace('print("FOLLOWED IT")', 'print("landed: " + b)')
+def honest(id, name, source, *, allow=None, deny=None, args=(), stdout=(),
+           requires=(), spec=(), not_in_corpus=None):
+    """A program that must run to its end and print each of `stdout`."""
+    return dict(id=id, name=name, source=source.lstrip(), allow=allow,
+                deny=deny, args=list(args), refused=None, creates=None,
+                stdout=list(stdout), requires=list(requires),
+                spec=list(spec), not_in_corpus=not_in_corpus)
+
+
+ESCAPES = [
+    escape("read-under-io", "reading a file", '''
+fn peek(path: Text) -> Text uses fs or fail {
+    return try read_file(path)
+}
+
+fn main() uses io, fs {
+    check peek("{DATA}/a.txt") {
+        ok body {
+            print("READ IT")
+        }
+        fail why {
+            print("failed")
+        }
+    }
+}
+''', allow="io", refused="E310", spec=["6 G2", "6 G5"]),
+    escape("write-under-io", "writing a file", '''
+fn main() uses io, fs {
+    write_file("{ROOT}/wrote.txt", "escaped")
+    print("WROTE IT")
+}
+''', allow="io", refused="E310", creates="{ROOT}/wrote.txt",
+        spec=["6 G2"]),
+    escape("net-under-io", "reaching the network", '''
+fn main() uses io, net {
+    check fetch_status("https://example.com") {
+        ok code {
+            print("REACHED IT")
+        }
+        fail why {
+            print("failed")
+        }
+    }
+}
+''', allow="io", refused="E310", spec=["6 G2"]),
+    escape("ffi-under-io", "calling Python", '''
+fn main() uses io, ffi {
+    check py("os", "getcwd", ["x"]) {
+        ok out {
+            print("CALLED IT")
+        }
+        fail why {
+            print("failed")
+        }
+    }
+}
+''', allow="io", refused="E310", spec=["6 G2"]),
+    escape("ffi-handle-under-io", "opening a database through a handle", '''
+fn main() uses io, ffi {
+    check py_new("sqlite3", "connect", "[\\":memory:\\"]") {
+        ok conn {
+            print("OPENED IT")
+        }
+        fail why {
+            print("failed")
+        }
+    }
+}
+''', allow="io", refused="E310", spec=["6 G2"]),
+    escape("clock-under-io", "asking the clock", '''
+fn main() uses io, clock {
+    print(now())
+}
+''', allow="io", refused="E310", spec=["6 G2"]),
+    escape("rand-under-io", "asking for randomness", '''
+fn main() uses io, rand {
+    print(random(6))
+}
+''', allow="io", refused="E310", spec=["6 G2"]),
+    escape("effect-behind-two-helpers", "hiding the effect behind a helper",
+           '''
+fn helper(path: Text) -> Int uses fs or fail {
+    let body = try read_file(path)
+    return length(body)
+}
+
+fn wrapper(path: Text) -> Int uses fs or fail {
+    return try helper(path)
+}
+
+fn main() uses io, fs {
+    check wrapper("{DATA}/a.txt") {
+        ok n {
+            print("GOT THROUGH")
+        }
+        fail why {
+            print("failed")
+        }
+    }
+}
+''', allow="io", refused="E310", spec=["6 G2", "6 G5"]),
+    escape("refusal-cannot-be-caught",
+           "catching the refusal to carry on anyway", '''
+fn peek(path: Text) -> Text uses fs or fail {
+    return try read_file(path)
+}
+
+fn main() uses io, fs {
+    check peek("{DATA}/a.txt") {
+        ok body {
+            print("READ IT")
+        }
+        fail why {
+            print("SWALLOWED THE REFUSAL")
+        }
+    }
+    print("CARRIED ON")
+}
+''', allow="io", refused="E310", spec=["6 G3"]),
+    escape("deny-one", "denying one effect while allowing the rest", '''
+fn main() uses io, fs {
+    write_file("{ROOT}/wrote.txt", "escaped")
+    print("WROTE IT")
+}
+''', deny="fs", refused="E310", creates="{ROOT}/wrote.txt",
+        spec=["4.4", "6 G2"]),
+    escape("ffi-module-outside-list",
+           "reaching a module outside the ffi allow-list", '''
+fn main() uses io, ffi {
+    let none: List of Text = []
+    check py("os", "getcwd", none) {
+        ok d {
+            print("GOT THROUGH")
+        }
+        fail w {
+            print("failed")
+        }
+    }
+}
+''', allow="io,ffi:math", refused="E311", spec=["5.3", "6 G2"]),
+    escape("ffi-submodule-path",
+           "dodging the allow-list with a submodule path", '''
+fn main() uses io, ffi {
+    let none: List of Text = []
+    check py("os.path", "getcwd", none) {
+        ok d {
+            print("GOT THROUGH")
+        }
+        fail w {
+            print("failed")
+        }
+    }
+}
+''', allow="io,ffi:math", refused="E311", spec=["5.3"]),
+    escape("ffi-through-py-json",
+           "dodging the allow-list through py_json", '''
+fn main() uses io, ffi {
+    check py_json("subprocess", "getoutput", "[\\"echo GOT THROUGH\\"]") {
+        ok d {
+            print("GOT THROUGH")
+        }
+        fail w {
+            print("failed")
+        }
+    }
+}
+''', allow="io,ffi:math", refused="E311", spec=["5.3"]),
+    escape("ffi-through-handle",
+           "dodging the allow-list through a handle", '''
+fn main() uses io, ffi {
+    check py_new("subprocess", "Popen", "[[\\"echo\\"]]") {
+        ok h {
+            print("GOT THROUGH")
+        }
+        fail w {
+            print("failed")
+        }
+    }
+}
+''', allow="io,ffi:math", refused="E311", spec=["5.3"]),
+    escape("deny-several", "denying several at once", '''
+fn main() uses io, net {
+    check fetch_status("https://example.com") {
+        ok code {
+            print("REACHED IT")
+        }
+        fail why {
+            print("failed")
+        }
+    }
+}
+''', deny="fs,net,ffi", refused="E310", spec=["4.4", "6 G2"]),
+    # 3.3: an ffi:M grant is bounded to the module a call actually
+    # reaches, not merely the one it names. The attribute chain is checked
+    # step by step; an object owned by a module outside the grants is
+    # E311, naming that module, and an owner that cannot be placed is
+    # refused rather than allowed. These are the escapes that step 2.2's
+    # module-name-only check let through until 3.3.
+    escape("ffi-reach-codecs-through-json",
+           "reaching codecs through a granted json", '''
+fn main() uses io, ffi {
+    check py("json", "codecs.encode", ["x"]) {
+        ok o { print("GOT THROUGH") }
+        fail w { print("failed") }
+    }
+}
+''', allow="io,ffi:json", refused="E311", spec=["5.3"],
+        not_in_corpus=PYTHON_REACH),
+    escape("ffi-reach-os-system-through-os",
+           "reaching os.system through a granted os, subprocess-free", '''
+fn main() uses io, ffi {
+    check py_int("os", "system", ["echo GOT THROUGH"]) {
+        ok n { print("GOT THROUGH") }
+        fail w { print("failed") }
+    }
+}
+''', allow="io,ffi:os", refused="E311", spec=["5.3"],
+        not_in_corpus=PYTHON_REACH),
+    escape("ffi-reach-importlib",
+           "using a granted importlib to reach another module", '''
+fn main() uses io, ffi {
+    check py_json("importlib", "import_module", "[\\"os\\"]") {
+        ok o { print("GOT THROUGH") }
+        fail w { print("failed") }
+    }
+}
+''', allow="io,ffi:importlib", refused="E311", spec=["5.3"],
+        not_in_corpus=PYTHON_REACH),
+    escape("ffi-reach-builtins-type",
+           "reaching a builtins type through a granted module's value", '''
+fn main() uses io, ffi {
+    let none: List of Text = []
+    check py("math", "pi.__class__", none) {
+        ok o { print("GOT THROUGH") }
+        fail w { print("failed") }
+    }
+}
+''', allow="io,ffi:math", refused="E311", spec=["5.3"],
+        not_in_corpus=PYTHON_REACH),
+    escape("ffi-reach-globals",
+           "laundering through __globals__ to reach builtins", '''
+fn main() uses io, ffi {
+    let none: List of Text = []
+    check py("json", "dumps.__globals__.__class__", none) {
+        ok o { print("GOT THROUGH") }
+        fail w { print("failed") }
+    }
+}
+''', allow="io,ffi:json", refused="E311", spec=["5.3"],
+        not_in_corpus=PYTHON_REACH),
+    escape("ffi-reach-handle-foreign-object",
+           "a handle exposing an object from another module", '''
+fn main() uses io, ffi {
+    check py_new("json", "decoder.JSONDecoder", "[]") {
+        ok h {
+            check py_field(h, "scan_once") {
+                ok f { print("GOT THROUGH") }
+                fail w { print("failed") }
+            }
+        }
+        fail w { print("failed") }
+    }
+}
+''', allow="io,ffi:json", refused="E311", spec=["5.3"],
+        not_in_corpus=PYTHON_REACH),
+
+    # ---- scoped grants (3.0): paths, hosts, counts, and env on its own
+    escape("fs-read-outside-prefix", "reading outside the granted prefix",
+           _read("{OUTSIDE}"), allow="io,fs:read:{DATA}", refused="E313",
+           spec=["5.1", "6 G2"]),
+    escape("fs-write-under-read-grant", "writing with only read granted",
+           _write("{DATA}/new.txt"), allow="io,fs:read:{DATA}",
+           refused="E313", creates="{DATA}/new.txt", spec=["5.1"]),
+    escape("fs-dotdot-escape", "escaping the prefix with ..",
+           _read("{DATA}/../../outside.txt"), allow="io,fs:read:{DATA}",
+           refused="E313", spec=["5.1"]),
+    escape("net-host-not-in-list", "a host not in the list",
+           _fetch("http://localhost:{PORT_A}/"),
+           allow="io,net:127.0.0.1:{PORT_A}", refused="E314",
+           spec=["5.2"]),
+    escape("net-wildcard-parent-domain",
+           "a wildcard must not match the parent domain",
+           _fetch("http://example.com/"), allow="io,net:*.example.com",
+           refused="E314", spec=["5.2"]),
+    escape("net-port-not-in-list", "a port not in the list",
+           _fetch("http://127.0.0.1:{PORT_B}/"),
+           allow="io,net:127.0.0.1:{PORT_A}", refused="E314",
+           spec=["5.2"]),
+    escape("fs-count-reached", "the file operation count reached", '''
+fn main() uses io, fs {
+    let i = 0
+    while i < 3 {
+        if file_exists("{DATA}/a.txt") {
+            print("looked")
+        }
+        i = i + 1
+    }
+    print("GOT THROUGH")
+}
+''', allow="io,fs:read:{DATA}@2", refused="E315", stdout=["looked"],
+        spec=["5.4"]),
+    escape("net-count-reached", "the network operation count reached", '''
+fn main() uses io, net {
+    let i = 0
+    while i < 3 {
+        check fetch_status("http://127.0.0.1:{PORT_A}/") {
+            ok c {
+                print("asked")
+            }
+            fail w {
+                print("failed")
+            }
+        }
+        i = i + 1
+    }
+    print("GOT THROUGH")
+}
+''', allow="io,net:127.0.0.1:{PORT_A}@2", refused="E315", stdout=["asked"],
+        spec=["5.4"]),
+    escape("env-under-io", "env() with only io granted", '''
+fn main() uses io, env {
+    print("READ IT " + env("PATH", ""))
+}
+''', allow="io", refused="E310", spec=["3.1", "6 G2"]),
+    escape("fs-symlink-escape", "escaping the prefix through a symlink",
+           _read("{DATA}/link.txt"), allow="io,fs:read:{DATA}",
+           refused="E313", requires=["symlink"], spec=["5.1"]),
+    # 4.1: three rules velaris-spec 0.3 listed as untested (Q9)
+    escape("fs-count-zero", "@0 grants the effect and permits no operation",
+           '''
+fn main() uses io, fs {
+    if file_exists("{DATA}/a.txt") {
+        print("GOT THROUGH")
+    }
+}
+''', allow="io,fs:read:{DATA}@0", refused="E315", spec=["5.4"]),
+    escape("fs-count-spent-by-failed-operation",
+           "an operation that fails has still spent its count", '''
+fn main() uses io, fs {
+    check read_file("{DATA}/missing.txt") {
+        ok t {
+            print("READ IT")
+        }
+        fail w {
+            print("missing")
+        }
+    }
+    if file_exists("{DATA}/a.txt") {
+        print("GOT THROUGH")
+    }
+}
+''', allow="io,fs:read:{DATA}@1", refused="E315", stdout=["missing"],
+        spec=["5.4"]),
+    escape("net-no-scheme-is-https",
+           "a URL with no scheme is HTTPS at port 443, outside a port-80 "
+           "grant", _fetch("example.com/"), allow="io,net:example.com:80",
+           refused="E314", spec=["5.2"]),
+]
+
+# things that must still work: a budget must not break honest programs
+HONEST = [
+    honest("pure-under-empty-budget", "pure work with no permission at all",
+           '''
+import "std.vel"
+
+fn total(n: Int) -> Int
+    requires n >= 0
+    ensures result >= 0
+{
+    let sum = 0
+    for i in 0 to n {
+        sum = sum + i
+    }
+    return sum
+}
+
+fn main() {
+    let answer = total(10)
+    let sorted = sort([3, 1, 2])
+}
+''', allow="", requires=["stdlib"], spec=["6 G5"]),
+    honest("io-under-io", "printing when io is allowed", '''
+fn main() uses io {
+    print("hello")
+}
+''', allow="io", stdout=["hello"], spec=["4.1"]),
+    honest("clock-under-clock", "the clock when clock is allowed", '''
+fn main() uses io, clock {
+    if now() > 0 {
+        print("time moves")
+    }
+}
+''', allow="io,clock", stdout=["time moves"], spec=["4.1"]),
+    honest("ffi-granted-module", "an allowed module works under the allow-list",
+           '''
+fn main() uses io, ffi {
+    check py_float("math", "sqrt", ["16"]) {
+        ok r {
+            print("root ok")
+        }
+        fail w {
+            print(w)
+        }
+    }
+}
+''', allow="io,ffi:math", stdout=["root ok"], not_in_corpus=PYTHON_HOST),
+    honest("no-budget-given", "everything when nothing is restricted", '''
+fn main() uses io, clock, rand {
+    if now() > 0 and random(6) >= 0 {
+        print("all fine")
+    }
+}
+''', stdout=["all fine"],
+        not_in_corpus="a run given no budget is outside the format "
+                      "(velaris-spec 4.6); what it grants is the "
+                      "reference's choice, not a rule"),
+    # 3.3: the reach check must not break honest deep access inside a
+    # granted module, and must let a grant of two modules use both.
+    honest("ffi-deep-attribute-inside-grant",
+           "a legitimate deep attribute inside the granted module still works",
+           '''
+fn main() uses io, ffi {
+    check py_new("json", "decoder.JSONDecoder", "[]") {
+        ok h { print("made a decoder") }
+        fail w { print(w) }
+    }
+}
+''', allow="io,ffi:json", stdout=["made a decoder"],
+        not_in_corpus=PYTHON_HOST),
+    honest("ffi-two-module-grant", "a two-module grant, each module used "
+           "correctly", '''
+fn main() uses io, ffi {
+    check py_float("math", "sqrt", ["16"]) {
+        ok r {
+            check py("base64", "b64encode", ["aGk="]) {
+                ok b { print("both modules ok") }
+                fail w { print(w) }
+            }
+        }
+        fail w { print(w) }
+    }
+}
+''', allow="io,ffi:math,ffi:base64", stdout=["both modules ok"],
+        not_in_corpus=PYTHON_HOST),
+    # 3.3: ffi is additive like fs and net (spec v0.2, Q2). A plain ffi
+    # grants every module, so ffi,ffi:math is every module - the wider
+    # grant wins, in either order, and a module other than math works.
+    honest("ffi-additive", "additive ffi: a plain ffi widens a named-module "
+           "grant", '''
+fn main() uses io, ffi {
+    let none: List of Text = []
+    check py("os", "getcwd", none) {
+        ok d { print("wider ffi wins") }
+        fail w { print(w) }
+    }
+}
+''', allow="io,ffi,ffi:math", stdout=["wider ffi wins"],
+        not_in_corpus=PYTHON_HOST + "; velaris-spec tests/L1 holds the "
+                      "parse of io,ffi,ffi:math"),
+    # until 2.62 `--allow io` leaked into args() as two extra words
+    honest("args-not-budget", "args() carries the program's arguments, not "
+           "the budget", '''
+fn main() uses io {
+    print(format("args: {}", args()))
+}
+''', allow="io", args=["7", "eight"], stdout=["args: [7, eight]"],
+        not_in_corpus="about this command line's flags: the corpus gives "
+                      "a run its budget and its arguments separately"),
+    honest("args-not-deny", "args() is clean under --deny as well", '''
+fn main() uses io {
+    print(format("args: {}", args()))
+}
+''', deny="fs,net", args=["only"], stdout=["args: [only]"],
+        not_in_corpus="about this command line's flags: the corpus gives "
+                      "a run its budget and its arguments separately"),
+
+    # ---- scoped grants (3.0)
+    honest("scoped-exact-grants", "an honest program using exactly its grants",
+           '''
+fn main() uses io, env, fs, net {
+    check read_file("{DATA}/a.txt") {
+        ok t {
+            write_file("{OUT}/copy.txt", t)
+            check fetch_status("http://127.0.0.1:{PORT_A}/") {
+                ok c {
+                    print(format("all grants used, status {}, path set: {}",
+                                 c, length(env("PATH", "")) > 0))
+                }
+                fail w {
+                    print("fetch failed: " + w)
+                }
+            }
+        }
+        fail w {
+            print("read failed: " + w)
+        }
+    }
+}
+''', allow="io,env,fs:read:{DATA},fs:write:{OUT}@5,"
+           "net:127.0.0.1:{PORT_A}@5",
+        stdout=["all grants used, status 200"], spec=["5.1", "5.2", "5.4"]),
+    honest("redirect-to-ungranted-host-is-a-failure",
+           "a redirect to an ungranted host is a failure the program sees",
+           '''
+fn main() uses io, net {
+    check fetch("http://127.0.0.1:{PORT_A}/go") {
+        ok b {
+            print("FOLLOWED IT")
+        }
+        fail w {
+            print("caught: " + w)
+        }
+    }
+}
+''', allow="io,net:127.0.0.1:{PORT_A}",
+        stdout=["caught: ", "localhost:{PORT_B}"], spec=["5.2", "6 G4"]),
+    honest("redirect-to-granted-host-is-followed",
+           "a redirect to a granted host is followed", '''
+fn main() uses io, net {
+    check fetch("http://127.0.0.1:{PORT_A}/go") {
+        ok b {
+            print("landed: " + b)
+        }
+        fail w {
+            print("caught: " + w)
+        }
+    }
+}
+''', allow="io,net:127.0.0.1:{PORT_A},net:localhost:{PORT_B}",
+        stdout=["landed: hello"], spec=["5.2"]),
     # fs is additive: fs:read:D and fs:write:D grant both directions, and
     # the program uses each. net is additive: two host grants grant both.
-    fs_additive = (
-        "fn main() uses io, fs {\n"
-        f'    check read_file("{inside}") {{\n'
-        "        ok t {\n"
-        f'            write_file("{copy}", t)\n'
-        '            print("fs additive ok")\n'
-        "        }\n        fail w { print(\"read failed: \" + w) }\n"
-        "    }\n}\n")
-    net_additive = (
-        "fn main() uses io, net {\n"
-        f'    check fetch_status("http://127.0.0.1:{granted_port}/") {{\n'
-        "        ok a {\n"
-        f'            check fetch_status("http://localhost:{other_port}/") {{\n'
-        '                ok b { print("net additive ok") }\n'
-        "                fail w { print(\"second failed: \" + w) }\n"
-        "            }\n        }\n        fail w { print(\"first failed: \" + w) }\n"
-        "    }\n}\n")
-    return [
-        ("an honest program using exactly its grants",
-         ["--allow", f"io,env,fs:read:{data.as_posix()},"
-                     f"fs:write:{out.as_posix()}@5,"
-                     f"net:127.0.0.1:{granted_port}@5"],
-         honest, "all grants used, status 200"),
-        ("a redirect to an ungranted host is a failure the program sees",
-         ["--allow", f"io,net:127.0.0.1:{granted_port}"],
-         redirect, "redirected to"),
-        ("a redirect to a granted host is followed",
-         ["--allow", f"io,net:127.0.0.1:{granted_port},"
-                     f"net:localhost:{other_port}"],
-         redirect_ok, "landed: hello"),
-        ("additive fs: read and write grants both apply",
-         ["--allow", f"io,fs:read:{data.as_posix()},"
-                     f"fs:write:{out.as_posix()}"],
-         fs_additive, "fs additive ok"),
-        ("additive net: two host grants both apply",
-         ["--allow", f"io,net:127.0.0.1:{granted_port},"
-                     f"net:localhost:{other_port}"],
-         net_additive, "net additive ok"),
-    ]
+    honest("fs-additive", "additive fs: read and write grants both apply", '''
+fn main() uses io, fs {
+    check read_file("{DATA}/a.txt") {
+        ok t {
+            write_file("{OUT}/copy.txt", t)
+            print("fs additive ok")
+        }
+        fail w { print("read failed: " + w) }
+    }
+}
+''', allow="io,fs:read:{DATA},fs:write:{OUT}", stdout=["fs additive ok"],
+        spec=["4.3"]),
+    honest("net-additive", "additive net: two host grants both apply", '''
+fn main() uses io, net {
+    check fetch_status("http://127.0.0.1:{PORT_A}/") {
+        ok a {
+            check fetch_status("http://localhost:{PORT_B}/") {
+                ok b { print("net additive ok") }
+                fail w { print("second failed: " + w) }
+            }
+        }
+        fail w { print("first failed: " + w) }
+    }
+}
+''', allow="io,net:127.0.0.1:{PORT_A},net:localhost:{PORT_B}",
+        stdout=["net additive ok"], spec=["4.3"]),
+    # 4.1: velaris-spec 0.3 Q9 - untested until now
+    honest("fs-exists-under-write-grant",
+           "an existence check is permitted by a write grant alone", '''
+fn main() uses io, fs {
+    print(format("exists: {}", file_exists("{DATA}/a.txt")))
+}
+''', allow="io,fs:write:{DATA}", stdout=["exists: true"], spec=["5.1", "7"]),
+]
+
+
+def fixture(root: Path, ports: tuple, symlink: bool) -> dict:
+    """Make the directories and files the placeholders name, and return
+    the placeholders' values. `symlink` asks for {DATA}/link.txt, a
+    symbolic link to {OUTSIDE}; False when the system cannot make one."""
+    data, out = root / "box" / "data", root / "box" / "out"
+    data.mkdir(parents=True, exist_ok=True)
+    out.mkdir(parents=True, exist_ok=True)
+    (data / "a.txt").write_text("inside\n", encoding="utf-8")
+    (root / "outside.txt").write_text("outside\n", encoding="utf-8")
+    made_link = False
+    if symlink:
+        try:
+            (data / "link.txt").symlink_to(root / "outside.txt")
+            made_link = True
+        except (OSError, NotImplementedError):
+            made_link = False
+    return {"{ROOT}": root.as_posix(), "{DATA}": data.as_posix(),
+            "{OUT}": out.as_posix(), "{OUTSIDE}": (root / "outside.txt")
+            .as_posix(), "{PORT_A}": str(ports[0]),
+            "{PORT_B}": str(ports[1]), "_symlink": made_link}
+
+
+def fill(text, values: dict):
+    if text is None:
+        return None
+    for key, value in values.items():
+        if key.startswith("{"):
+            text = text.replace(key, value)
+    return text
 
 
 def local_servers():
@@ -563,71 +725,89 @@ def local_servers():
     return a, b, ports["granted"], ports["other"]
 
 
-def run(source: str, flags: list):
-    SCRATCH.write_text(source.lstrip(), encoding="utf-8")
+def run(case: dict, values: dict, root: Path):
+    """(exit code, stdout, stderr) of the case run from the command line,
+    in the fixture's root."""
+    prog = root / "_sandbox_check.vel"
+    prog.write_text(fill(case["source"], values), encoding="utf-8")
+    flags = []
+    if case["allow"] is not None:
+        flags += ["--allow", fill(case["allow"], values)]
+    if case["deny"] is not None:
+        flags += ["--deny", fill(case["deny"], values)]
     done = subprocess.run(
-        [sys.executable, str(VELARIS), str(SCRATCH)] + flags,
-        capture_output=True, text=True, timeout=300, cwd=HERE)
-    return done.returncode, (done.stdout or "") + (done.stderr or "")
+        [sys.executable, str(VELARIS), str(prog)] + flags
+        + [fill(a, values) for a in case["args"]],
+        capture_output=True, text=True, timeout=300, cwd=root)
+    return done.returncode, done.stdout or "", done.stderr or ""
+
+
+def refusal_code(stderr: str):
+    import re
+    m = re.search(r"error\[(E\d{3})\]", stderr)
+    return m.group(1) if m else None
 
 
 def main() -> int:
     passed = failed = 0
-    box = HERE / "_sandbox_box"
-    for sub in ("data", "out"):
-        (box / sub).mkdir(parents=True, exist_ok=True)
-    (box / "data" / "a.txt").write_text("inside\n", encoding="utf-8")
-    (HERE / "_sandbox_outside.txt").write_text("outside\n", encoding="utf-8")
-    srv_a, srv_b, granted_port, other_port = local_servers()
-    cases = CASES + scoped_cases(box, granted_port, other_port)
-    allowed = ALLOWED + scoped_allowed(box, granted_port, other_port)
-    if os.name == "nt":
-        print("  skip: the symlink escape case needs a POSIX file system")
+    root = Path(tempfile.mkdtemp(prefix="velaris-sandbox-"))
+    srv_a, srv_b, port_a, port_b = local_servers()
+    values = fixture(root, (port_a, port_b), symlink=True)
+    cases = [c for c in ESCAPES
+             if "symlink" not in c["requires"] or values["_symlink"]]
+    if len(cases) < len(ESCAPES):
+        print("  skip: the symlink escape case needs a file system that "
+              "can make a symbolic link here")
     print(f"{len(cases)} escape attempts that must be refused")
     print("-" * 62)
-    for name, flags, source, must_not_exist in cases:
-        WROTE.unlink(missing_ok=True)
-        code, output = run(source, flags)
-        escaped = must_not_exist is not None and must_not_exist.exists()
-        shouted = any(word in output for word in
-                      ("READ IT", "WROTE IT", "REACHED IT", "CALLED IT",
-                       "OPENED IT", "GOT THROUGH", "CARRIED ON",
-                       "SWALLOWED THE REFUSAL", "FOLLOWED IT"))
+    for case in cases:
+        creates = fill(case["creates"], values)
+        if creates:
+            Path(creates).unlink(missing_ok=True)
+        code, out, err = run(case, values, root)
+        got = refusal_code(err)
+        escaped = creates is not None and Path(creates).exists()
+        shouted = [w for w in MARKERS if w in out]
+        missing = [s for s in case["stdout"]
+                   if fill(s, values) not in out]
         if escaped:
-            print(f"  ESCAPED      {name} (it created the file)")
+            print(f"  ESCAPED      {case['name']} (it created the file)")
             failed += 1
         elif shouted:
-            print(f"  ESCAPED      {name} (the program carried on)")
+            print(f"  ESCAPED      {case['name']} (the program carried on: "
+                  f"{shouted[0]})")
             failed += 1
-        elif any(r in output for r in REFUSED) and code != 0:
-            print(f"  ok refused   {name}")
+        elif code != 0 and got == case["refused"] and not missing:
+            print(f"  ok refused   {case['name']} ({got})")
             passed += 1
         else:
-            print(f"  WRONG        {name}")
-            print(f"               expected E310/E311, got: "
-                  f"{output.strip().splitlines()[:1]}")
+            print(f"  WRONG        {case['name']}")
+            print(f"               expected {case['refused']}, got "
+                  f"{got or 'no refusal'} (exit {code})"
+                  + (f"; missing output {missing}" if missing else "")
+                  + f": {(err or out).strip().splitlines()[:1]}")
             failed += 1
-        WROTE.unlink(missing_ok=True)
+        if creates:
+            Path(creates).unlink(missing_ok=True)
 
     print()
-    print(f"{len(allowed)} honest programs that must still run")
+    print(f"{len(HONEST)} honest programs that must still run")
     print("-" * 62)
-    for name, flags, source, expect in allowed:
-        code, output = run(source, flags)
-        if code == 0 and (not expect or expect in output):
-            print(f"  ok runs      {name}")
+    for case in HONEST:
+        code, out, err = run(case, values, root)
+        missing = [s for s in case["stdout"] if fill(s, values) not in out]
+        if code == 0 and not missing:
+            print(f"  ok runs      {case['name']}")
             passed += 1
         else:
-            print(f"  BROKEN       {name}")
+            print(f"  BROKEN       {case['name']}")
             print(f"               exit {code}: "
-                  f"{output.strip().splitlines()[:1]}")
+                  f"{(err or out).strip().splitlines()[:1]}"
+                  + (f"; missing output {missing}" if missing else ""))
             failed += 1
 
-    SCRATCH.unlink(missing_ok=True)
-    WROTE.unlink(missing_ok=True)
-    (HERE / "_sandbox_outside.txt").unlink(missing_ok=True)
     import shutil
-    shutil.rmtree(box, ignore_errors=True)
+    shutil.rmtree(root, ignore_errors=True)
     for srv in (srv_a, srv_b):
         srv.shutdown()
     print("-" * 62)

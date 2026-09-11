@@ -1,0 +1,134 @@
+% References for paper/velaris.md. Every entry is cited in the text.
+% Details of TACIT, CaMeL, WASI, object capabilities, in-toto, SLSA,
+% SARIF, effect systems and Deno are those velaris-spec PRIOR_ART.md
+% records; Hills et al. was read on arXiv on 2026-09-11.
+
+@inproceedings{odersky2026tacit,
+  author    = {Odersky, Martin and Zhao, Yaoyu and Xu, Yichen and
+               Bra{\v{c}}evac, Oliver and Pham, Cao Nguyen},
+  title     = {Securing Agents With Tracked Capabilities},
+  booktitle = {ACM Conference on AI and Agentic Systems (CAIS '26)},
+  year      = {2026},
+  doi       = {10.1145/3786335.3813127},
+  note      = {Preprint as ``Tracking Capabilities for Safer Agents'',
+               arXiv:2603.00991. Implementation:
+               \url{https://github.com/lampepfl/tacit}}
+}
+
+@misc{debenedetti2025camel,
+  author        = {Debenedetti, Edoardo and Shumailov, Ilia and Fan, Tianqi
+                   and Hayes, Jamie and Carlini, Nicholas and Fabian, Daniel
+                   and Kern, Christoph and Shi, Chongyang and Terzis, Andreas
+                   and Tram{\`e}r, Florian},
+  title         = {Defeating Prompt Injections by Design},
+  year          = {2025},
+  eprint        = {2503.18813},
+  archivePrefix = {arXiv}
+}
+
+@misc{wasi,
+  author       = {{WebAssembly Community Group}},
+  title        = {{WASI}: the {WebAssembly} System Interface},
+  howpublished = {\url{https://wasi.dev}},
+  note         = {Preview 1, and Preview 2 on the Component Model}
+}
+
+@article{dennis1966semantics,
+  author  = {Dennis, Jack B. and Van Horn, Earl C.},
+  title   = {Programming Semantics for Multiprogrammed Computations},
+  journal = {Communications of the ACM},
+  volume  = {9},
+  number  = {3},
+  pages   = {143--155},
+  year    = {1966}
+}
+
+@phdthesis{miller2006robust,
+  author = {Miller, Mark Samuel},
+  title  = {Robust Composition: Towards a Unified Approach to Access
+            Control and Concurrency Control},
+  school = {Johns Hopkins University},
+  year   = {2006}
+}
+
+@misc{sarif2020,
+  author       = {{OASIS}},
+  title        = {Static Analysis Results Interchange Format ({SARIF})
+                  Version 2.1.0},
+  howpublished = {OASIS Standard},
+  year         = {2020}
+}
+
+@inproceedings{torresarias2019intoto,
+  author    = {Torres-Arias, Santiago and Afzali, Hammad and Kuppusamy,
+               Trishank Karthik and Curtmola, Reza and Cappos, Justin},
+  title     = {in-toto: Providing farm-to-table guarantees for bits and
+               bytes},
+  booktitle = {28th USENIX Security Symposium},
+  year      = {2019}
+}
+
+@misc{intoto_attestation,
+  author       = {{in-toto project}},
+  title        = {in-toto Attestation Framework},
+  howpublished = {\url{https://github.com/in-toto/attestation}}
+}
+
+@misc{slsa,
+  author       = {{SLSA}},
+  title        = {Supply-chain Levels for Software Artifacts},
+  howpublished = {\url{https://slsa.dev}},
+  note         = {Including its provenance predicate}
+}
+
+@misc{hills2026distributed,
+  author        = {Hills, Josh and Caspary, Ida and Cooper Stickland, Asa},
+  title         = {Distributed Attacks in Persistent-State {AI} Control},
+  year          = {2026},
+  eprint        = {2607.02514},
+  archivePrefix = {arXiv}
+}
+
+@inproceedings{lucassen1988effects,
+  author    = {Lucassen, John M. and Gifford, David K.},
+  title     = {Polymorphic Effect Systems},
+  booktitle = {Proceedings of the 15th ACM SIGPLAN-SIGACT Symposium on
+               Principles of Programming Languages (POPL '88)},
+  pages     = {47--57},
+  year      = {1988}
+}
+
+@misc{deno_security,
+  author       = {{Deno}},
+  title        = {Security and permissions},
+  howpublished = {\url{https://docs.deno.com/runtime/fundamentals/security/}}
+}
+
+@inproceedings{demoura2008z3,
+  author    = {de Moura, Leonardo and Bj{\o}rner, Nikolaj},
+  title     = {{Z3}: An Efficient {SMT} Solver},
+  booktitle = {Tools and Algorithms for the Construction and Analysis of
+               Systems (TACAS 2008)},
+  series    = {Lecture Notes in Computer Science},
+  volume    = {4963},
+  pages     = {337--340},
+  publisher = {Springer},
+  year      = {2008},
+  doi       = {10.1007/978-3-540-78800-3_24}
+}
+
+@software{velaris_lang,
+  author  = {Shankar, Gowri},
+  title   = {Velaris},
+  version = {4.1.0},
+  year    = {2026},
+  url     = {https://github.com/gowrishankar-infra/velaris-lang}
+}
+
+@software{velaris_spec,
+  author  = {Shankar, Gowri},
+  title   = {velaris-spec: the Velaris capability format},
+  version = {0.4},
+  year    = {2026},
+  url     = {https://github.com/gowrishankar-infra/velaris-spec}
+}

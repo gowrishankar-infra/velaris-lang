@@ -89,7 +89,12 @@ The capability
 format is published separately, under CC0, as
 [velaris-spec](https://github.com/gowrishankar-infra/velaris-spec),
 whose [PRIOR_ART.md](https://github.com/gowrishankar-infra/velaris-spec/blob/main/PRIOR_ART.md)
-sets out these differences and the older work in full.
+sets out these differences and the older work in full. From 4.1 it
+holds a conformance corpus an implementation in any language can run -
+444 JSON cases at three levels, declaration, enforcement and the
+ratchet, none needing a prover - written from this repository's suites
+and held to them by a drift test; `velaris conformance` runs it against
+this implementation, and CI does so on every leg.
 
 ## Why Velaris
 
@@ -243,9 +248,10 @@ real guard for running a program you have not read.
 velaris examples/stress.vel     # 33 checks across the whole language
 velaris examples/edges.vel      # 20 boundary, property and round-trip checks
 python check_refusals.py        # 21 wrong programs, each refused correctly
-python check_sandbox.py         # 30 escape attempts, all refused
+python check_sandbox.py         # 34 escape attempts, each refused with its code
 python check_pool.py            # a pool must leak nothing between programs
 python check_ratchet.py         # every widening fails, nothing else does
+velaris conformance             # velaris-spec's 444-case corpus, L1 to L3
 ```
 
 One command that exercises the language, the standard library, the
@@ -262,7 +268,7 @@ caught while running, and what was missed.
 
 | | caught before running | caught while running | missed | false positives on the 7 controls |
 |---|---|---|---|---|
-| **Velaris 3.1** | 42 | 12 | 2 | 0 |
+| **Velaris 4.1** | 42 | 12 | 2 | 0 |
 | Deno 2.9 | 5 | 27 | 24 | 0 |
 | Python 3.13 | 0 | 28 | 28 | 0 |
 
@@ -444,7 +450,7 @@ permissions:
 
 steps:
   - uses: actions/checkout@v5
-  - uses: gowrishankar-infra/velaris-lang@v4.0.0
+  - uses: gowrishankar-infra/velaris-lang@v4.1.0
     with:
       files: "src/*.vel"     # optional; default is every .vel file
       format: "true"         # optional; also check formatting
@@ -536,6 +542,16 @@ and the verification steps in [SECURITY.md](SECURITY.md).
 
 Maintained by one person, in the open, with the limits stated plainly
 in [SUPPORT.md](SUPPORT.md).
+
+## Cite this repository
+
+[CITATION.cff](CITATION.cff) holds the citation, and GitHub offers it as
+"Cite this repository" beside the file list. A preprint describing
+Velaris is forthcoming; until it is published, cite the repository. The
+capability format is cited separately, from
+[velaris-spec](https://github.com/gowrishankar-infra/velaris-spec)'s own
+CITATION.cff. [PROVENANCE.md](PROVENANCE.md) records the dates and the
+archive identifiers.
 
 ## Contributing
 

@@ -49,6 +49,18 @@ jobs:
         run: python check_ratchet.py
       - name: This repository needs nothing its velaris.capabilities does not declare
         run: velaris capabilities check .
+      # The conformance corpus lives in velaris-spec, written from this
+      # repository's suites by build_conformance.py. Checked out after
+      # the capability check, so that check sees this repository alone.
+      - name: velaris-spec, for its conformance corpus
+        uses: actions/checkout@v5
+        with:
+          repository: gowrishankar-infra/velaris-spec
+          path: velaris-spec
+      - name: velaris-spec's corpus is what these suites say (drift test)
+        run: python build_conformance.py --check velaris-spec/tests
+      - name: Conformant at L1, L2 and L3 against velaris-spec's corpus
+        run: velaris conformance --corpus velaris-spec/tests
       - name: Benchmark harness (one program per category; Deno rows may be absent)
         if: matrix.deps == 'full'
         run: python benchmark/run.py --quick --check

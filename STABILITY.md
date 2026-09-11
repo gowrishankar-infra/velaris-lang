@@ -24,7 +24,8 @@ major version.
   The other versioned documents Velaris writes follow the same rule
   within their version: `velaris.capabilities/1`,
   `velaris.capabilities-check/1`, `velaris.review/1`,
-  `velaris.invocation/1` and `velaris.mcp-tools/1`.
+  `velaris.invocation/1`, `velaris.mcp-tools/1` and, from 4.1,
+  `velaris.conformance/1`.
 - **The library API**: `velaris.check`, `velaris.audit`, `velaris.run`,
   `velaris.Pool` and `velaris.card` - their names, their parameters,
   and the fields of what they return (`CheckResult`, `AuditResult`,

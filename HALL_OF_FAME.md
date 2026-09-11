@@ -73,6 +73,18 @@ are in the 3.3 CHANGELOG entry.
   line's `audit --json` printed an unversioned shape the schema rejected
   instead of `velaris.audit/1` (Q3).
 
+## The conformance corpus, September 2026
+
+- **Writing velaris-spec's conformance corpus** - 2026-09-11 - an audit
+  case for a program whose `uses` clause names something that is not an
+  effect (`uses io, teleport`) found that the audit reporting the E300
+  still listed `teleport` in `effects` and in its function's `effects`,
+  and wrote a `safe_command` that does not parse - where velaris-spec
+  said `effects` is always a subset of the seven and `safe_command`
+  always parses. 3.3 had fixed the compile check and not the document
+  that reports it. Fixed in 4.1; the details are in the 4.1 CHANGELOG
+  entry.
+
 ## Automated review, September 2026
 
 - **CodeRabbit, the review bot on the CrewAI pull request
