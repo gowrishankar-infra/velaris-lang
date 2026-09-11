@@ -88,14 +88,21 @@ Moderators may reclassify either way
    contents were generated", and that such tools "should not be listed
    as an author"
    (<https://info.arxiv.org/help/moderation/index.html#policy-for-authors-use-of-generative-ai-language-tools>).
-   The paper has no such statement yet; it needs a sentence, in your
-   words, on how an AI coding agent was used for the paper and the code.
+   The paper's "Use of generative AI" section, between the conclusion
+   and the reproducibility section, is that statement.
 6. **Public links.** "Links to code or data sets must resolve to a
    publicly available repository"
    (<https://info.arxiv.org/help/policies/format_requirements.html>).
    Both repositories the paper names are public.
 
 ## 3. What to upload: the LaTeX source, not a PDF
+
+**Superseded by the package.** `paper/arxiv/` holds the upload as built
+on 2026-09-11 - `velaris.tex` with its bibliography as a BibTeX `.bbl`
+(apalike), zipped as `paper/arxiv-submission.zip` - and
+`paper/arxiv/README-for-me.txt` gives the form fields and how it was
+built and checked with TeX Live 2025's pdflatex. The citeproc route
+below still works, but the package is what to upload.
 
 arXiv does "not accept ... PDF created from TeX/LaTeX source"
 (<https://info.arxiv.org/help/submit/index.html>); a PDF from pandoc
@@ -146,7 +153,7 @@ arXiv's metadata fields take ASCII only
 | Title | Velaris: effects in signatures, budgets at run time, and a baseline for a repository's capability surface |
 | Authors | Gowri Shankar Palakurthi |
 | Abstract | the text in section 6 below |
-| Comments | 11 pages, 1 figure, 1 table. Code: https://github.com/gowrishankar-infra/velaris-lang ; format and conformance corpus: https://github.com/gowrishankar-infra/velaris-spec |
+| Comments | 11 pages, 1 figure, 2 tables. Code: https://github.com/gowrishankar-infra/velaris-lang ; format and conformance corpus: https://github.com/gowrishankar-infra/velaris-spec |
 | Primary category | cs.PL |
 | Cross-list | cs.CR |
 | ACM-class | D.3.3; D.4.6; D.2.4 |
@@ -162,9 +169,9 @@ arXiv's metadata fields take ASCII only
 - **ACM-class.** arXiv's field takes codes of the 1998 ACM Computing
   Classification System, separated by "a semicolon and a space": D.3.3
   Language Constructs and Features, D.4.6 Security and Protection, D.2.4
-  Software/Program Verification. The codes are from the 1998 system as
-  I know it; acm.org refused the fetch, so check them against the list
-  before entering them.
+  Software/Program Verification. All three were checked against ACM's
+  1998 list as archived at web.archive.org (acm.org itself refuses
+  automated fetches).
 
 ## 5. Licence
 
@@ -199,9 +206,12 @@ by single spaces.
 
 ## 7. The order to do it in
 
-1. Add the AI-use statement to the paper, and change the date line.
-2. Build `velaris.tex` and check it with pdflatex (section 3).
-3. Find one endorser who knows the work; register; start the
+1. Done: the AI-use statement is in the paper, and `paper/arxiv/` holds
+   the package, checked with pdflatex; its build leaves out the draft
+   date line (section 3).
+2. Find one endorser who knows the work; register; start the
    submission in cs.PL and send them the endorsement link.
-4. Once endorsed: upload `velaris.tex`, enter the metadata (section 4),
-   choose the licence (section 5), read arXiv's build, submit.
+3. Once endorsed: upload `velaris.tex` and `velaris.bbl` from
+   `paper/arxiv/` (zipped locally as `paper/arxiv-submission.zip`, which
+   is not committed), enter the metadata (section 4), choose the
+   licence (section 5), read arXiv's build, submit.

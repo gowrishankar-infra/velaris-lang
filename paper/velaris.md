@@ -646,6 +646,18 @@ tell harmless text from a dangerous command - is stated here as
 precisely as what it does, because the second list is only worth
 believing if the first one is.
 
+## Use of generative AI
+
+The software described here was developed by the author with the
+assistance of AI coding agents, and the first draft of this paper was
+written by an AI coding agent from the repository's contents under the
+author's direction. The author specified the structure and claims,
+reviewed and revised the text, and is responsible for its accuracy.
+Every number reported was verified against the repository files named
+in the reproducibility section. Three adversarial reviews by AI
+systems, credited in the repository's HALL_OF_FAME.md, found defects
+that are recorded in its changelog.
+
 ## Reproducibility
 
 The numbers in this paper can be regenerated from the two repositories
