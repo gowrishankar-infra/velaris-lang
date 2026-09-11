@@ -15,7 +15,11 @@ on this repository. You will get a response within a few days.
 In scope: anything that makes Velaris's guarantees lie - an effect the
 checker misses, a "proven" promise that can actually break at runtime,
 a way past `--allow`, a sandbox escape through the playground, or
-unsafe behavior in `fetch` / `read_file` / `write_file`.
+unsafe behavior in `fetch` / `read_file` / `write_file`. From 3.4 also:
+a way into the HTTP door without its token, a way past either door's
+`--max-allow`, the token appearing in a log, an error message, a
+process argument or a program's environment, and a changed MCP tool
+description that `velaris mcp-verify` passes.
 
 ## Soundness reports are security reports
 
@@ -94,7 +98,22 @@ or, with the detached files:
       --certificate-identity https://github.com/gowrishankar-infra/velaris-lang/.github/workflows/release.yml@refs/tags/v2.63 \
       --certificate-oidc-issuer https://token.actions.githubusercontent.com
 
-**Checksums.** `SHA256SUMS` (for the wheel, sdist and SBOM) and
+**The MCP tool manifest** (from 3.4). `velaris-mcp-tools-X.Y.Z.json`
+lists every tool the MCP server in the wheel offers, with the sha256 of
+its description and of its input schema, and is signed like the wheel
+(`velaris-mcp-tools-X.Y.Z.json.sigstore.json`). `velaris mcp-verify`
+checks that signature against the identity above and then the server
+your MCP client runs against the manifest, and names every tool whose
+description or schema differs:
+
+    pip install sigstore
+    velaris mcp-verify velaris-mcp-tools-3.4.0.json -- python -m velaris_mcp
+
+EMBEDDING.md says what it does and does not tell you. The signature can
+also be checked on its own with the `sigstore verify identity` command
+above, naming the manifest and its bundle.
+
+**Checksums.** `SHA256SUMS` (for the wheel, sdist, SBOM and tool manifest) and
 `<asset>.sha256` (for each binary and the bundle) are attached too;
 `sha256sum -c` checks them. A checksum proves the file is intact, not
 who built it - the signature does that.

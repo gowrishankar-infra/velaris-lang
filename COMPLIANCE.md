@@ -12,8 +12,11 @@ assessment by a third party.
 OWASP items referred to: LLM01 Prompt Injection, LLM02 Sensitive
 Information Disclosure, LLM03 Supply Chain, LLM05 Improper Output
 Handling, LLM06 Excessive Agency, LLM09 Misinformation, LLM10
-Unbounded Consumption. NIST AI RMF functions: Govern, Map, Measure,
-Manage.
+Unbounded Consumption. From the OWASP MCP Top 10 (version 0.1, marked
+beta by OWASP): MCP01 Token Mismanagement & Secret Exposure, MCP02
+Privilege Escalation via Scope Creep, MCP03 Tool Poisoning, MCP07
+Insufficient Authentication & Authorization, MCP08 Lack of Audit and
+Telemetry. NIST AI RMF functions: Govern, Map, Measure, Manage.
 
 | Guarantee | Mechanism | Framework item | Tested by | What it does not cover |
 |---|---|---|---|---|
@@ -26,6 +29,11 @@ Manage.
 | A failure cannot be ignored | `or fail` in the signature; E520 for any fallible call not handled with `check` or `try` | LLM05 - partially addresses (a bad parse of model output, a missing field, a failed request must be handled in code). NIST Manage | `check_fallible.py` | Overflow (E407) and refusals (E310/E311) stop the program rather than fail; a handler that ignores the reason it caught |
 | What a program can touch is known before it runs | `velaris audit` / `velaris.audit()`: effects, `ffi_modules`, proven share, `can_fail`, `loops_unshown`, `contract_coverage`, `safe_command`, in a versioned format | LLM06 - partially addresses (review before execution). NIST Map, Measure | `check_library.py` | The audit describes; it does not decide. A reviewer who grants what the audit lists has granted it |
 | Every release artifact is signed and its contents listed | `.github/workflows/release.yml`: sigstore signatures for the wheel and sdist, cosign for the three binaries and the `.mcpb` bundle, a CycloneDX SBOM, and a job that builds the wheel twice and compares them; every action pinned to a commit | LLM03 Supply Chain - partially addresses (provenance and integrity of Velaris itself; nothing about the model, its weights or its prompts). NIST Govern | The release workflow, on every tag; verification steps in SECURITY.md | Dependencies the operator installs alongside (`z3-solver`, `llvmlite`); the host Python |
+| Only a caller holding the token can use the HTTP door | A bearer token on every endpoint but `GET /health` (3.4), compared in constant time; 401 with no reason; never read from a command-line argument; `VELARIS_TOKEN` removed from the environment workers inherit; `--no-auth` only on loopback | MCP07 Insufficient Authentication & Authorization - partially addresses (one shared token, no per-caller identity, no TLS of its own). MCP01 Token Mismanagement & Secret Exposure - partially addresses (the token stays out of arguments, logs, error messages and the programs' environment; where the operator keeps it is the operator's). NIST Manage | `check_library.py` | Token rotation, revocation and rate limits; transport security off loopback; any process on the machine under `--no-auth` |
+| The MCP server grants no more than its operator allows | `--max-allow` on the MCP server (3.4), `io` by default, the same grammar and check as the HTTP door; a request past it is refused with the ceiling named | MCP02 Privilege Escalation via Scope Creep - partially addresses (bounds what one tool may be asked to grant; not what other tools the client holds). LLM06 - partially addresses. NIST Manage | `check_library.py` | A ceiling the operator raised; who the client lets call the tool |
+| A changed MCP tool description or schema is detected | A manifest of each tool's name, description hash and input-schema hash, made from the published wheel's server and signed with sigstore in the release workflow; `velaris mcp-verify` checks the signature and the running server against it (3.4) | MCP03 Tool Poisoning - partially addresses (this server's own descriptions and schemas, when the operator runs the check; not tool outputs, not other servers). LLM03 - partially addresses. NIST Govern, Measure | `check_library.py`; the release workflow verifies the signed manifest against the wheel's server | Behaviour that differs while descriptions match; a change after the check ran |
+| Every call through a door is recorded | One JSON line per call on the HTTP door and the MCP server: time, door, endpoint or tool, outcome, duration, budget granted, effects performed, refusals, source hash; no source, no token; no setting turns it off (3.4) | MCP08 Lack of Audit and Telemetry - partially addresses (the record is written; keeping, shipping and reading it is the operator's). NIST Govern, Measure | `check_library.py` | What a granted `ffi` module does inside Python; retention; tamper-evidence of the log file |
+| Findings reach the tools a team already reads | `velaris check --sarif`, `proofs --sarif`, `audit --sarif`: SARIF 2.1.0 with a rule per error-table code and per non-error finding, uploaded by the GitHub Action to code scanning (3.4) | NIST Measure | `check_library.py` validates the output against the OASIS schema | Velaris's fixes are prose, so they travel as a property, not as SARIF fixes |
 | Soundness and sandbox reports are treated as security issues | SECURITY.md: private reporting, a fix within a week, credit in CHANGELOG.md and HALL_OF_FAME.md | NIST Govern | The record in CHANGELOG.md | No bounty; one maintainer |
 | The guard is measured against other tools, and the misses are named | `benchmark/`: 63 programs in three languages (56 dangerous, 7 controls), one command, results identical across ten runs | NIST Measure | `benchmark/run.py --quick --check` on every push | The benchmark measures the corpus it holds; a defect outside its categories is not measured |
 
@@ -33,7 +41,8 @@ Manage.
 
 LLM01 Prompt Injection, LLM04 Data and Model Poisoning, LLM07 System
 Prompt Leakage and LLM08 Vector and Embedding Weaknesses are outside
-what Velaris does. LLM02 is addressed only for the environment: since
+what Velaris does. The other OWASP MCP Top 10 items (MCP04, MCP05,
+MCP06, MCP09, MCP10) are not mapped here. LLM02 is addressed only for the environment: since
 3.0 a program needs the `env` effect to read it, and an `io`-only
 budget refuses it; secrets a program is handed on stdin, in a file it
 may read, or from a granted host are its to print. See THREAT_MODEL.md.

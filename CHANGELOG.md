@@ -1,6 +1,155 @@
 # Velaris changelog
 
-## 3.3 - The capability check now means what the spec says
+## 3.4 - The doors are locked, and the findings go where findings go
+
+`velaris serve` ran any program sent to it by anyone who could reach
+its port; binding to localhost and printing a warning was the whole of
+the control. The MCP server granted whatever budget its caller asked
+for, `ffi` included. Neither door recorded what it was asked to do, and
+nothing let a client operator tell whether the MCP server's tool
+descriptions were the ones that were released. This release adds the
+four controls, and SARIF output so findings reach code scanning.
+
+- **Bearer authentication on the HTTP door.** Every endpoint but
+  `GET /health` needs `Authorization: Bearer <token>`. The token comes
+  from `--token-file <path>`, else `VELARIS_TOKEN`, else the door makes
+  one with `secrets.token_urlsafe(32)` and prints it once. It is never
+  read from the command line: `--token`, in either spelling, is refused
+  at start, and the refusal does not repeat the value. Tokens are
+  compared with `secrets.compare_digest` over sha256 digests; a missing
+  token, a wrong one, another scheme, a bare `Bearer` or the token in a
+  query string all get the same 401 body and a bare
+  `WWW-Authenticate: Bearer` challenge, on every path including unknown
+  ones, so nothing is learned about the door without the token. The
+  door removes `VELARIS_TOKEN` from its environment before any worker
+  starts, so a program granted `env` cannot read it. `GET /health` no
+  longer names the ceiling to a caller without the token.
+- **`--no-auth`**, for local development, is refused unless `--host` is
+  `127.0.0.1` or `localhost`, and prints a warning on every start. In
+  its place a request must name a loopback `Host`, carry no other
+  `Origin`, and post as `Content-Type: application/json`, which keeps a
+  web page in a browser on the same machine (a cross-site `fetch`, or a
+  DNS-rebinding page) from sending the door programs. It does not stop
+  another local program, and the warning says so. These three checks
+  were not in the request for this release; without them `--no-auth`
+  would have let any open web page run programs.
+- **The door refuses arguments it does not know**, so `--max-alow io` is
+  an error instead of a door whose ceiling silently stayed at every
+  effect. A non-local `--host` now also warns that the door speaks
+  plain HTTP and the token crosses the network in clear without a TLS
+  proxy in front. The `Server` header no longer carries the Python
+  version.
+- **A ceiling on the MCP server.** `--max-allow` takes the grammar the
+  HTTP door takes - effects, `fs:read:`/`fs:write:` paths, `net:` hosts
+  and ports, `ffi:` modules, `@N` counts - and the same `Budget.covers`
+  check. A `velaris_run` asking for more at any level is refused with
+  `isError` and the body the HTTP door sends with its 403: what was not
+  granted, and `max_allow`. **Without the flag the ceiling is `io`**,
+  and `velaris_run`'s description and the `.mcpb` manifest say so. A
+  ceiling that does not parse, or an unknown argument, stops the server
+  at start.
+- **A signed manifest of the MCP tools.** The release workflow asks the
+  MCP server inside the wheel it publishes for its tools, writes
+  `velaris-mcp-tools-X.Y.Z.json` (`velaris.mcp-tools/1`: each tool's
+  name, the sha256 of its description, the sha256 of its input schema
+  in canonical form), signs it with sigstore alongside the wheel, sdist
+  and SBOM, checks the signed manifest against the server with
+  `velaris mcp-verify`, and attaches both to the release.
+  `velaris mcp-verify <manifest> -- <server command>` verifies the
+  signature as this workflow at the manifest's tag, starts the server
+  the way a client does, and reports every tool whose description or
+  schema changed and every tool added or missing (exit 1), or why it
+  could not check (exit 2). It lives in `velaris.py`, not in the server
+  file it checks. `velaris mcp-manifest` makes a manifest for any
+  server. EMBEDDING.md says how a client operator uses it and what it
+  does not tell them.
+- **Invocation logging on both doors.** One JSON line per call,
+  `velaris.invocation/1`: when the call arrived, the door, the endpoint
+  or tool, the outcome, the duration, the budget granted, the effects
+  performed, what was refused and by what, the caller's address (HTTP),
+  and the sha256 of the source - never the source, the output, request
+  headers, the path as sent, or the token, which is also struck out of
+  any line it could appear in. To stderr, or appended to `--log-file`;
+  `--log minimal` keeps six fields, and nothing turns the log off.
+  "Effects performed" is new in the runtime: `RunResult.effects_used`
+  counts, per effect, the builtin calls the budget let through; it
+  comes back from the pool workers the doors use, and is `None` for a
+  child that could not report it.
+- **SARIF 2.1.0.** `velaris check --sarif`, `proofs --sarif` and
+  `audit --sarif` write one run whose driver is `Velaris` at this
+  version, with a rule for every code in the compiler's error table and
+  for each finding that is not an error, each rule linking to its row
+  on the published errors page. Results carry the file, the line and
+  the message. Errors are `error`; a promise left to runtime is a
+  `warning` (an `error` under `--strict`); a function promising nothing
+  about its data, a loop not shown to end and each effect a function
+  may perform are `note`. The output is validated against the OASIS
+  schema, vendored under `tests/` and held to its digest, in
+  `check_library.py`. The GitHub Action has a `sarif` input, true by
+  default, that writes the file and uploads it with
+  `github/codeql-action/upload-sarif` pinned to the v4.38.0 commit.
+- **What SARIF output leaves out.** A Velaris fix is a sentence; a
+  SARIF `fix` must carry the exact bytes to change (`artifactChanges` is
+  required by the schema). Rather than make up an edit to fill the
+  slot, the suggestions go in each result's `properties.fixes`. Figures
+  with no line - a proven share, an audit's `safe_command` - go in the
+  run's property bag, the latter as each file's `velaris.audit/1`
+  document unchanged.
+- **The error table.** `velaris.ERROR_TABLE` holds all 62 codes the
+  compiler, runtime and library can give, one line each; the published
+  errors page and the SARIF rules are both built from it, and
+  `check_library.py` reads `velaris.py`'s syntax tree and fails if a code
+  is given anywhere that is not in the table, or is in the table and
+  given nowhere. The page used to be a scrape of `VelarisError(...)`
+  calls and missed E610, E611 and E612, which are reported another way;
+  it now lists all 62, with an anchor on each row.
+
+**What a 3.3 user has to change.** README's stability rule is that
+breaking changes wait for a major version; these three ship in a minor
+version because each closes an open door, and they are listed here so
+nobody meets them by surprise:
+
+1. A client of `velaris serve` must send `Authorization: Bearer
+   <token>`. Start the door with `--token-file` or `VELARIS_TOKEN`, or
+   read the made token from its first lines of output.
+2. An MCP client that relied on `velaris_run` granting more than `io`
+   must start the server with `--max-allow`, as EMBEDDING.md shows.
+3. A workflow using the Action needs `permissions: security-events:
+   write` for the upload, and code scanning enabled on a private
+   repository - or `sarif: "false"`.
+
+THREAT_MODEL.md did not, in fact, list the unauthenticated door
+anywhere, as a residual risk or otherwise; it now has the door and the
+MCP server's caller in the trust boundary, the four controls in what is
+defended, what they do not defend in the list of what is not, and
+residual risks for the token, the ceiling, the tool manifest and the
+log. COMPLIANCE.md maps the four controls to OWASP MCP Top 10 (v0.1,
+beta) items MCP01, MCP02, MCP03, MCP07 and MCP08.
+
+**Verified**, on Windows 11 with Python 3.13, before tagging, with the
+proof cache cleared first. With the prover: `run_tests.py` 92/92,
+`check_library.py` 142 correct (one skipped: the symlink case is POSIX
+only), `check_sandbox.py` 45, `check_fallible.py` 26, `check_refusals.py`
+21, `check_termination.py` 44, `check_pool.py` 39, none wrong;
+`fuzz_native.py 30` agrees, `benchmark --quick --check` matches
+`results.json`, `velaris test examples/std_test.vel` 7/7, `velaris fmt
+--check` clean. Without the prover, in a fresh virtual environment
+holding this tree, jsonschema and no z3 or llvmlite: the same eleven
+pass, with `check_library.py` 139 correct (two skipped for needing the
+prover, one POSIX only; the SARIF output validates there too, and
+`check --strict --sarif` reports that it could not check rather than
+passing) and `check_refusals.py` 11 with 10 skipped for needing the
+prover. Every workflow file and `action.yml` parse as YAML.
+velaris-spec's `tools/check_sync.py` and `tools/validate.py` pass
+against this tree; SPEC.md §6, §7 and §7.1, the grant grammar and
+`velaris.audit/1` are unchanged, so the spec stays at 0.2. The new
+release steps were run by hand as far as they go without GitHub's
+signing identity: the wheel was built, installed in a clean
+environment, `mcp-manifest` made the manifest from its server, and
+`mcp-verify --skip-signature` matched 4 of 4 tools; the signature check
+itself was run against the sigstore bundle this workflow made for the
+3.3.0 SBOM, accepting it and refusing it for changed bytes and for the
+wrong tag.
 
 velaris-spec 0.1 was extracted from 3.1.1 and, in writing each rule down
 precisely, found five places where this compiler did not do what the

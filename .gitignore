@@ -11,5 +11,14 @@ ledger.txt
 velaris.mcpb
 _mcpb_build/
 
+# scratch folders check_library.py makes and removes, left behind only
+# by a run that was stopped part way
+_library_box/
+_library_outside.txt
+_door_box/
+_door_log_box/
+_mcp_box/
+_sarif_box/
+
 # card eval: the answers a model gave, per run
 evals/answers/

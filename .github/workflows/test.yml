@@ -19,12 +19,14 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
+      # [test] is jsonschema, which the suites use to validate SARIF
+      # output; it is not a dependency of Velaris
       - name: Install (full - with Z3 proofs and LLVM native)
         if: matrix.deps == 'full'
-        run: pip install ".[full]"
+        run: pip install ".[full,test]"
       - name: Install (minimal - runtime checks, interpreted)
         if: matrix.deps == 'minimal'
-        run: pip install .
+        run: pip install ".[test]"
       - name: Version
         run: velaris --version
       - name: Test suite

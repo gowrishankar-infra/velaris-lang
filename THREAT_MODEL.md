@@ -30,6 +30,9 @@ write instead.
 | The compiler and runtime (`velaris.py`) | yes | One file, in the same process as the program it runs, or in a child process when a time or memory limit is set - a fresh one per run, or a pooled worker under one fixed budget (3.1). A defect here is a defect in the guard. The suites below exist because of that. |
 | The host Python and operating system | yes | The interpreter runs on CPython; the memory cap is the OS's address-space limit; the timeout kills a process. None of these are hardened by Velaris. |
 | Python modules granted through `ffi:` | yes, in full | A granted module can do whatever that module can do. Granting `ffi:subprocess` is granting a shell. |
+| A caller of the HTTP door (`velaris serve`) | only with the token (3.4) | Anyone who presents the bearer token may send programs, up to the door's `--max-allow`; anyone who does not gets a 401 and nothing else. One token is one principal: the door cannot tell two holders apart. |
+| A caller of the MCP server | as far as the ceiling (3.4) | Whoever the MCP client lets drive the server - in practice the model - may ask for any budget up to the server's `--max-allow`, which is `io` unless the operator raised it. |
+| An MCP tool's description | checkable (3.4) | The client shows it to the model, and the model follows it. `velaris mcp-verify` holds what a running server says against the manifest the release workflow signed. |
 
 The budget is enforced inside the interpreter loop at the moment an
 effect is attempted, and a refusal (E310, E311, E313, E314, E315) is
@@ -56,6 +59,10 @@ on.
 | A loop that never ends, before running it | The termination rule (SPEC.md 9.5): a loop is `terminates` only when a counter moves one step toward a limit the body leaves alone, `unshown` otherwise; reported by `audit` as `loops_unshown` and refused by `check --strict` as E612 | `check_termination.py` - 44 adversarial loops, each with its required verdict; the rule was wrong twice while being built, both times refusing a loop that ends, never the reverse |
 | One program's leftovers becoming the next program's starting state, when runs share a process | `velaris.Pool` (3.1) fixes the budget when the pool is made and re-asserts it before every program; a worker is killed and replaced unless the run finished cleanly; a reused worker has every module-level mutable reset - arguments, Python handles, native engines and their arena, the tracer, the budget and its counts, and the working directory, environment and recursion limit a granted `ffi` module can change | `check_pool.py` - 39 checks, including a program that widens its own budget through `ffi` and cannot widen it for the next, a handle nobody closed, args from a previous run, a counted grant spent per program, and a program writing straight at file descriptor 1 |
 | Not knowing what a program does before running it | `velaris audit`: effects, Python modules named, proven share, what can fail, loops not shown to end, functions that promise nothing about the data they handle, and the exact budget to run it under | `check_library.py` - the library and the MCP server report the same audit; the format is versioned (`velaris.audit/1`) |
+| Anyone who can reach the HTTP door's port running programs through it | A bearer token on every endpoint but `GET /health` (3.4), from `--token-file`, `VELARIS_TOKEN` or made and printed once; never taken as an argument. Compared in constant time; a missing, wrong or misplaced token is the same 401 on every path, unknown ones included. `VELARIS_TOKEN` is removed from the environment before any worker starts, so a program granted `env` cannot read it. `--no-auth` is refused on any host but `127.0.0.1`/`localhost` and warns on every start; without a token, a request must name a loopback `Host`, carry no foreign `Origin` and post JSON, which keeps a browser page off the door | `check_library.py` - no token, a wrong one, another scheme, a bare `Bearer` and the token in the query string are each 401 with identical bytes; `/card` and an unknown path are 401 too; the token is accepted; a program cannot read `VELARIS_TOKEN`; the made token is printed once and never logged; `--token` in both spellings and a bare value are refused without being repeated; `--no-auth` is refused on `0.0.0.0`, `::1` and another address, and on loopback refuses `text/plain`, a foreign `Host` and a foreign `Origin` |
+| A caller of the MCP server asking for more than the operator allows | `--max-allow` on the MCP server (3.4), the same grammar and the same `Budget.covers` as the HTTP door; `io` when the flag is absent; a request past it at any level is refused with the ceiling named | `check_library.py` - fs and ffi refused under the default; a narrower path passes while a wider path, unscoped `fs`, another host, a larger count and another module are refused under a scoped ceiling; a ceiling that does not parse stops the server |
+| A tool description or schema changed under the client (tool poisoning, OWASP MCP Top 10 MCP03) | A manifest of every MCP tool's name, description hash and input-schema hash, made by the release workflow from the server in the published wheel and signed with sigstore; `velaris mcp-verify` checks the signature and reports every tool that differs, was added, or is missing | `check_library.py` - a server with a changed description, a changed schema and an added tool is reported for each, with exit 1; a manifest without a signature bundle, or with one that does not verify, stops the check (exit 2); the release workflow runs `mcp-verify` with the real signature against the server in the wheel before attaching the manifest |
+| Not knowing what the doors were asked to do | One JSON line per call on both doors (3.4): when, which door, the endpoint or tool, the outcome, the duration, the budget granted, the effects performed, what was refused and by what, and the source's sha256 - never the source or the token. No setting turns it off | `check_library.py` - one line per call on the HTTP door and on the MCP server, with neither the token, a wrong token nor any source in the file |
 
 On the 63-program benchmark (56 dangerous, 7 harmless), Velaris caught
 54 of the 56 - 42 before running and 12 while running - and flagged
@@ -127,6 +134,35 @@ named below.
   worker, and the pool's promise is only that the *next* program does
   not inherit it. `check_pool.py` is the whole of that promise.
 
+- **The door's token, once it is out.** The token is a password with
+  no user behind it: whoever holds it has every grant the ceiling
+  allows, and the door cannot tell holders apart, revoke one of them,
+  or limit how often they call. It is only as secret as the file or
+  environment it came from. A program the ceiling allows to read the
+  token file can read it, and one allowed `net` as well can send it
+  away. The door speaks plain HTTP: on any address but loopback the
+  token crosses the network in clear unless a TLS proxy sits in front.
+  A made token printed to a stdout that something writes to a file is
+  in that file.
+- **`--no-auth`.** Any program on the machine, run by any user, can
+  send the door programs. The checks that replace the token stop a web
+  page in a browser, not a local process.
+- **The MCP server's caller.** The ceiling bounds what `velaris_run`
+  grants, not who calls it: the client decides that. A ceiling raised
+  to `ffi` is `ffi` for whatever the model is told to do.
+- **What `mcp-verify` does not see.** It compares what a server says
+  about its tools with what was signed; it does not watch what the
+  server does, and a server that returns the signed descriptions and
+  behaves differently passes. It checks at the moment it runs. If both
+  `velaris.py` and `velaris_mcp.py` in an installation were changed,
+  the checker was changed too - verify the wheel (SECURITY.md), or run
+  `mcp-verify` from a separately verified Velaris.
+- **What the invocation log does not hold.** The program's source,
+  output, stdin and arguments, and request headers, are not recorded;
+  what a granted `ffi` module does inside Python shows only as `ffi`
+  calls. A refusal names the path or host the program tried, which is
+  the program's choice of text. A log written to stderr is kept only if
+  whatever runs the door keeps stderr.
 - **A tampered compiler.** Velaris is one Python file running in the
   same process as the untrusted program's interpreter. If the file,
   the package or the binary you run has been altered, nothing above
@@ -156,10 +192,14 @@ named below.
 | Secrets in the environment | Do not grant `env` to code you have not read; since 3.0 an `io`-only budget cannot read it. Run agent-written programs with a clean environment regardless. |
 | Data leaves through `net` | Grant hosts, not `net`: `net:api.example.com:443@100`. A host list bounds where, not what; an egress proxy or a firewall rule outside Velaris still belongs under it when the stakes warrant. |
 | A program does damage within `fs` | Grant directions and directories, not `fs`: `fs:read:./data,fs:write:./out`. Run in a directory that holds nothing else regardless. |
-| Runaway time or memory | Always set both `timeout` and `max_memory_mb`; the MCP server and HTTP door do by default. The cap holds on Linux and on Windows; on macOS add an OS-level limit or run on Linux. |
+| Runaway time or memory | Always set both `timeout` and `max_memory_mb`; the MCP server and HTTP door do by default, though a caller may ask them for other values. The cap holds on Linux and on Windows; on macOS add an OS-level limit or run on Linux. |
 | A vendored library changed under you | `velaris deps --verify` in CI: `velaris.lock` records the sha256 of every vendored library and the Velaris that added it, and `velaris add` refuses to replace one with different bytes unless you say `--force`. |
 | The result is wrong and no promise catches it | Require contracts on the functions that matter (`velaris proofs --min 80` in CI) and read the audit's `contract_coverage` list. A program with no promises has proven nothing. |
 | Output is trusted downstream | Never pipe a program's stdout into a shell or an interpreter. Treat output as data. |
+| The HTTP door's token leaks, or the door is reached from a network | Keep the token in a file only the door's user can read (`chmod 600`), outside every path the ceiling grants; do not pass it in a way that ends up in a process list or a log. Bind to `127.0.0.1`; if the door must be reached from elsewhere, put a TLS-terminating proxy in front and keep the network narrow. Give the door the smallest `--max-allow` the callers need - without one it grants everything, `ffi` included. Change the token by restarting the door with a new one. |
+| An MCP client lets the model ask for too much | Leave the MCP server at its default `io` ceiling unless a task needs more, then raise it to exactly that (`--max-allow io,fs:read:./data`), not to an effect. |
+| The MCP server's tools are changed after install | Run `velaris mcp-verify` against the signed manifest of the release you installed, after every install or upgrade and in the pipeline that builds the client's environment. |
+| Nobody reads the invocation log | Send it to a file (`--log-file`) that something keeps and watches; `outcome` values `unauthorized`, `ceiling` and `refused` are the ones that mean someone tried more than they were given. |
 | The model wrote something other than Velaris | Check the file extension and run `velaris check` first; refuse to run anything the checker refuses. |
 | A compiler defect | Pin a version, verify the signature of what you install, run the suites (`python run_tests.py`, `check_sandbox.py`, `check_library.py`, `check_refusals.py`, `check_fallible.py`, `check_termination.py`, `check_pool.py`, `fuzz_native.py`) on the machine that will run untrusted code, and report anything that lies through the private channel in SECURITY.md. |
 | A single maintainer | Real, and stated in [SUPPORT.md](SUPPORT.md). Fixes to soundness and sandbox reports are promised within a week; nothing else is promised. |

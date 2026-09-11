@@ -145,16 +145,24 @@ Usage:
   velaris fmt program.vel                  format to the canonical style
   velaris check program.vel                compile only, do not run
   velaris check f.vel --strict             refuse any promise left to runtime
+  velaris check f.vel --sarif              findings as SARIF 2.1.0 on stdout
   velaris proofs [path] [--min 80]         how much is proven, not just checked
   velaris proofs . --detail                which functions, one by one
+  velaris proofs . --sarif                 promises left to runtime, as SARIF
   velaris clean                            forget remembered proofs
   velaris test program.vel                 run every test_ function
   velaris trace program.vel                show every call as it happens
   velaris explain program.vel              walk through what it does
   velaris audit program.vel                what it can touch, before you run it
+  velaris audit <files or folders> --sarif what they can touch, as SARIF
   velaris card                             the language, for pasting into a model
   velaris mcp-install                      set up the tools in your assistant
-  velaris serve [--port 8787]              an HTTP door for any language
+  velaris mcp-manifest -o tools.json       the MCP server's tools, hashed
+  velaris mcp-verify tools.json            a running server against a signed
+                                           manifest (-- server command)
+  velaris serve [--port 8787]              an HTTP door for any language,
+        [--token-file F] [--max-allow G]   behind a bearer token
+        [--log-file F] [--log minimal]     one JSON line per call
   velaris explain <folder>                 a map of every file
   velaris doctor                           check the installation
   velaris new <name>                       start a fresh project
@@ -258,7 +266,7 @@ Usage:
 import json
 import os
 
-VERSION = "3.3.0"
+VERSION = "3.4.0"
 import re
 import sys
 from dataclasses import dataclass, field
@@ -507,6 +515,92 @@ class VelarisError(Exception):
             "file": self.file or filename, "line": self.line,
             "fixes": self.fixes,
         }, indent=2)
+
+
+# The error table: every code the compiler, the runtime and the library
+# can report, with one line saying what it means. It is the only list.
+# The published errors page is built from it, `check --sarif` makes one
+# rule of each entry, and check_library.py reads this file's syntax tree
+# and fails if a code is raised anywhere that is not here, or is here
+# and raised nowhere. A code with two meanings says both.
+ERROR_TABLE = {
+    "E000": "a character the lexer cannot read, or a run that stopped "
+            "without a Velaris error to report",
+    "E001": "the program's file cannot be found",
+    "E002": "an unknown escape sequence in a text literal",
+    "E100": "the parser expected something else here",
+    "E101": "a token that cannot start an expression here",
+    "E200": "an unknown function, or an import with no such function",
+    "E300": "an effect used but not declared in 'uses', or a name in "
+            "'uses' that is not an effect",
+    "E310": "an effect outside the run's budget (while running); or a "
+            "promise that calls a function with effects or uses 'try'",
+    "E311": "a Python module outside the run's ffi: grants was reached",
+    "E313": "a path outside the run's fs grants",
+    "E314": "a host or port outside the run's net grants",
+    "E315": "the run's fs or net operation count was reached",
+    "E400": "there is no 'main' function",
+    "E401": "the wrong number of arguments, or parameters on 'main'",
+    "E402": "an unknown variable, or a function value that uses a name "
+            "from the code around it",
+    "E403": "division or remainder by zero while running",
+    "E405": "random(n) with n less than 1",
+    "E406": "the placeholders in a format text and the values given do "
+            "not match",
+    "E407": "a whole number grew past 64 bits",
+    "E408": "an exit code outside 0 to 255",
+    "E500": "an unknown type",
+    "E501": "types do not match",
+    "E502": "a value is needed from a function that returns nothing",
+    "E503": "a return does not match the declared return type",
+    "E504": "an 'if' or 'while' condition that is not a Bool",
+    "E505": "a requires, ensures or invariant that is not a Bool",
+    "E506": "an empty list or map with no type to say what it holds",
+    "E507": "a record defined twice, a field given twice in a record, or "
+            "one name used for a record and a function",
+    "E508": "an unknown record",
+    "E509": "a record value with a missing, unknown or repeated field, "
+            "or a map with a repeated key",
+    "E510": "a field that the value does not have",
+    "E511": "a record changed in place",
+    "E512": "an imported file cannot be found",
+    "E513": "a function or record defined in two files",
+    "E514": "a variable named like an import",
+    "E520": "a failure that is ignored: a call that can fail, not "
+            "handled with check or passed up with try",
+    "E521": "'try' in a function that cannot fail, or a failure that "
+            "escaped the program while running",
+    "E522": "'try' or 'check' on a call that cannot fail",
+    "E523": "'fail' in a function that does not declare 'or fail', or a "
+            "'main' that can fail",
+    "E524": "'main' declared 'or fail'",
+    "E525": "a check's ok arm names the result of a call that returns "
+            "nothing, or leaves a returned value unnamed",
+    "E530": "a function passed as a value that has effects or can fail",
+    "E540": "a type variable that appears only in the return type",
+    "E541": "a type variable named like a real type",
+    "E542": "a function value of the wrong shape",
+    "E543": "a generic function passed as a value",
+    "E600": "a 'requires' broke while running",
+    "E601": "an 'ensures' broke while running",
+    "E602": "a position outside a list or text while running",
+    "E607": "a text grew too large to build, or there was no input to "
+            "read",
+    "E608": "a file could not be written",
+    "E609": "recursion too deep, or split by empty text",
+    "E610": "the run's time limit was reached and the program stopped",
+    "E611": "the run's memory cap was reached and the program stopped",
+    "E612": "a loop whose end cannot be shown (check --strict only)",
+    "E700": "a promise that is provably false, with the input that "
+            "breaks it",
+    "E701": "a call that can break the called function's 'requires', "
+            "with the input that does",
+    "E703": "a loop invariant the prover cannot show holds",
+    "E704": "a loop invariant broke while running",
+    "E705": "a list read the prover shows can go past the end",
+    "E706": "a divisor the prover shows can be zero",
+    "E999": "the self-test in 'velaris doctor' failed",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -1242,6 +1336,8 @@ FS_GRANTS: list | None = None          # None = any path; else [(kind, prefix)]
 NET_GRANTS: list | None = None         # None = any host; else [(host, port)]
 OP_LIMITS: dict = {"fs": None, "net": None}   # None = unlimited
 OP_COUNTS: dict = {"fs": 0, "net": 0}
+EFFECT_USES: dict = {}     # effect -> how many builtin calls the budget let
+                           # through this run; what the doors log (3.4)
 
 
 class BudgetError(ValueError):
@@ -1527,12 +1623,14 @@ class Budget:
         g["NET_GRANTS"] = None if self.net is None else list(self.net)
         g["OP_LIMITS"] = dict(self.limits)
         g["OP_COUNTS"] = {"fs": 0, "net": 0}
+        g["EFFECT_USES"] = {}
 
     @staticmethod
     def snapshot() -> dict:
         return {"effects": set(EFFECT_BUDGET), "modules": FFI_MODULES,
                 "fs": FS_GRANTS, "net": NET_GRANTS,
-                "limits": dict(OP_LIMITS), "counts": dict(OP_COUNTS)}
+                "limits": dict(OP_LIMITS), "counts": dict(OP_COUNTS),
+                "uses": dict(EFFECT_USES)}
 
     @staticmethod
     def restore(saved: dict) -> None:
@@ -1544,6 +1642,7 @@ class Budget:
         g["NET_GRANTS"] = saved["net"]
         g["OP_LIMITS"] = saved["limits"]
         g["OP_COUNTS"] = saved["counts"]
+        g["EFFECT_USES"] = saved.get("uses", {})
 
     # ---- one budget inside another (the HTTP door's ceiling) ----------
     def covers(self, asked: "Budget") -> str | None:
@@ -1918,6 +2017,7 @@ def spend(effect: str, what: str, line: int) -> None:
     so you can run a program you have not read.
     """
     if effect in EFFECT_BUDGET:
+        EFFECT_USES[effect] = EFFECT_USES.get(effect, 0) + 1
         return
     raise VelarisError("E310",
         f"'{what}' needs the '{effect}' effect, which this run does not "
@@ -7502,6 +7602,423 @@ def repl() -> int:
             print("(too much recursion)")
 
 
+def _token_problem(token: str, where: str) -> str | None:
+    """Why this token will not do, without ever repeating it."""
+    if len(token) < 16:
+        return (f"the token in {where} is shorter than 16 characters; make "
+                f"one with: python -c \"import secrets; "
+                f"print(secrets.token_urlsafe(32))\"")
+    if not all(0x21 <= ord(c) <= 0x7E for c in token):
+        return (f"the token in {where} must be printable ASCII with no "
+                f"spaces")
+    return None
+
+
+def _read_token_file(path: str) -> tuple:
+    """(token, None) or (None, why not). The file holds the token and
+    nothing else; surrounding whitespace and a UTF-8 byte-order mark
+    are ignored."""
+    try:
+        with open(path, "rb") as fh:
+            raw = fh.read()
+    except OSError as e:
+        return None, f"cannot read the token file {path}: {e.strerror or e}"
+    raw = raw.removeprefix(b"\xef\xbb\xbf").strip()
+    try:
+        token = raw.decode("ascii")
+    except UnicodeDecodeError:
+        return None, (f"the token in {path} must be printable ASCII with "
+                      f"no spaces")
+    why = _token_problem(token, path)
+    return (None, why) if why else (token, None)
+
+
+def serve_main(argv: list) -> int:
+    """`velaris serve`: an HTTP door, so a program in any language can
+    check, audit and run Velaris under a budget - not only Python and
+    not only MCP clients.
+
+    Every endpoint but GET /health needs `Authorization: Bearer
+    <token>`, compared in constant time; a missing or wrong token is a
+    401 that says nothing about which. The token comes from
+    --token-file, else VELARIS_TOKEN (which is then removed from the
+    environment the workers inherit), else it is made here and printed
+    once. It is never taken as an argument: every process on the machine
+    can read another's command line. --no-auth drops the token, for
+    local development only, is refused on any host but 127.0.0.1 or
+    localhost, and warns on every start. Every call is one line in the
+    invocation log (InvocationLog).
+    """
+    import hashlib
+    import http.server
+    import secrets
+    import urllib.parse
+
+    valued = {"--port", "--host", "--max-allow", "--token-file",
+              "--log-file", "--log", "--max-memory-mb"}
+    opts: dict = {}
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--token" or a.startswith("--token="):
+            print("velaris serve does not take a token as an argument: "
+                  "every process on this machine can read another's "
+                  "command line. Put it in a file and pass --token-file "
+                  "<path>, or set VELARIS_TOKEN.", file=sys.stderr)
+            return 2
+        if a == "--no-auth":
+            opts[a] = True
+            i += 1
+            continue
+        if a in valued:
+            if i + 1 >= len(argv):
+                print(f"{a} needs a value", file=sys.stderr)
+                return 2
+            opts[a] = argv[i + 1]
+            i += 2
+            continue
+        # an option's name is repeated back; anything else is not, in
+        # case it is a token typed where it should not be
+        shown = f" '{a}'" if re.fullmatch(r"--[a-z][a-z-]{0,30}", a) else ""
+        print(f"velaris serve: unknown argument{shown}. It takes --port, "
+              f"--host, --max-allow, --token-file, --no-auth, --log-file "
+              f"and --log.", file=sys.stderr)
+        return 2
+
+    # Read VELARIS_TOKEN and take it out of the environment whichever
+    # source wins, so no pool worker - and so no program - inherits it.
+    # The token is settled first, so every message after this point can
+    # be kept from repeating it, even one about a flag it was typed into.
+    env_token = os.environ.pop("VELARIS_TOKEN", None)
+    no_auth = "--no-auth" in opts
+    token_file = opts.get("--token-file")
+    token: str | None = None
+    told = None
+    if no_auth:
+        if token_file:
+            print("--no-auth and --token-file ask for opposite things; "
+                  "give one", file=sys.stderr)
+            return 2
+    elif token_file:
+        token, why = _read_token_file(token_file)
+        if why:
+            print(why, file=sys.stderr)
+            return 2
+        told = f"read from {token_file}"
+    elif env_token is not None:
+        token = env_token.strip()
+        why = _token_problem(token, "VELARIS_TOKEN")
+        if why:
+            print(why, file=sys.stderr)
+            return 2
+        told = "read from VELARIS_TOKEN, and removed from the environment"
+    else:
+        token = secrets.token_urlsafe(32)
+        told = "made for this run, shown once: " + token
+    want = hashlib.sha256(token.encode("ascii")).digest() if token else None
+
+    def refuse(message: str) -> int:
+        print(message.replace(token, "[redacted]") if token else message,
+              file=sys.stderr)
+        return 2
+
+    host = opts.get("--host", "127.0.0.1")
+    if no_auth and host not in ("127.0.0.1", "localhost"):
+        return refuse(f"--no-auth is refused with --host {host}: without "
+                      f"a token, anyone who can reach the port can run "
+                      f"programs. It is allowed on 127.0.0.1 or localhost "
+                      f"only.")
+    try:
+        port = int(opts.get("--port", "8787"))
+        if not 0 <= port <= 65535:
+            raise ValueError
+    except ValueError:
+        return refuse("--port needs a whole number from 0 to 65535")
+    # the ceiling: a caller may ask for anything inside it, at any level -
+    # effect, module, path prefix, host, count - and nothing outside;
+    # Budget.covers is the one place that rule lives
+    try:
+        ceiling = Budget.parse(opts.get("--max-allow",
+                                        ",".join(ALL_EFFECTS)))
+    except BudgetError as e:
+        return refuse(f"--max-allow: {e}")
+    max_allow = ceiling.effects
+    ceiling_list = ceiling.spec().split(",") if ceiling.spec() else []
+
+    try:
+        log = InvocationLog(opts.get("--log-file"), opts.get("--log", "full"),
+                            redact=[token] if token else [])
+    except ValueError as e:
+        return refuse(f"--log: {e}")
+    except OSError as e:
+        return refuse(f"cannot open the log file {opts.get('--log-file')}: "
+                      f"{e.strerror or e}")
+
+    import velaris as _self              # the library half, reused whole
+
+    # One pool per distinct budget a caller asks for, made the first
+    # time that budget is seen and closed when the door stops. The
+    # ceiling is checked before a pool is asked for, so a pool never
+    # exists for a budget this server would refuse.
+    pools = _self.PoolRegistry()
+    endpoints = {("GET", "/health"), ("GET", "/"), ("GET", "/card"),
+                 ("POST", "/check"), ("POST", "/audit"), ("POST", "/run")}
+
+    class Door(http.server.BaseHTTPRequestHandler):
+        def version_string(self):        # no Python version in the header
+            return "velaris"
+
+        def log_message(self, *a):       # the invocation log is the log
+            pass
+
+        def answer(self, code, payload, headers=()):
+            body = json.dumps(payload, indent=2).encode("utf-8")
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            for name, value in headers:
+                self.send_header(name, value)
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(body)
+
+        def authorized(self) -> bool:
+            if want is None:
+                return True
+            given = self.headers.get_all("Authorization") or []
+            if len(given) != 1:
+                return False
+            scheme, _, value = given[0].strip().partition(" ")
+            if scheme.lower() != "bearer":
+                return False
+            got = hashlib.sha256(
+                value.strip().encode("latin-1", "replace")).digest()
+            return secrets.compare_digest(got, want)
+
+        def not_local(self):
+            """With --no-auth, what stands in for the token against a web
+            page open in a browser on this machine: the request must be
+            addressed to 127.0.0.1 or localhost (which a DNS-rebinding
+            page cannot fake), carry no Origin but this server's, and a
+            POST must say it is JSON (which a page cannot send across
+            origins without a preflight, and this server approves none)."""
+            bound = str(self.server.server_address[1])
+            ok_names = ("127.0.0.1", "localhost")
+            name, _, at = (self.headers.get("Host") or "").strip() \
+                .lower().partition(":")
+            if name not in ok_names or at not in ("", bound):
+                return 403, ("this server answers requests addressed to "
+                             "127.0.0.1 or localhost only")
+            origin = (self.headers.get("Origin") or "").strip().lower()
+            if origin and origin not in (f"http://{n}:{bound}"
+                                         for n in ok_names):
+                return 403, "this server does not answer web pages"
+            kind = (self.headers.get("Content-Type") or "").split(";")[0]
+            if self.command == "POST" and \
+                    kind.strip().lower() != "application/json":
+                return 415, "send Content-Type: application/json"
+            return None
+
+        def drain(self) -> None:
+            # read what the caller sent before refusing it, so the socket
+            # closes cleanly instead of resetting under the answer
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                return
+            if 0 < n <= 2_000_000:
+                self.rfile.read(n)
+
+        def do_GET(self):
+            self.call()
+
+        def do_POST(self):
+            self.call()
+
+        do_HEAD = do_PUT = do_DELETE = do_PATCH = do_OPTIONS = do_GET
+
+        def call(self) -> None:
+            started = InvocationLog.started()
+            method = self.command
+            where = urllib.parse.urlsplit(self.path).path.rstrip("/") or "/"
+            rec = {"outcome": "error", "budget": None, "effects": None,
+                   "refusals": [], "source": None}
+            try:
+                code, payload, headers = self.route(method, where, rec)
+                try:
+                    self.answer(code, payload, headers)
+                except OSError:
+                    rec["outcome"] = "caller_gone"
+            finally:
+                # the endpoint by name - never the path as sent, which
+                # could carry anything, a token in a query string included
+                log.record(started, door="http",
+                           endpoint=(f"{method} {where}"
+                                     if (method, where) in endpoints
+                                     else f"{method} (no such endpoint)"),
+                           client=self.client_address[0],
+                           outcome=rec["outcome"], budget=rec["budget"],
+                           effects=rec["effects"], refusals=rec["refusals"],
+                           source=rec["source"])
+
+        def status(self) -> dict:
+            doc = {"velaris": VERSION, "prover": bool(HAVE_Z3),
+                   "auth": "bearer" if want is not None else "none"}
+            if self.authorized():
+                doc["max_allow"] = sorted(max_allow)
+                doc["endpoints"] = ["POST /check", "POST /audit",
+                                    "POST /run", "GET /card"]
+            return doc
+
+        def route(self, method, where, rec) -> tuple:
+            if (method, where) == ("GET", "/health"):
+                rec["outcome"] = "ok"
+                return 200, self.status(), ()
+            if no_auth:
+                why = self.not_local()
+                if why:
+                    self.drain()
+                    rec["outcome"] = "not_local"
+                    return why[0], {"error": why[1]}, ()
+            if not self.authorized():
+                self.drain()
+                rec["outcome"] = "unauthorized"
+                return 401, {"error": "unauthorized"}, (
+                    ("WWW-Authenticate", 'Bearer realm="velaris"'),)
+            if (method, where) not in endpoints:
+                self.drain()
+                rec["outcome"] = "not_found"
+                return 404, {"error": "no such endpoint"}, ()
+            if method == "GET":
+                rec["outcome"] = "ok"
+                if where == "/card":
+                    return 200, {"card": _self.card()}, ()
+                return 200, self.status(), ()
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length < 0:
+                    raise ValueError
+            except ValueError:
+                rec["outcome"] = "bad_request"
+                return 400, {"error": "Content-Length is not a length"}, ()
+            if length > 2_000_000:
+                rec["outcome"] = "too_large"
+                return 413, {"error": "that is too large"}, ()
+            try:
+                body = json.loads(self.rfile.read(length) or b"{}")
+            except (ValueError, UnicodeDecodeError) as e:
+                rec["outcome"] = "bad_request"
+                return 400, {"error": f"bad JSON: {e}"}, ()
+            source = body.get("source", "") if isinstance(body, dict) \
+                else None
+            if not isinstance(source, str) or not source.strip():
+                rec["outcome"] = "bad_request"
+                return 400, {"error": "send {\"source\": ...}"}, ()
+            rec["source"] = source
+            try:
+                if where == "/check":
+                    got = _self.check(source)
+                    rec["outcome"] = "ok" if got.ok else "problems"
+                    return 200, got.as_dict(), ()
+                if where == "/audit":
+                    got = _self.audit(source)
+                    rec["outcome"] = "ok" if got.ok else "problems"
+                    return 200, got.as_dict(), ()
+                asked = body.get("allow") or ["io"]
+                if not isinstance(asked, list) or \
+                        not all(isinstance(a, str) for a in asked):
+                    rec["outcome"] = "bad_request"
+                    return 400, {"error": "allow is a list of grants, "
+                                          "as [\"io\"]"}, ()
+                try:
+                    wanted = _self.Budget.parse(",".join(asked))
+                except _self.BudgetError as e:
+                    rec["outcome"] = "bad_request"
+                    return 400, {"error": str(e)}, ()
+                refused = ceiling.covers(wanted)
+                if refused:
+                    rec["outcome"] = "ceiling"
+                    rec["refusals"] = [{"by": "ceiling", "what": refused}]
+                    return 403, {"error": refused,
+                                 "max_allow": ceiling_list}, ()
+                rec["budget"] = wanted.spec()
+                out = pools.run(
+                    source, allow=set(asked),
+                    stdin=body.get("stdin", ""),
+                    args=body.get("args") or [],
+                    timeout=float(body.get("timeout") or 30),
+                    max_memory_mb=int(body.get("max_memory_mb") or 512))
+                rec["effects"] = out.effects_used
+                rec["outcome"] = run_outcome(out)
+                rec["refusals"] = run_refusals(out)
+                payload = out.as_dict()
+                payload["allowed"] = sorted(asked)
+                return 200, payload, ()
+            except Exception as e:
+                rec["outcome"] = "error"
+                return 500, {"error": f"{type(e).__name__}: {e}"}, ()
+
+    try:
+        httpd = http.server.ThreadingHTTPServer((host, port), Door)
+    except OSError as e:
+        log.close()
+        return refuse(f"cannot listen on {host}:{port}: {e.strerror or e}")
+    port = httpd.server_address[1]
+
+    print(f"velaris {VERSION} listening on http://{host}:{port}")
+    print("  POST /check /audit /run   GET /card /health")
+    print(f"  grants at most: {', '.join(sorted(max_allow)) or 'nothing'}"
+          f"   (--max-allow io to narrow it)")
+    if token is not None:
+        print("  every endpoint but GET /health needs "
+              "'Authorization: Bearer <token>'")
+        print(f"  token: {told}")
+    where_log = opts.get("--log-file") or "stderr"
+    print(f"  log: one JSON line per call ({log.detail}) to {where_log}")
+    sys.stdout.flush()
+    if no_auth:
+        bar = "  " + "!" * 66
+        print("\n".join([
+            bar,
+            "  WARNING: --no-auth. No token is asked for. Any process on",
+            "  this machine, run by any user, can send this server a",
+            f"  program and it runs, with up to: {ceiling.spec() or 'nothing'}",
+            "  This is for local development only. A request must be",
+            "  addressed to 127.0.0.1 or localhost, carry no other",
+            "  Origin, and POST as Content-Type: application/json, so a",
+            "  web page in a browser here cannot use it; nothing stops a",
+            "  local program.",
+            bar]), file=sys.stderr)
+    if host not in ("127.0.0.1", "localhost"):
+        print("  WARNING: not bound to localhost. This endpoint RUNS "
+              "programs, and it speaks plain HTTP: the token crosses the "
+              "network readable by anyone on the path unless a TLS proxy "
+              "sits in front. Do not expose it to a network you do not "
+              "control.", file=sys.stderr)
+    if token_file and os.name != "nt":
+        try:
+            if os.stat(token_file).st_mode & 0o077:
+                print(f"  WARNING: {token_file} can be read by other users "
+                      f"on this machine; chmod 600 it", file=sys.stderr)
+        except OSError:
+            pass
+    if "ffi" in max_allow:
+        print("  note: ffi is grantable here, which means a caller "
+              "can do anything Python can. --max-allow io,fs is "
+              "safer for a shared machine.")
+    sys.stdout.flush()
+    sys.stderr.flush()
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("\nstopped")
+    finally:
+        httpd.server_close()
+        pools.close()                     # no worker outlives the door
+        log.close()
+    return 0
+
+
 def main() -> int:
     argv = sys.argv[1:]
     if argv[:1] == ["--pool-worker"]:
@@ -7537,8 +8054,10 @@ def main() -> int:
             return 1
         rows, totals = [], {"proven": 0, "runtime": 0, "plain": 0,
                             "errors": 0}
+        reports = {}
         for path in files:
             rep_ = inspect_source(path)
+            reports[path] = rep_
             own = [f for f in rep_["functions"]
                    if os.path.abspath(f["file"]) == os.path.abspath(path)]
             counts = {"proven": 0, "runtime": 0, "plain": 0}
@@ -7556,7 +8075,13 @@ def main() -> int:
                          "errors": len(rep_["errors"])})
         promising = totals["proven"] + totals["runtime"]
         share = (100.0 * totals["proven"] / promising) if promising else 0.0
-        if "--json" in argv:
+        if "--sarif" in argv:
+            want = (float(argv[argv.index("--min") + 1])
+                    if "--min" in argv else None)
+            sarif = sarif_proofs(reports, totals, share, want)
+            print(json.dumps(sarif, indent=2))
+            print_sarif_summary(sarif)
+        elif "--json" in argv:
             print(json.dumps({"files": rows, "totals": totals,
                               "proven_share": round(share, 1)}, indent=2))
         elif "--detail" in argv:
@@ -7615,128 +8140,11 @@ def main() -> int:
                 return 1
         return 1 if totals["errors"] else 0
     if argv[:1] == ["serve"]:
-        # A local HTTP door, so a program in ANY language can check,
-        # audit and sandbox-run Velaris - not only Python and not only
-        # MCP clients. Bound to localhost unless told otherwise, and it
-        # says what it will and will not do before it starts.
-        import http.server
-        import urllib.parse
-
-        port = 8787
-        host = "127.0.0.1"
-        if "--port" in argv:
-            port = int(argv[argv.index("--port") + 1])
-        if "--host" in argv:
-            host = argv[argv.index("--host") + 1]
-        # the ceiling: a caller may ask for anything inside it, at any
-        # level - effect, module, path prefix, host, count - and nothing
-        # outside; Budget.covers is the one place that rule lives
-        try:
-            ceiling = Budget.parse(argv[argv.index("--max-allow") + 1]
-                                   if "--max-allow" in argv
-                                   else ",".join(ALL_EFFECTS))
-        except BudgetError as e:
-            print(str(e), file=sys.stderr)
-            return 2
-        max_allow = ceiling.effects
-
-        import velaris as _self          # the library half, reused whole
-
-        # One pool per distinct budget a caller asks for, made the
-        # first time that budget is seen and closed when the door
-        # stops. The ceiling is checked before a pool is asked for, so
-        # a pool never exists for a budget this server would refuse.
-        pools = _self.PoolRegistry()
-
-        class Door(http.server.BaseHTTPRequestHandler):
-            def log_message(self, *a):   # quiet unless something matters
-                pass
-
-            def answer(self, code, payload):
-                body = json.dumps(payload, indent=2).encode("utf-8")
-                self.send_response(code)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-
-            def do_GET(self):
-                if self.path.rstrip("/") in ("", "/health"):
-                    return self.answer(200, {
-                        "velaris": VERSION, "prover": bool(HAVE_Z3),
-                        "max_allow": sorted(max_allow),
-                        "endpoints": ["POST /check", "POST /audit",
-                                      "POST /run", "GET /card"]})
-                if self.path.rstrip("/") == "/card":
-                    return self.answer(200, {"card": _self.card()})
-                return self.answer(404, {"error": "no such endpoint"})
-
-            def do_POST(self):
-                length = int(self.headers.get("Content-Length") or 0)
-                if length > 2_000_000:
-                    return self.answer(413, {"error": "that is too large"})
-                try:
-                    body = json.loads(self.rfile.read(length) or b"{}")
-                except json.JSONDecodeError as e:
-                    return self.answer(400, {"error": f"bad JSON: {e}"})
-                source = body.get("source", "")
-                if not isinstance(source, str) or not source.strip():
-                    return self.answer(400,
-                                       {"error": "send {\"source\": ...}"})
-                where = urllib.parse.urlparse(self.path).path.rstrip("/")
-                try:
-                    if where == "/check":
-                        return self.answer(
-                            200, _self.check(source).as_dict())
-                    if where == "/audit":
-                        return self.answer(
-                            200, _self.audit(source).as_dict())
-                    if where == "/run":
-                        asked = set(body.get("allow") or ["io"])
-                        try:
-                            wanted = _self.Budget.parse(",".join(asked))
-                        except _self.BudgetError as e:
-                            return self.answer(400, {"error": str(e)})
-                        refused = ceiling.covers(wanted)
-                        if refused:
-                            return self.answer(403, {
-                                "error": refused,
-                                "max_allow": ceiling.spec().split(",")})
-                        out = pools.run(
-                            source, allow=asked,
-                            stdin=body.get("stdin", ""),
-                            args=body.get("args") or [],
-                            timeout=float(body.get("timeout") or 30),
-                            max_memory_mb=int(body.get("max_memory_mb")
-                                              or 512))
-                        payload = out.as_dict()
-                        payload["allowed"] = sorted(asked)
-                        return self.answer(200, payload)
-                except Exception as e:
-                    return self.answer(500,
-                                       {"error": f"{type(e).__name__}: {e}"})
-                return self.answer(404, {"error": "no such endpoint"})
-
-        print(f"velaris {VERSION} listening on http://{host}:{port}")
-        print(f"  POST /check /audit /run   GET /card /health")
-        print(f"  grants at most: {', '.join(sorted(max_allow)) or 'nothing'}"
-              f"   (--max-allow io to narrow it)")
-        if host not in ("127.0.0.1", "localhost"):
-            print("  WARNING: not bound to localhost. This endpoint RUNS "
-                  "programs; do not expose it to a network you do not "
-                  "control.", file=sys.stderr)
-        if "ffi" in max_allow:
-            print("  note: ffi is grantable here, which means a caller "
-                  "can do anything Python can. --max-allow io,fs is "
-                  "safer for a shared machine.")
-        try:
-            http.server.ThreadingHTTPServer((host, port), Door)\
-                .serve_forever()
-        except KeyboardInterrupt:
-            print("\nstopped")
-        finally:
-            pools.close()                 # no worker outlives the door
-        return 0
+        return serve_main(argv[1:])
+    if argv[:1] == ["mcp-manifest"]:
+        return mcp_manifest_main(argv[1:])
+    if argv[:1] == ["mcp-verify"]:
+        return mcp_verify_main(argv[1:])
 
     if argv[:1] == ["mcp-install"]:
         here = os.path.dirname(os.path.abspath(__file__))
@@ -7768,6 +8176,26 @@ def main() -> int:
         return 1
 
     if argv[:1] == ["audit"]:
+        if "--sarif" in argv:
+            # one or more files or folders, as `proofs` takes them
+            files = []
+            for target in [a for a in argv[1:]
+                           if not a.startswith("-")] or ["."]:
+                if os.path.isdir(target):
+                    files += sorted(
+                        os.path.join(dp, f)
+                        for dp, _, fns in os.walk(target) for f in fns
+                        if f.endswith(".vel") and ".velaris" not in dp)
+                elif os.path.exists(target):
+                    files.append(target)
+                else:
+                    print(f"no such file: {target}", file=sys.stderr)
+                    return 1
+            sarif = sarif_audit(files)
+            print(json.dumps(sarif, indent=2))
+            print_sarif_summary(sarif)
+            return 1 if any(not a["ok"] for a in
+                            sarif["runs"][0]["properties"]["audits"]) else 0
         if len(argv) < 2:
             print("usage: velaris audit program.vel", file=sys.stderr)
             return 1
@@ -7959,6 +8387,14 @@ def main() -> int:
             return 1
         bad = 0
         strict = "--strict" in argv
+        if "--sarif" in argv:
+            # SARIF on stdout, for code scanning; the findings one line
+            # each on stderr, so a CI log still says what was found
+            sarif, code = sarif_check(
+                [a for a in argv[1:] if not a.startswith("-")], strict)
+            print(json.dumps(sarif, indent=2))
+            print_sarif_summary(sarif)
+            return code
         for target in [a for a in argv[1:] if not a.startswith("-")]:
             rep_ = inspect_source(target)
             if rep_["errors"]:
@@ -8308,16 +8744,26 @@ class AuditResult:
 
 
 class RunResult:
+    """What a run did. `effects_used` (3.4) maps each effect to how many
+    builtin calls the budget let through - what the program actually
+    performed, as the runtime saw it. It is {} when nothing ran and None
+    when the run happened in a child process that could not report it
+    (run() with a timeout or memory cap outside a pool, or a pool worker
+    that was killed). What a granted ffi module does inside Python is
+    not seen: it counts as ffi calls, nothing more."""
+
     __slots__ = ("ok", "output", "logs", "problems", "refused_effect",
-                 "exit_code", "timed_out", "out_of_memory")
+                 "exit_code", "timed_out", "out_of_memory", "effects_used")
 
     def __init__(self, ok, output, logs, problems, refused_effect,
-                 exit_code, timed_out=False, out_of_memory=False):
+                 exit_code, timed_out=False, out_of_memory=False,
+                 effects_used=None):
         self.ok, self.output, self.logs = ok, output, logs
         self.problems, self.refused_effect = problems, refused_effect
         self.exit_code = exit_code
         self.timed_out = timed_out
         self.out_of_memory = out_of_memory
+        self.effects_used = effects_used
 
     def as_dict(self) -> dict:
         return {"ok": self.ok, "output": self.output, "logs": self.logs,
@@ -8325,7 +8771,8 @@ class RunResult:
                 "refused_effect": self.refused_effect,
                 "exit_code": self.exit_code,
                 "timed_out": self.timed_out,
-                "out_of_memory": self.out_of_memory}
+                "out_of_memory": self.out_of_memory,
+                "effects_used": self.effects_used}
 
 
 def _as_problem(e, where) -> Problem:
@@ -8646,12 +9093,14 @@ def _run_in_process(source, *, path, budget, args, stdin,
     saved_handles, saved_next = dict(PY_OBJECTS), PY_NEXT[0]
     out, err = _io.StringIO(), _io.StringIO()
     problems, refused, code = [], None, 0
+    used: dict = {}
     try:
         budget.install()
         PROGRAM_ARGS[:] = list(args or [])
         result = check(source, path=path)
         if not result.ok:
-            return RunResult(False, "", "", result.problems, None, 1)
+            return RunResult(False, "", "", result.problems, None, 1,
+                             effects_used={})
         funcs, records = load_program(where, source if path else None)
         errors: list = []
         proven: set = set()
@@ -8676,7 +9125,8 @@ def _run_in_process(source, *, path, budget, args, stdin,
                             where, ["handle it with check"])]
         code = 1
     finally:
-        Budget.restore(saved)
+        used = dict(EFFECT_USES)           # this run's, before the old
+        Budget.restore(saved)              # budget's come back
         PROGRAM_ARGS[:] = saved_args
         # handles a program opened and never closed are this program's,
         # not the next one's - the same reason the budget is put back
@@ -8686,7 +9136,8 @@ def _run_in_process(source, *, path, budget, args, stdin,
         if temp:
             os.unlink(temp)
     return RunResult(code == 0 and not problems, out.getvalue(),
-                     err.getvalue(), problems, refused, code)
+                     err.getvalue(), problems, refused, code,
+                     effects_used=used)
 
 
 def _budget_from(allow, deny) -> "Budget":
@@ -8921,7 +9372,8 @@ def _run_bounded(source, *, path, allow, deny, args, stdin, native,
     if not result.ok:
         if temp:
             os.unlink(temp)
-        return RunResult(False, "", "", result.problems, None, 1)
+        return RunResult(False, "", "", result.problems, None, 1,
+                         effects_used={})
 
     # the same budget, spelled out with absolute paths, so the child
     # parses to exactly what this process would have enforced
@@ -9014,7 +9466,8 @@ import weakref
 # appears that is named in neither list.
 MUTABLE_GLOBALS = ("PROGRAM_ARGS", "EFFECT_BUDGET", "FFI_MODULES",
                    "FS_GRANTS", "NET_GRANTS", "OP_LIMITS", "OP_COUNTS",
-                   "PY_OBJECTS", "PY_NEXT", "TRACE", "_NATIVE_KEEPALIVE")
+                   "EFFECT_USES", "PY_OBJECTS", "PY_NEXT", "TRACE",
+                   "_NATIVE_KEEPALIVE")
 
 
 def program_state_baseline() -> dict:
@@ -9039,6 +9492,7 @@ def reset_program_state(budget: "Budget | None" = None,
         NET_GRANTS          the hosts and ports granted
         OP_LIMITS           the @N caps
         OP_COUNTS           how many fs and net operations have run
+        EFFECT_USES         which effects the program has used (3.4)
         PY_OBJECTS          handles from py_new, closed by the program
                             or not
         PY_NEXT             the number the next handle would get
@@ -9487,7 +9941,8 @@ class Pool:
                  for p in answer.get("problems") or []],
                 answer.get("refused_effect"), answer.get("exit_code") or 0,
                 bool(answer.get("timed_out")),
-                bool(answer.get("out_of_memory")))
+                bool(answer.get("out_of_memory")),
+                answer.get("effects_used"))
         return self._no_answer(worker, answer, path)
 
     def _no_answer(self, worker, answer, path) -> RunResult:
@@ -9581,6 +10036,752 @@ class PoolRegistry:
     def __exit__(self, *_exc) -> None:
         self.close()
 
+
+# ---------------------------------------------------------------------------
+# 16. FINDINGS AS SARIF, AND WHAT THE DOORS RECORD
+#
+#     `check --sarif`, `proofs --sarif` and `audit --sarif` write SARIF
+#     2.1.0, which GitHub code scanning, SonarQube and Azure DevOps read
+#     without a plugin. The rules are the error table plus the findings
+#     that are not errors, and nothing is written that SARIF cannot hold
+#     as Velaris means it.
+#
+#     The HTTP door and the MCP server each write one JSON line per call
+#     (InvocationLog), and the MCP server's tools can be held against a
+#     manifest the release workflow signs (mcp-manifest, mcp-verify).
+#     The verifier lives here and not in velaris_mcp.py, so a changed
+#     server file cannot also change the code that checks it.
+# ---------------------------------------------------------------------------
+
+SARIF_SCHEMA_URI = ("https://docs.oasis-open.org/sarif/sarif/v2.1.0/"
+                    "errata01/os/schemas/sarif-schema-2.1.0.json")
+REPOSITORY = "https://github.com/gowrishankar-infra/velaris-lang"
+ERRORS_PAGE = "https://gowrishankar-infra.github.io/velaris-lang/errors.html"
+
+_EFFECT_WORDS = {"io": "the console", "env": "environment variables",
+                 "fs": "files", "net": "the network", "clock": "the time",
+                 "rand": "randomness",
+                 "ffi": "Python, and so anything Python can do"}
+
+# The findings that are not errors, as (rule id, level, meaning). The
+# E-codes come from ERROR_TABLE and are all errors: each one stops a
+# program from compiling or from running. An unproven promise is a
+# warning; a function that promises nothing about its data, a loop not
+# shown to end and a capability are notes.
+SARIF_FINDINGS = (
+    ("unproven-promise", "warning",
+     "a requires or ensures that is checked while the program runs, not "
+     "proven before it runs"),
+    ("contract-coverage", "note",
+     "a function that takes or returns data and promises nothing about "
+     "it"),
+    ("loop-not-shown-to-end", "note",
+     "a loop the termination rule cannot show to end; check --strict "
+     "refuses it as E612"),
+) + tuple((f"uses-{e}", "note",
+           f"a function that may perform {e}: {_EFFECT_WORDS[e]}")
+          for e in ALL_EFFECTS)
+
+
+def sarif_rules() -> list:
+    """Every rule a Velaris SARIF log can cite: one per entry of the
+    error table, then the findings that are not errors. The help URI of
+    each is its row on the published errors page."""
+    rules = [{"id": code, "shortDescription": {"text": text},
+              "helpUri": f"{ERRORS_PAGE}#{code}",
+              "defaultConfiguration": {"level": "error"}}
+             for code, text in sorted(ERROR_TABLE.items())]
+    rules += [{"id": rid, "shortDescription": {"text": text},
+               "helpUri": f"{ERRORS_PAGE}#{rid}",
+               "defaultConfiguration": {"level": level}}
+              for rid, level, text in SARIF_FINDINGS]
+    return rules
+
+
+class _SarifRun:
+    """One SARIF run being filled in: results, and the rules they cite.
+
+    What is deliberately not written: a Velaris fix is a sentence, and
+    a SARIF `fix` must carry the exact bytes to change (artifactChanges
+    is required), so the suggestions go in each result's property bag as
+    `fixes` rather than as SARIF fixes with an edit made up to fill the
+    slot. Findings with no place in a file (a proven share, the audit's
+    safe_command) go in the run's property bag, not in results."""
+
+    def __init__(self, command: str):
+        self.command = command
+        self.rules = sarif_rules()
+        self.index = {r["id"]: i for i, r in enumerate(self.rules)}
+        self.results: list = []
+        self.notes: list = []
+        self.properties: dict = {"prover": bool(HAVE_Z3)}
+        self.root = os.getcwd()
+
+    def add(self, rule: str, message, path, line, level=None,
+            fixes=None) -> None:
+        if rule not in self.index:          # cannot happen while the
+            self.index[rule] = len(self.rules)   # table is complete;
+            self.rules.append({                  # check_library says so
+                "id": rule, "shortDescription": {
+                    "text": f"{rule}, which is not in the error table"},
+                "defaultConfiguration": {"level": "error"}})
+        rule_level = self.rules[self.index[rule]]["defaultConfiguration"]
+        result = {"ruleId": rule, "ruleIndex": self.index[rule],
+                  "level": level or rule_level["level"],
+                  "message": {"text": str(message)},
+                  "locations": [self._location(path, line)]}
+        if fixes:
+            result["properties"] = {"fixes": [str(f) for f in fixes]}
+        self.results.append(result)
+
+    def note(self, text: str) -> None:
+        """Something that kept the tool from doing what was asked."""
+        self.notes.append({"level": "error", "message": {"text": text}})
+
+    def _location(self, path, line) -> dict:
+        where: dict = {"artifactLocation": self._artifact(str(path))}
+        if isinstance(line, int) and not isinstance(line, bool) \
+                and line >= 1:
+            where["region"] = {"startLine": line}
+        return {"physicalLocation": where}
+
+    def _artifact(self, path: str) -> dict:
+        import pathlib
+        import urllib.parse
+        full = os.path.abspath(path)
+        try:
+            rel = os.path.relpath(full, self.root)
+        except ValueError:                  # another drive, on Windows
+            rel = None
+        if rel is not None and rel.split(os.sep)[0] != "..":
+            return {"uri": urllib.parse.quote(rel.replace(os.sep, "/")),
+                    "uriBaseId": "%SRCROOT%"}
+        return {"uri": pathlib.Path(full).as_uri()}
+
+    def log(self) -> dict:
+        import pathlib
+        invocation: dict = {"executionSuccessful": not self.notes}
+        if self.notes:
+            invocation["toolConfigurationNotifications"] = self.notes
+        root = pathlib.Path(self.root).as_uri().rstrip("/") + "/"
+        results = sorted(self.results, key=lambda r: (
+            r["locations"][0]["physicalLocation"]["artifactLocation"]["uri"],
+            r["locations"][0]["physicalLocation"].get("region", {})
+            .get("startLine", 0), r["ruleId"], r["message"]["text"]))
+        return {"$schema": SARIF_SCHEMA_URI, "version": "2.1.0",
+                "runs": [{
+                    "tool": {"driver": {
+                        "name": "Velaris", "version": VERSION,
+                        "semanticVersion": VERSION,
+                        "informationUri": REPOSITORY,
+                        "rules": self.rules}},
+                    "automationDetails": {"id": f"velaris/{self.command}/"},
+                    "originalUriBaseIds": {"%SRCROOT%": {"uri": root}},
+                    "invocations": [invocation],
+                    "results": results,
+                    "properties": self.properties}]}
+
+
+def _own_functions(report: dict, path: str) -> list:
+    here = os.path.abspath(path)
+    return [f for f in report["functions"]
+            if os.path.abspath(f["file"]) == here]
+
+
+def _sarif_errors(run: "_SarifRun", report: dict, path: str) -> None:
+    for e in report["errors"]:
+        run.add(e.get("code") or "E000", e.get("message") or "",
+                e.get("file") or path, e.get("line"), fixes=e.get("fixes"))
+
+
+def _sarif_unproven(run: "_SarifRun", own: list, prover: bool,
+                    level=None) -> list:
+    """A result for every promise-carrying function not proven; returns
+    those functions."""
+    unproven = [f for f in own if (f["requires"] or f["ensures"])
+                and f["status"] != "proven"]
+    for f in unproven:
+        said = "; ".join([f"requires {r}" for r in f["requires"]]
+                         + [f"ensures {e}" for e in f["ensures"]])
+        why = ("" if prover else
+               " (the prover, z3-solver, is not installed)")
+        run.add("unproven-promise",
+                f"'{f['name']}': {said} - not proven before running; "
+                f"checked while the program runs{why}",
+                f["file"], f["line"], level=level)
+    return unproven
+
+
+def _sarif_coverage(run: "_SarifRun", own: list, report: dict) -> None:
+    by_name = {f["name"]: f for f in own}
+    for name in contract_coverage(own, report.get("records", [])):
+        f = by_name[name]
+        run.add("contract-coverage",
+                f"'{name}' takes or returns data and promises nothing "
+                f"about it", f["file"], f["line"])
+
+
+def _unshown_loops(own: list, report: dict, path: str) -> list:
+    """(function name, loop, file) for every loop not shown to end."""
+    here = os.path.abspath(path)
+    found = [(f["name"], lp, f["file"]) for f in own
+             for lp in f.get("loops", []) if lp["verdict"] == "unshown"]
+    found += [("an inline function", lp, lp["file"])
+              for lp in report.get("inline_loops", [])
+              if lp["verdict"] == "unshown"
+              and os.path.abspath(lp["file"]) == here]
+    return found
+
+
+def sarif_check(targets: list, strict: bool = False) -> tuple:
+    """`velaris check --sarif`: (the SARIF log, the exit code the plain
+    check would give). Errors are errors; a promise left to runtime is a
+    warning, and an error under --strict, as is a loop not shown to end
+    (E612); a function promising nothing about its data is a note."""
+    run = _SarifRun("check")
+    bad = 0
+    for target in targets:
+        report = inspect_source(target)
+        if report["errors"]:
+            bad += 1
+            _sarif_errors(run, report, target)
+            continue
+        own = _own_functions(report, target)
+        if strict and not report["proofs"]:
+            bad += 1
+            run.note(f"{target}: --strict needs the prover "
+                     f"(pip install z3-solver)")
+            continue
+        unproven = _sarif_unproven(run, own, report["proofs"],
+                                   "error" if strict else None)
+        loops = _unshown_loops(own, report, target) if strict else []
+        for _name, lp, file in loops:
+            run.add("E612", "this loop may never end - --strict needs a "
+                            "counter that moves toward the limit",
+                    file, lp["line"], fixes=[lp["why"]])
+        if strict and (unproven or loops):
+            bad += 1
+        _sarif_coverage(run, own, report)
+    return run.log(), (1 if bad else 0)
+
+
+def sarif_proofs(reports: dict, totals: dict, share: float,
+                 minimum) -> dict:
+    """`velaris proofs --sarif`: what did not compile, and every promise
+    left to runtime; the totals and the proven share in the run's
+    property bag."""
+    run = _SarifRun("proofs")
+    for path, report in reports.items():
+        if report["errors"]:
+            _sarif_errors(run, report, path)
+            continue
+        _sarif_unproven(run, _own_functions(report, path),
+                        report["proofs"])
+    run.properties.update({"totals": totals, "proven_share": round(share, 1)})
+    if minimum is not None:
+        run.properties["min_proven"] = minimum
+        run.properties["below_min"] = share < minimum
+    return run.log()
+
+
+def sarif_audit(files: list) -> dict:
+    """`velaris audit --sarif`: the audit of each file as findings - what
+    each function may perform, promises left to runtime, loops not shown
+    to end, functions promising nothing about their data - and the
+    velaris.audit/1 document of each file, unchanged, in the run's
+    property bag for what has no line (safe_command, proven_share)."""
+    run = _SarifRun("audit")
+    audits = []
+    for path in files:
+        report = inspect_source(path)
+        with open(path, encoding="utf-8") as fh:
+            audits.append(audit(fh.read(), path=path).as_dict())
+        if report["errors"]:
+            _sarif_errors(run, report, path)
+            continue
+        own = _own_functions(report, path)
+        for f in own:
+            for e in f["effects"]:
+                if e in _EFFECT_WORDS:
+                    run.add(f"uses-{e}", f"'{f['name']}' may perform {e} "
+                                         f"({_EFFECT_WORDS[e]})",
+                            f["file"], f["line"])
+        _sarif_unproven(run, own, report["proofs"])
+        for name, lp, file in _unshown_loops(own, report, path):
+            who = name if name.startswith("an ") else f"'{name}'"
+            run.add("loop-not-shown-to-end",
+                    f"a loop in {who} is not shown to end: {lp['why']}",
+                    file, lp["line"])
+        _sarif_coverage(run, own, report)
+    run.properties["audits"] = audits
+    return run.log()
+
+
+def print_sarif_summary(log: dict) -> None:
+    """The findings in a SARIF log, one line each on stderr, so a CI log
+    still says what was found while stdout carries the SARIF."""
+    import urllib.parse
+    for r in log["runs"][0]["results"]:
+        where = r["locations"][0]["physicalLocation"]
+        uri = urllib.parse.unquote(where["artifactLocation"]["uri"])
+        line = where.get("region", {}).get("startLine")
+        at = f"{uri}:{line}" if line else uri
+        print(f"{at}: {r['level']} [{r['ruleId']}] {r['message']['text']}",
+              file=sys.stderr)
+    for n in log["runs"][0]["invocations"][0].get(
+            "toolConfigurationNotifications", []):
+        print(n["message"]["text"], file=sys.stderr)
+
+
+def run_outcome(result: "RunResult") -> str:
+    """One word for how a run ended, as the doors log it."""
+    if result.timed_out:
+        return "timeout"
+    if result.out_of_memory:
+        return "out_of_memory"
+    if result.refused_effect:
+        return "refused"
+    return "ok" if result.ok else "failed"
+
+
+def run_refusals(result: "RunResult") -> list:
+    """The budget's refusal of a run, as the doors log it, or []."""
+    if not result.refused_effect:
+        return []
+    code = next((p.code for p in result.problems
+                 if p.code in ("E310", "E311", "E313", "E314", "E315")),
+                None)
+    return [{"by": "budget", "code": code, "what": result.refused_effect}]
+
+
+INVOCATION_SCHEMA = "velaris.invocation/1"
+
+
+class InvocationLog:
+    """One JSON line per call through a door - the HTTP door or the MCP
+    server - on stderr, or appended to a file.
+
+    A full line holds when the call arrived (UTC), the door, the tool or
+    endpoint, the outcome, how long it took, the budget the program ran
+    under, the effects it performed (RunResult.effects_used), what was
+    refused and by what, the caller's address (HTTP), and the sha256 of
+    the source. Never the source itself, the program's output, its
+    stdin or arguments, a request header, or the door's token - and any
+    secret handed to `redact` is replaced by [redacted] should it ever
+    be part of a line. `detail="minimal"` keeps when, the door, what was
+    called, the outcome and the duration. Nothing turns the log off.
+    """
+
+    DETAILS = ("full", "minimal")
+
+    def __init__(self, path: str | None = None, detail: str = "full",
+                 redact=()):
+        import threading as _threading
+        if detail not in self.DETAILS:
+            raise ValueError("the invocation log is 'full' or 'minimal'; "
+                             "it cannot be turned off")
+        self.detail = detail
+        self.path = path
+        self._redact = [s for s in redact if s]
+        self._lock = _threading.Lock()
+        # opened now, so a path that cannot be written stops the door
+        # before it answers anyone
+        self._file = open(path, "a", encoding="utf-8") if path else None
+
+    @staticmethod
+    def started() -> tuple:
+        import datetime
+        import time as _t
+        return datetime.datetime.now(datetime.timezone.utc), _t.monotonic()
+
+    def record(self, started: tuple, *, door: str, outcome: str,
+               tool: str | None = None, endpoint: str | None = None,
+               client: str | None = None, budget=None, effects=None,
+               refusals=(), source=None) -> dict:
+        import hashlib
+        import time as _t
+        when, t0 = started
+        line: dict = {"schema": INVOCATION_SCHEMA,
+                      "ts": when.isoformat(timespec="milliseconds")
+                      .replace("+00:00", "Z"),
+                      "door": door}
+        if tool is not None:
+            line["tool"] = tool
+        if endpoint is not None:
+            line["endpoint"] = endpoint
+        line["outcome"] = outcome
+        line["duration_ms"] = round((_t.monotonic() - t0) * 1000, 1)
+        if self.detail == "full":
+            if client is not None:
+                line["client"] = client
+            line["budget"] = budget
+            line["effects"] = effects
+            line["refusals"] = list(refusals)
+            line["source_sha256"] = (
+                hashlib.sha256(source.encode("utf-8", "surrogatepass"))
+                .hexdigest() if isinstance(source, str) else None)
+        text = json.dumps(line)
+        for secret in self._redact:
+            for form in (secret, json.dumps(secret)[1:-1]):
+                text = text.replace(form, "[redacted]")
+        with self._lock:
+            try:
+                out = self._file or sys.stderr
+                out.write(text + "\n")
+                out.flush()
+            except (OSError, ValueError):
+                # the file failed; the line goes to stderr rather than
+                # nowhere, since a door that cannot log still logs
+                sys.stderr.write(text + "\n")
+                sys.stderr.flush()
+        return line
+
+    def close(self) -> None:
+        if self._file is not None:
+            try:
+                self._file.close()
+            except OSError:
+                pass
+
+
+# ---- the MCP server's tools, hashed and signed ------------------------------
+
+MCP_TOOLS_SCHEMA = "velaris.mcp-tools/1"
+OIDC_ISSUER = "https://token.actions.githubusercontent.com"
+RELEASE_IDENTITY = REPOSITORY + "/.github/workflows/release.yml@refs/tags/v{version}"
+
+
+def _canonical_json(value) -> bytes:
+    """Keys sorted, no whitespace between tokens, text as UTF-8 rather
+    than escaped: the RFC 8785 form of the objects, arrays, strings,
+    integers, booleans and nulls a tool's input schema holds."""
+    return json.dumps(value, sort_keys=True, separators=(",", ":"),
+                      ensure_ascii=False, allow_nan=False).encode(
+                          "utf-8", "surrogatepass")
+
+
+def mcp_tool_hashes(tool: dict) -> dict:
+    """A tool's name, the sha256 of its description (the UTF-8 bytes of
+    the text exactly as the server sends it) and of its input schema
+    (_canonical_json)."""
+    import hashlib
+    description = tool.get("description")
+    if not isinstance(description, str):
+        description = ""
+    try:
+        schema = hashlib.sha256(_canonical_json(
+            tool.get("inputSchema"))).hexdigest()
+    except (TypeError, ValueError):         # NaN, or something not JSON
+        schema = "cannot be hashed"
+    return {"name": tool.get("name"),
+            "description_sha256": hashlib.sha256(description.encode(
+                "utf-8", "surrogatepass")).hexdigest(),
+            "input_schema_sha256": schema}
+
+
+def mcp_tool_manifest(server_info: dict, tools: list) -> dict:
+    """velaris.mcp-tools/1: every tool a server offers, hashed."""
+    return {"schema": MCP_TOOLS_SCHEMA,
+            "server": {"name": server_info.get("name"),
+                       "version": server_info.get("version")},
+            "hash": "sha256",
+            "tools": sorted((mcp_tool_hashes(t) for t in tools),
+                            key=lambda t: str(t["name"]))}
+
+
+def mcp_list_tools(command: list, timeout: float = 120) -> tuple:
+    """Start an MCP server over stdio, as a client would, and ask it for
+    its tools: (serverInfo, tools). RuntimeError says what went wrong."""
+    import queue as _q
+    import subprocess
+    import threading as _threading
+    import time as _t
+    try:
+        proc = subprocess.Popen(command, stdin=subprocess.PIPE,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE)
+    except OSError as e:
+        raise RuntimeError(f"cannot start the server: {e.strerror or e}")
+    lines: "_q.Queue" = _q.Queue()
+    noise: list = []
+
+    def pump():
+        for raw in proc.stdout:
+            lines.put(raw)
+        lines.put(None)
+
+    def drain():
+        for raw in proc.stderr:
+            noise.append(raw.decode("utf-8", "replace").strip())
+            del noise[:-20]
+
+    _threading.Thread(target=pump, daemon=True).start()
+    _threading.Thread(target=drain, daemon=True).start()
+    deadline = _t.monotonic() + timeout
+
+    def send(message: dict) -> None:
+        proc.stdin.write((json.dumps(message) + "\n").encode("utf-8"))
+        proc.stdin.flush()
+
+    def answer_to(msg_id: int) -> dict:
+        while True:
+            left = deadline - _t.monotonic()
+            try:
+                raw = lines.get(timeout=max(left, 0.01))
+            except _q.Empty:
+                raise RuntimeError(f"the server did not answer within "
+                                   f"{timeout:g} s")
+            if raw is None:
+                said = noise[-1] if noise else "it said nothing"
+                raise RuntimeError(f"the server stopped: {said}")
+            try:
+                message = json.loads(raw)
+            except ValueError:
+                continue
+            if isinstance(message, dict) and message.get("id") == msg_id:
+                if "error" in message:
+                    raise RuntimeError(f"the server answered with an "
+                                       f"error: {message['error']}")
+                got = message.get("result")
+                return got if isinstance(got, dict) else {}
+
+    try:
+        send({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+              "params": {"protocolVersion": "2024-11-05", "capabilities": {},
+                         "clientInfo": {"name": "velaris mcp-verify",
+                                        "version": VERSION}}})
+        info = answer_to(1)
+        send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        tools: list = []
+        cursor, msg_id = None, 2
+        while msg_id < 100:                 # a server paging forever
+            send({"jsonrpc": "2.0", "id": msg_id, "method": "tools/list",
+                  "params": {"cursor": cursor} if cursor else {}})
+            page = answer_to(msg_id)
+            tools += [t for t in page.get("tools") or []
+                      if isinstance(t, dict)]
+            cursor = page.get("nextCursor")
+            msg_id += 1
+            if not cursor:
+                break
+        server = info.get("serverInfo")
+        return (server if isinstance(server, dict) else {}), tools
+    except OSError as e:
+        raise RuntimeError(f"the server's pipe closed: {e}")
+    finally:
+        try:
+            proc.stdin.close()
+        except OSError:
+            pass
+        try:
+            proc.wait(timeout=10)
+        except Exception:
+            proc.kill()
+            proc.wait()
+
+
+def _default_mcp_command() -> list | None:
+    """The MCP server beside this compiler, as a client would start it."""
+    if getattr(sys, "frozen", False):
+        return None                         # a standalone executable
+    beside = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "velaris_mcp.py")
+    if os.path.exists(beside):
+        return [sys.executable, beside]
+    return [sys.executable, "-m", "velaris_mcp"]
+
+
+def _split_server_command(argv: list) -> tuple:
+    """(own arguments, the server command after `--`, or the default)."""
+    if "--" in argv:
+        at = argv.index("--")
+        return argv[:at], argv[at + 1:]
+    return argv, _default_mcp_command()
+
+
+def _sigstore_verify(artifact: bytes, bundle_path: str,
+                     identity: str) -> str | None:
+    """None when the sigstore bundle proves `identity` signed these
+    exact bytes; otherwise why not."""
+    try:
+        from sigstore.models import Bundle
+        from sigstore.verify import Verifier
+        from sigstore.verify.policy import Identity
+    except ImportError:
+        return ("the sigstore package is not installed, so the signature "
+                "cannot be checked: pip install sigstore - or check it with "
+                "the sigstore command as SECURITY.md shows and then pass "
+                "--skip-signature")
+    try:
+        with open(bundle_path, "rb") as fh:
+            bundle = Bundle.from_json(fh.read())
+        Verifier.production().verify_artifact(
+            artifact, bundle, Identity(identity=identity, issuer=OIDC_ISSUER))
+    except Exception as e:
+        return f"the signature does not verify: {type(e).__name__}: {e}"
+    return None
+
+
+def mcp_manifest_main(argv: list) -> int:
+    """velaris mcp-manifest [-o FILE] [-- server command...]"""
+    own, command = _split_server_command(argv)
+    if not command:
+        print("mcp-manifest: name the server to ask after --, as: velaris "
+              "mcp-manifest -o tools.json -- python -m velaris_mcp",
+              file=sys.stderr)
+        return 2
+    out = None
+    if "-o" in own:
+        at = own.index("-o")
+        if at + 1 >= len(own):
+            print("mcp-manifest: -o needs a file", file=sys.stderr)
+            return 2
+        out = own[at + 1]
+    try:
+        info, tools = mcp_list_tools(command)
+    except RuntimeError as e:
+        print(f"mcp-manifest: {e}", file=sys.stderr)
+        return 2
+    text = json.dumps(mcp_tool_manifest(info, tools), indent=2) + "\n"
+    if out is None:
+        sys.stdout.write(text)
+    else:
+        with open(out, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
+        print(f"{out}: {len(tools)} tool(s) from {info.get('name')} "
+              f"{info.get('version')}", file=sys.stderr)
+    return 0
+
+
+def mcp_verify_main(argv: list) -> int:
+    """velaris mcp-verify MANIFEST [--bundle FILE] [--identity URL]
+    [--skip-signature] [-- server command...]
+
+    Checks the manifest's signature, starts the server the way a client
+    would, and reports every tool whose description or input schema
+    differs from the manifest, and every tool added or missing. Exit 0
+    when everything matches, 1 when anything differs, 2 when the check
+    could not be made."""
+    own, command = _split_server_command(argv)
+    manifest_path = bundle_path = identity = None
+    skip = False
+    i = 0
+    while i < len(own):
+        a = own[i]
+        if a in ("--bundle", "--identity"):
+            if i + 1 >= len(own):
+                print(f"mcp-verify: {a} needs a value", file=sys.stderr)
+                return 2
+            if a == "--bundle":
+                bundle_path = own[i + 1]
+            else:
+                identity = own[i + 1]
+            i += 2
+            continue
+        if a == "--skip-signature":
+            skip = True
+        elif a.startswith("-") or manifest_path is not None:
+            print("usage: velaris mcp-verify MANIFEST [--bundle FILE] "
+                  "[--identity URL] [--skip-signature] [-- server command]",
+                  file=sys.stderr)
+            return 2
+        else:
+            manifest_path = a
+        i += 1
+    if manifest_path is None:
+        print("usage: velaris mcp-verify MANIFEST [--bundle FILE] "
+              "[--identity URL] [--skip-signature] [-- server command]",
+              file=sys.stderr)
+        return 2
+    if not command:
+        print("mcp-verify: name the server to check after --, as: velaris "
+              "mcp-verify tools.json -- python -m velaris_mcp",
+              file=sys.stderr)
+        return 2
+    try:
+        with open(manifest_path, "rb") as fh:
+            raw = fh.read()
+        manifest = json.loads(raw.decode("utf-8"))
+    except (OSError, ValueError):
+        manifest = None
+    promised = manifest.get("tools") if isinstance(manifest, dict) else None
+    if not (isinstance(manifest, dict)
+            and manifest.get("schema") == MCP_TOOLS_SCHEMA
+            and manifest.get("hash") == "sha256"
+            and isinstance(promised, list)
+            and all(isinstance(t, dict) and isinstance(t.get("name"), str)
+                    for t in promised)):
+        print(f"mcp-verify: {manifest_path} is not a readable "
+              f"{MCP_TOOLS_SCHEMA} manifest", file=sys.stderr)
+        return 2
+    version = (manifest.get("server") or {}).get("version")
+    print(f"manifest:  {manifest_path} ({len(promised)} tool(s), "
+          f"{(manifest.get('server') or {}).get('name')} {version})")
+
+    if skip:
+        print("signature: NOT CHECKED (--skip-signature)")
+    else:
+        bundle_path = bundle_path or manifest_path + ".sigstore.json"
+        identity = identity or RELEASE_IDENTITY.format(version=version)
+        if not os.path.exists(bundle_path):
+            print(f"mcp-verify: no signature bundle at {bundle_path}; "
+                  f"download it from the release beside the manifest, or "
+                  f"pass --bundle - or --skip-signature to compare without "
+                  f"one", file=sys.stderr)
+            return 2
+        why = _sigstore_verify(raw, bundle_path, identity)
+        if why:
+            print(f"mcp-verify: {why}", file=sys.stderr)
+            return 2
+        print(f"signature: verified, signed by {identity}")
+
+    try:
+        info, tools = mcp_list_tools(command)
+    except RuntimeError as e:
+        print(f"mcp-verify: {e}", file=sys.stderr)
+        return 2
+    print(f"server:    {' '.join(command)} ({info.get('name')} "
+          f"{info.get('version')})")
+    if info.get("version") != version:
+        print(f"           the manifest is for {version}; the server says "
+              f"{info.get('version')}")
+
+    offered: dict = {}
+    doubled = set()
+    for t in tools:
+        h = mcp_tool_hashes(t)
+        name = str(h["name"])
+        if name in offered:
+            doubled.add(name)
+        offered[name] = h
+    wanted = {t["name"]: t for t in promised}
+    same = changed = 0
+    for name in sorted(set(wanted) | set(offered)):
+        if name not in offered:
+            changed += 1
+            print(f"  MISSING  {name}: in the manifest, not offered by the "
+                  f"server")
+            continue
+        if name not in wanted:
+            changed += 1
+            print(f"  NEW      {name}: offered by the server, not in the "
+                  f"manifest")
+            continue
+        parts = [label for key, label in (
+            ("description_sha256", "description"),
+            ("input_schema_sha256", "input schema"))
+            if offered[name][key] != wanted[name].get(key)]
+        if name in doubled:
+            parts.append("offered more than once")
+        if parts:
+            changed += 1
+            print(f"  CHANGED  {name}: {' and '.join(parts)}")
+        else:
+            same += 1
+            print(f"  ok       {name}")
+    print(f"{same} of {len(set(wanted) | set(offered))} tool(s) match the "
+          f"manifest" + (f"; {changed} differ" if changed else ""))
+    return 1 if changed else 0
 
 
 def card() -> str:

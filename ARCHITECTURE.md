@@ -56,6 +56,9 @@ prover could not settle.
 | Editor features | `editor_answer` and `lsp_serve` |
 | CLI commands | `main`, near the other `argv[:1] == [...]` checks |
 | Anything a program can leave behind | `MUTABLE_GLOBALS` and `reset_program_state`, and the scan in `check_pool.py` that fails when a new module-level container appears in neither list |
+| A new error code | `ERROR_TABLE`, beside `VelarisError`: one line saying what it means. `check_library.py` fails if a code is raised that is not there; the errors page and the SARIF rules are built from it |
+| The HTTP door | `serve_main`: the token, `--no-auth`, the ceiling, the endpoints |
+| SARIF, the invocation log, the MCP tool manifest | section 16, after the pool: `_SarifRun` and `sarif_check`/`sarif_proofs`/`sarif_audit`; `InvocationLog`; `mcp_manifest_main` and `mcp_verify_main`, kept out of `velaris_mcp.py` so the server file cannot vouch for itself |
 
 ## The suites, and what each one is for
 
@@ -111,8 +114,10 @@ test.
    no-solver leg fails because some check quietly depended on proofs.
    Make a Python with no z3 and run the suite there first:
 
-       python -m venv /tmp/bare && /tmp/bare/bin/pip install .
+       python -m venv /tmp/bare && /tmp/bare/bin/pip install ".[test]"
        /tmp/bare/bin/python check_whatever.py
+
+   (`[test]` is jsonschema, for the SARIF checks; it brings no solver.)
 
    Better than skipping the proof-dependent checks is asserting the
    FALLBACK - that the promise breaks while running instead - which is

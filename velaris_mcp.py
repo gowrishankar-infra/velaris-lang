@@ -16,6 +16,17 @@ Add to an MCP client's config:
     {"mcpServers": {"velaris": {"command": "python",
                                 "args": ["-m", "velaris_mcp"]}}}
 
+The operator's flags, after "velaris_mcp" in "args":
+
+    --max-allow GRANTS   the most a velaris_run may ask for, in the
+                         budget grammar (io,fs:read:./data,net:host@10,
+                         ffi:math). Default: io only. A request for more
+                         is refused, naming what the server grants.
+    --log-file PATH      the invocation log, one JSON line per tool call,
+                         appended here instead of written to stderr
+    --log minimal        fewer fields in each line; the log cannot be
+                         turned off
+
 Nothing here trusts the program's own claims: velaris_run enforces the
 budget while the program runs, and a refused effect stops it.
 """
@@ -43,11 +54,21 @@ else:                                     # pragma: no cover
 
 PROTOCOL = "2024-11-05"
 
+# The ceiling on what velaris_run may grant, as the HTTP door's
+# --max-allow is. Without the flag it is io: the least that is useful,
+# and nothing a program can touch outside the console.
+DEFAULT_CEILING = "io"
+CEILING = None      # velaris.Budget, set by configure()
+LOG = None          # velaris.InvocationLog, set by configure()
+
+USAGE = ("usage: python -m velaris_mcp [--max-allow GRANTS] "
+         "[--log-file PATH] [--log full|minimal]")
+
 # One pool per distinct budget a caller asks for, made the first time
 # that budget is seen and closed when the server stops. An assistant
 # calls velaris_run over and over inside one conversation; without this
 # each call paid a Python interpreter's startup. The budget still comes
-# from the request, and a pool never mixes two of them.
+# from the request, inside the ceiling, and a pool never mixes two.
 POOLS = None
 
 
@@ -65,6 +86,58 @@ def close_pools() -> None:
         registry.close()
 
 
+def ceiling():
+    global CEILING
+    if CEILING is None:
+        CEILING = velaris.Budget.parse(DEFAULT_CEILING)
+    return CEILING
+
+
+def ceiling_list() -> list:
+    spec = ceiling().spec()
+    return spec.split(",") if spec else []
+
+
+def log():
+    global LOG
+    if LOG is None:
+        LOG = velaris.InvocationLog()
+    return LOG
+
+
+def configure(argv: list) -> str | None:
+    """Read the operator's flags. None when they are fine, else what is
+    wrong with them."""
+    global CEILING, LOG
+    opts = {}
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a in ("--max-allow", "--log-file", "--log"):
+            if i + 1 >= len(argv):
+                return f"{a} needs a value; {USAGE}"
+            opts[a] = argv[i + 1]
+            i += 2
+            continue
+        return f"unknown argument '{a}'; {USAGE}"
+    try:
+        CEILING = velaris.Budget.parse(opts.get("--max-allow",
+                                                DEFAULT_CEILING))
+    except velaris.BudgetError as e:
+        return f"--max-allow: {e}"
+    try:
+        LOG = velaris.InvocationLog(opts.get("--log-file"),
+                                    opts.get("--log", "full"))
+    except ValueError as e:
+        return f"--log: {e}"
+    except OSError as e:
+        return f"cannot open the log file: {e.strerror or e}"
+    return None
+
+
+# The descriptions are fixed text: the release workflow hashes them into
+# a signed manifest (velaris mcp-verify), so they say what the default
+# ceiling is rather than the ceiling this server was started with.
 TOOLS = [
     {
         "name": "velaris_card",
@@ -111,7 +184,10 @@ TOOLS = [
             "outside the budget is refused while the program runs, "
             "whatever the source claims about itself, and a refusal "
             "cannot be caught by the program. Grant the least you can: "
-            "['io'] lets it print and nothing else."),
+            "['io'] lets it print and nothing else. This server grants "
+            "at most what its operator set with --max-allow, and without "
+            "that flag it grants io only: a request for more is refused, "
+            "and the refusal names what the server grants."),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -126,7 +202,8 @@ TOOLS = [
                                     "json, and @N for at most N "
                                     "operations (fs@50, net:host@100). "
                                     "Plain fs, net or ffi grants every "
-                                    "path, host or module."),
+                                    "path, host or module. Only what the "
+                                    "server's ceiling covers is granted."),
                 },
                 "stdin": {"type": "string"},
                 "args": {"type": "array", "items": {"type": "string"}},
@@ -149,48 +226,95 @@ TOOLS = [
     },
 ]
 
+TOOL_NAMES = {t["name"] for t in TOOLS}
 
-def as_text(payload) -> dict:
+
+def as_text(payload, is_error: bool = False) -> dict:
     body = payload if isinstance(payload, str) else json.dumps(payload,
                                                                indent=2)
-    return {"content": [{"type": "text", "text": body}]}
+    out = {"content": [{"type": "text", "text": body}]}
+    if is_error:
+        out["isError"] = True
+    return out
+
+
+def call_tool(name: str, args: dict) -> tuple:
+    """(the MCP result, what the invocation log records about it)."""
+    rec = {"outcome": "ok", "budget": None, "effects": None,
+           "refusals": [], "source": None}
+    if name == "velaris_card":
+        return as_text(velaris.card()), rec
+    if name not in TOOL_NAMES:
+        rec["outcome"] = "unknown_tool"
+        return as_text({"error": f"no tool called '{name}'"},
+                       is_error=True), rec
+
+    source = args.get("source", "")
+    if not isinstance(source, str):
+        rec["outcome"] = "bad_request"
+        return as_text({"ok": False, "error": "source must be text"},
+                       is_error=True), rec
+    rec["source"] = source
+
+    if name == "velaris_check":
+        got = velaris.check(source)
+        rec["outcome"] = "ok" if got.ok else "problems"
+        return as_text(got.as_dict()), rec
+
+    if name == "velaris_audit":
+        got = velaris.audit(source)
+        rec["outcome"] = "ok" if got.ok else "problems"
+        return as_text(got.as_dict()), rec
+
+    # velaris_run: parse what was asked, hold it against the ceiling -
+    # at every level, as the HTTP door does - and only then run it
+    asked = args.get("allow") or ["io"]
+    if not isinstance(asked, list) or \
+            not all(isinstance(a, str) for a in asked):
+        rec["outcome"] = "bad_request"
+        return as_text({"ok": False, "error": "allow is a list of grants, "
+                                              "as [\"io\"]"},
+                       is_error=True), rec
+    try:
+        wanted = velaris.Budget.parse(",".join(asked))
+    except velaris.BudgetError as e:
+        rec["outcome"] = "bad_request"
+        return as_text({"ok": False, "error": str(e)}, is_error=True), rec
+    refused = ceiling().covers(wanted)
+    if refused:
+        rec["outcome"] = "ceiling"
+        rec["refusals"] = [{"by": "ceiling", "what": refused}]
+        return as_text({"error": refused, "max_allow": ceiling_list()},
+                       is_error=True), rec
+    rec["budget"] = wanted.spec()
+    try:
+        result = pools().run(
+            source, allow=set(asked),
+            stdin=args.get("stdin", ""),
+            args=args.get("args") or [],
+            timeout=float(args.get("timeout") or 30),
+            max_memory_mb=int(args.get("max_memory_mb") or 512))
+    except ValueError as e:
+        rec["outcome"] = "bad_request"
+        return as_text({"ok": False, "error": str(e)}, is_error=True), rec
+    rec["effects"] = result.effects_used
+    rec["outcome"] = velaris.run_outcome(result)
+    rec["refusals"] = velaris.run_refusals(result)
+    payload = result.as_dict()
+    payload["allowed"] = sorted(asked)
+    if result.timed_out:
+        payload["note"] = "the program ran too long and was stopped"
+    elif result.out_of_memory:
+        payload["note"] = "the program used too much memory and was stopped"
+    elif result.refused_effect:
+        payload["note"] = (
+            f"the program tried to use '{result.refused_effect}', "
+            f"which this run did not allow")
+    return as_text(payload), rec
 
 
 def handle_tool(name: str, args: dict) -> dict:
-    if name == "velaris_card":
-        return as_text(velaris.card())
-
-    source = args.get("source", "")
-    if name == "velaris_check":
-        return as_text(velaris.check(source).as_dict())
-
-    if name == "velaris_audit":
-        return as_text(velaris.audit(source).as_dict())
-
-    if name == "velaris_run":
-        allow = set(args.get("allow") or ["io"])
-        try:
-            result = pools().run(
-                source, allow=allow,
-                stdin=args.get("stdin", ""),
-                args=args.get("args") or [],
-                timeout=float(args.get("timeout") or 30),
-                max_memory_mb=int(args.get("max_memory_mb") or 512))
-        except ValueError as e:
-            return as_text({"ok": False, "error": str(e)})
-        payload = result.as_dict()
-        payload["allowed"] = sorted(allow)
-        if result.timed_out:
-            payload["note"] = "the program ran too long and was stopped"
-        elif result.out_of_memory:
-            payload["note"] = "the program used too much memory and was stopped"
-        elif result.refused_effect:
-            payload["note"] = (
-                f"the program tried to use '{result.refused_effect}', "
-                f"which this run did not allow")
-        return as_text(payload)
-
-    return as_text({"error": f"no tool called '{name}'"})
+    return call_tool(name, args)[0]
 
 
 def reply(msg_id, result=None, error=None) -> None:
@@ -203,11 +327,17 @@ def reply(msg_id, result=None, error=None) -> None:
     sys.stdout.flush()
 
 
-def main() -> int:
+def main(argv: list | None = None) -> int:
+    problem = configure(sys.argv[1:] if argv is None else argv)
+    if problem:
+        sys.stderr.write(problem + "\n")
+        return 2
     try:
         return serve()
     finally:
         close_pools()                     # no worker outlives the server
+        if LOG is not None:
+            LOG.close()
 
 
 def serve() -> int:
@@ -219,8 +349,11 @@ def serve() -> int:
             msg = json.loads(line)
         except json.JSONDecodeError:
             continue
+        if not isinstance(msg, dict):
+            continue
         method, msg_id = msg.get("method"), msg.get("id")
-        params = msg.get("params") or {}
+        params = msg.get("params")
+        params = params if isinstance(params, dict) else {}
 
         if method == "initialize":
             reply(msg_id, {
@@ -233,11 +366,25 @@ def serve() -> int:
             reply(msg_id, {"tools": TOOLS})
         elif method == "tools/call":
             name = params.get("name", "")
+            name = name if isinstance(name, str) else ""
+            arguments = params.get("arguments")
+            arguments = arguments if isinstance(arguments, dict) else {}
+            started = velaris.InvocationLog.started()
+            rec = {"outcome": "error", "budget": None, "effects": None,
+                   "refusals": [], "source": None}
             try:
-                reply(msg_id, handle_tool(name, params.get("arguments")
-                                          or {}))
+                result, rec = call_tool(name, arguments)
+                reply(msg_id, result)
             except Exception as e:                # never kill the server
-                reply(msg_id, as_text({"error": f"{type(e).__name__}: {e}"}))
+                reply(msg_id, as_text({"error": f"{type(e).__name__}: {e}"},
+                                      is_error=True))
+            finally:
+                log().record(started, door="mcp",
+                             tool=(name if name in TOOL_NAMES
+                                   else "(no such tool)"),
+                             outcome=rec["outcome"], budget=rec["budget"],
+                             effects=rec["effects"],
+                             refusals=rec["refusals"], source=rec["source"])
         elif method in ("notifications/initialized", "initialized"):
             continue                              # no reply expected
         elif method == "shutdown":

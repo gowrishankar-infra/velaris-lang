@@ -238,33 +238,50 @@ def library_page() -> str:
 
 
 def errors_page() -> str:
+    # The rows are velaris.ERROR_TABLE, the one list of codes, which
+    # check_library.py holds against every code velaris.py can give; the
+    # message templates are scraped from the source beside it. Each row
+    # has an id, because `velaris check --sarif` points a help URI at it.
     src = (HERE / "velaris.py").read_text(encoding="utf-8")
     found: dict[str, str] = {}
     for m in re.finditer(
-            r'VelarisError\(\s*"(E\d+)",\s*((?:f?"(?:[^"\\\\]|\\\\.)*"\s*)+)',
-            src):
+            r'(?:VelarisError|Problem)\(\s*"(E\d+)",\s*'
+            r'((?:f?"(?:[^"\\\\]|\\\\.)*"\s*)+)', src):
         code = m.group(1)
         msg = " ".join(re.findall(r'f?"((?:[^"\\\\]|\\\\.)*)"', m.group(2)))
         msg = re.sub(r"\s+", " ", msg).strip()
         if code not in found or len(msg) > len(found[code]):
             found[code] = msg
     body = ["<h1>Error reference</h1>",
-            '<p class="lead">Every error Velaris can give &mdash; '
-            "scraped from the compiler source itself, so this page "
-            "cannot go stale. Braces are filled with your "
-            "program&rsquo;s names and values; every error also "
-            "arrives with numbered fixes, and as JSON with "
+            '<p class="lead">Every error Velaris can give, from the '
+            "error table in the compiler source, which the test suite "
+            "holds against every code the compiler can raise, so this "
+            "page cannot go stale. In the message templates, braces are "
+            "filled with your program&rsquo;s names and values; every "
+            "error also arrives with numbered fixes, and as JSON with "
             "<code>--json</code>.</p>"
-            "<table><tr><th>Code</th><th>Message template</th></tr>"]
-    for code in sorted(found):
-        body.append(f'<tr><td class="ecode">{code}</td>'
-                    f'<td>{html.escape(found[code])}</td></tr>')
+            "<table><tr><th>Code</th><th>What it means</th>"
+            "<th>Message template</th></tr>"]
+    for code, meaning in sorted(velaris.ERROR_TABLE.items()):
+        body.append(f'<tr id="{code}"><td class="ecode">{code}</td>'
+                    f"<td>{html.escape(meaning)}</td>"
+                    f"<td>{html.escape(found.get(code, ''))}</td></tr>")
+    body.append("</table>")
+    body.append("<h2>Findings that are not errors</h2>"
+                "<p>What <code>velaris check --sarif</code>, "
+                "<code>proofs --sarif</code> and <code>audit --sarif</code> "
+                "report besides errors, at the level SARIF reports each "
+                "at.</p><table><tr><th>Rule</th><th>Level</th>"
+                "<th>What it means</th></tr>")
+    for rule, level, meaning in velaris.SARIF_FINDINGS:
+        body.append(f'<tr id="{rule}"><td class="ecode">{rule}</td>'
+                    f"<td>{level}</td><td>{html.escape(meaning)}</td></tr>")
     body.append("</table>")
     return "\n".join(body)
 
 
 def index_page() -> str:
-    n_codes = errors_page().count('class="ecode"')   # never by hand again
+    n_codes = len(velaris.ERROR_TABLE)               # never by hand again
     return f"""
 <div class="hero">
 <div class="eyebrow">A programming language</div>
@@ -359,9 +376,10 @@ hands you the exact double that breaks it &mdash;
 <p>Increasingly, the developer reading your compiler&rsquo;s output is
 an AI in a fix loop. Every Velaris error has a stable code, a
 plain-English message, a location, and numbered fixes &mdash;
-available as JSON with <code>--json</code>. All
-<a href="errors.html">all {n_codes} of them are documented</a>, scraped
-from the compiler source itself.</p>"""
+available as JSON with <code>--json</code>, and as SARIF for code
+scanning with <code>--sarif</code>.
+<a href="errors.html">All {n_codes} of them are documented</a>, from the
+error table in the compiler source.</p>"""
 
 
 (OUT / "index.html").write_text(
@@ -384,5 +402,5 @@ from the compiler source itself.</p>"""
               encoding="utf-8"))), encoding="utf-8")
 play = (HERE / "playground" / "index.html").read_text(encoding="utf-8")
 (OUT / "playground.html").write_text(play, encoding="utf-8")
-n_err = errors_page().count('class="ecode"')
+n_err = len(velaris.ERROR_TABLE)
 print(f"docs/ written: 5 pages, {n_err} error codes documented")

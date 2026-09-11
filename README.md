@@ -167,8 +167,8 @@ velaris script.vel --allow io        the command
 import velaris                        a Python library
 velaris mcp-install                   tools inside your assistant
 velaris.mcpb                          double-click install for Claude Desktop
-uses: gowrishankar-infra/velaris-lang a GitHub Action
-velaris serve                         an HTTP door for any language
+uses: gowrishankar-infra/velaris-lang a GitHub Action, findings as SARIF
+velaris serve                         an HTTP door for any language, token required
 npx velaris-lang script.vel           npm, for the JavaScript world
 %%velaris --audit --allow io          a Jupyter cell
 - repo: velaris-lang (pre-commit)     a commit hook
@@ -430,13 +430,53 @@ velaris proofs . --min 80   # fails the build below 80%
 ## Using Velaris in CI
 
 ```yaml
-- uses: gowrishankar-infra/velaris-lang@v2.63
-  with:
-    files: "src/*.vel"     # optional; default is every .vel file
-    format: "true"         # optional; also check formatting
-    min-proven: "80"       # optional; fail below this proven share
-    pr-comment: "true"     # optional; audit every changed .vel on the PR
+permissions:
+  contents: read
+  security-events: write       # for sarif, the default
+  pull-requests: write         # only for pr-comment
+
+steps:
+  - uses: actions/checkout@v5
+  - uses: gowrishankar-infra/velaris-lang@v3.4.0
+    with:
+      files: "src/*.vel"     # optional; default is every .vel file
+      format: "true"         # optional; also check formatting
+      min-proven: "80"       # optional; fail below this proven share
+      pr-comment: "true"     # optional; audit every changed .vel on the PR
+      sarif: "true"          # the default; findings to code scanning
 ```
+
+With `sarif` on - the default from 3.4 - the check writes its findings
+as SARIF 2.1.0 and uploads them with `github/codeql-action/upload-sarif`,
+pinned to a commit, so they appear in the repository's Security tab and
+on the lines of a pull request. The job needs
+`permissions: security-events: write`, and a private repository needs
+code scanning enabled; set `sarif: "false"` if it has neither. On a
+pull request from a fork the job's token cannot upload, so the step is
+skipped there; the file is still written, and its path is the action's
+`sarif-file` output. The findings still print to the job log either way.
+
+The same output without the action, for SonarQube
+(`sonar.sarifReportPaths`), Azure DevOps or anything else that reads
+SARIF:
+
+```
+velaris check src/*.vel --sarif > velaris.sarif   # exit 1 as the plain check
+velaris proofs src --sarif > proofs.sarif         # promises left to runtime
+velaris audit src --sarif > audit.sarif           # what each function may touch
+```
+
+One run, driver `Velaris` with its version and a rule for every code in
+the compiler's error table, each with a help link to its row on the
+[errors page](https://gowrishankar-infra.github.io/velaris-lang/errors.html),
+plus a rule for each finding that is not an error. Each result has the
+file, the line and Velaris's message. Errors are `error`; a promise left
+to runtime is a `warning` (an `error` under `check --strict`); a function
+that promises nothing about the data it handles, a loop not shown to end,
+and each effect a function may perform (`audit`) are `note`. Velaris's
+suggested fixes are sentences, while a SARIF `fix` must hold the exact
+bytes to change, so they travel in each result's `properties.fixes`
+rather than as SARIF fixes with an edit made up to fill the slot.
 
 Or without installing anything:
 

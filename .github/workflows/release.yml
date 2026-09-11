@@ -2,7 +2,8 @@ name: release
 
 # Every artifact a release publishes is signed with sigstore (keyless,
 # through this workflow's OIDC identity), the wheel is built twice and
-# compared, and a CycloneDX SBOM travels with the release. Every
+# compared, and a CycloneDX SBOM travels with the release, as does a
+# signed manifest of the MCP server's tools (velaris mcp-verify). Every
 # third-party action is pinned to a commit; the tag it was resolved
 # from is in the comment beside it. SECURITY.md says how to verify.
 
@@ -41,17 +42,38 @@ jobs:
             sbom-env/bin/python
           python -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['bomFormat'], d['specVersion'], len(d.get('components', [])), 'components')" \
             "dist/velaris-lang-${GITHUB_REF_NAME#v}.cdx.json"
-      - name: Sign the wheel, the sdist and the SBOM (sigstore)
+      # Every MCP tool's name, description hash and input-schema hash,
+      # asked of the server inside the wheel this job publishes - the
+      # server a client will run - so what is signed is what ships.
+      - name: The MCP tool manifest, from the server in the wheel
+        run: |
+          python -m venv mcp-env
+          mcp-env/bin/pip install "$(ls dist/*.whl)"
+          mcp-env/bin/velaris mcp-manifest \
+            -o "dist/velaris-mcp-tools-${GITHUB_REF_NAME#v}.json" \
+            -- mcp-env/bin/python -m velaris_mcp
+          cat "dist/velaris-mcp-tools-${GITHUB_REF_NAME#v}.json"
+      - name: Sign the wheel, the sdist, the SBOM and the tool manifest (sigstore)
         uses: sigstore/gh-action-sigstore-python@790bc6befb9d733738f18d8f895854b453640ec9  # v3.5.0
         with:
           inputs: |
             ./dist/*.whl
             ./dist/*.tar.gz
             ./dist/*.cdx.json
+            ./dist/velaris-mcp-tools-*.json
+      # The check a client operator runs, with the real signature: it
+      # must verify as this workflow at this tag, and every tool of the
+      # wheel's server must match it.
+      - name: Check the signed manifest against the server in the wheel
+        run: |
+          mcp-env/bin/pip install sigstore
+          mcp-env/bin/velaris mcp-verify \
+            "dist/velaris-mcp-tools-${GITHUB_REF_NAME#v}.json" \
+            -- mcp-env/bin/python -m velaris_mcp
       - name: Checksums
         run: |
           cd dist
-          sha256sum *.whl *.tar.gz *.cdx.json > SHA256SUMS
+          sha256sum *.whl *.tar.gz *.cdx.json velaris-mcp-tools-*.json > SHA256SUMS
           cat SHA256SUMS
       - name: Keep the distribution for the PyPI job
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
@@ -68,6 +90,7 @@ jobs:
             dist/*.whl
             dist/*.tar.gz
             dist/*.cdx.json
+            dist/velaris-mcp-tools-*.json
             dist/*.sigstore.json
             dist/SHA256SUMS
 

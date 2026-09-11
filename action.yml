@@ -29,6 +29,15 @@ inputs:
     description: "On a pull_request event, post one comment holding the velaris audit of every changed .vel file, and edit that same comment on later runs (true/false). Needs pull-requests: write."
     required: false
     default: "false"
+  sarif:
+    description: "Write the check's findings as SARIF 2.1.0 and upload them to GitHub code scanning (true/false). Needs security-events: write. Not uploaded on a pull request from a fork, whose token cannot upload; the file is still written."
+    required: false
+    default: "true"
+
+outputs:
+  sarif-file:
+    description: "Where the SARIF file was written, when sarif is true and there were .vel files to check."
+    value: ${{ steps.check.outputs.sarif-file }}
 
 runs:
   using: "composite"
@@ -47,10 +56,17 @@ runs:
         fi
         velaris doctor
 
+    # With sarif (the default), the check writes SARIF 2.1.0 to a file and
+    # still prints each finding to the log; it fails the step exactly as
+    # the plain check does. The file is uploaded by the next step.
     - name: Check
+      id: check
       shell: bash
+      env:
+        FILES: ${{ inputs.files }}
+        SARIF: ${{ inputs.sarif }}
       run: |
-        files="${{ inputs.files }}"
+        files="$FILES"
         if [ -z "$files" ]; then
           files=$(find . -name '*.vel' -not -path './.git/*' | sort)
         fi
@@ -59,7 +75,22 @@ runs:
           exit 0
         fi
         echo "checking $(echo "$files" | wc -w) file(s)"
-        velaris check $files
+        if [ "$SARIF" = "true" ]; then
+          sarif="$RUNNER_TEMP/velaris.sarif"
+          echo "sarif-file=$sarif" >> "$GITHUB_OUTPUT"
+          velaris check $files --sarif > "$sarif"
+        else
+          velaris check $files
+        fi
+
+    # Runs whether the check passed or not: the findings of a failing
+    # check are the ones worth reading. Skipped on a pull request from a
+    # fork, where the job's token is read-only and the upload would fail.
+    - name: Upload the findings to code scanning
+      if: ${{ always() && steps.check.outputs.sarif-file != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+      uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63  # v4.38.0
+      with:
+        sarif_file: ${{ steps.check.outputs.sarif-file }}
 
     - name: Proven share
       if: ${{ inputs.min-proven != '' }}
@@ -69,8 +100,10 @@ runs:
     - name: Formatting
       if: ${{ inputs.format == 'true' }}
       shell: bash
+      env:
+        FILES: ${{ inputs.files }}
       run: |
-        files="${{ inputs.files }}"
+        files="$FILES"
         if [ -z "$files" ]; then
           files=$(find . -name '*.vel' -not -path './.git/*' | sort)
         fi

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "velaris-lang"
-version = "3.3.0"
+version = "3.4.0"
 description = "The language where you can trust code you didn't write - signatures declare types, effects, and machine-checked promises."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -14,6 +14,9 @@ keywords = ["language", "compiler", "verification", "effects", "contracts", "z3"
 
 [project.optional-dependencies]
 full = ["z3-solver", "llvmlite"]
+# for the suites only: check_library.py validates SARIF output against
+# the OASIS schema with it
+test = ["jsonschema>=4.18"]
 
 [project.scripts]
 velaris = "velaris:main"

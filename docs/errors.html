@@ -105,68 +105,83 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 </style></head><body>
 <nav><div class="in"><a class="brand" href="index.html">
 <span class="dot"></span>Velaris</a><a href="index.html" class="">Home</a><a href="tutorial.html" class="">Tutorial</a><a href="spec.html" class="">Reference</a><a href="library.html" class="">Library</a><a href="errors.html" class="here">Errors</a><a href="floats.html" class="">Floats</a><a href="playground.html" class="">Playground</a>
-<span class="ver">v3.2.0</span></div></nav>
+<span class="ver">v3.4.0</span></div></nav>
 <main class=""><h1>Error reference</h1>
-<p class="lead">Every error Velaris can give &mdash; scraped from the compiler source itself, so this page cannot go stale. Braces are filled with your program&rsquo;s names and values; every error also arrives with numbered fixes, and as JSON with <code>--json</code>.</p><table><tr><th>Code</th><th>Message template</th></tr>
-<tr><td class="ecode">E000</td><td>unexpected character {source[pos]!r}</td></tr>
-<tr><td class="ecode">E001</td><td>cannot find file &#x27;{path}&#x27;</td></tr>
-<tr><td class="ecode">E002</td><td>unknown escape &#x27;\\{e}&#x27; in text</td></tr>
-<tr><td class="ecode">E100</td><td>expected &#x27;{want}&#x27; but found &#x27;{t.text or &#x27;end of file&#x27;}&#x27;</td></tr>
-<tr><td class="ecode">E101</td><td>unexpected &#x27;{t.text}&#x27;</td></tr>
-<tr><td class="ecode">E200</td><td>&#x27;{ns}&#x27; has no function called &#x27;{fname}&#x27;</td></tr>
-<tr><td class="ecode">E300</td><td>function &#x27;{fn.name}&#x27; calls &#x27;{node.name}&#x27; which needs effect &#x27;{eff}&#x27;, but &#x27;{fn.name}&#x27; {declared}</td></tr>
-<tr><td class="ecode">E310</td><td>the &#x27;{where}&#x27; promise of &#x27;{fn.name}&#x27; calls &#x27;{node.name}&#x27; which has effects ({&#x27;, &#x27;.join(sorted(eff))}); promises must be pure</td></tr>
-<tr><td class="ecode">E311</td><td>&#x27;{what}&#x27; reaches into Python module &#x27;{module}&#x27;, which this run does not allow</td></tr>
-<tr><td class="ecode">E313</td><td>&#x27;{what}&#x27; reaches &#x27;{path}&#x27; (resolved: {real}), which this run&#x27;s fs grants do not cover</td></tr>
-<tr><td class="ecode">E314</td><td>&#x27;{what}&#x27; reaches host &#x27;{host}&#x27;, which this run does not allow: {why}</td></tr>
-<tr><td class="ecode">E315</td><td>&#x27;{what}&#x27; is the {OP_COUNTS[kind]}{_ordinal(OP_COUNTS[kind])} {kind} operation, and this run allows {limit}</td></tr>
-<tr><td class="ecode">E400</td><td>there is no &#x27;main&#x27; - a program needs somewhere to start</td></tr>
-<tr><td class="ecode">E401</td><td>&#x27;{node.name}&#x27; expects {len(ptypes)} argument(s) but got {len(node.args)}</td></tr>
-<tr><td class="ecode">E402</td><td>a function value cannot use &#x27;{node.name}&#x27; from the code around it</td></tr>
-<tr><td class="ecode">E403</td><td>remainder by zero</td></tr>
-<tr><td class="ecode">E405</td><td>random(n) needs n greater than 0</td></tr>
-<tr><td class="ecode">E406</td><td>this text has {holes} placeholder(s) but got {given} value(s)</td></tr>
-<tr><td class="ecode">E407</td><td>this arithmetic made a number too big to hold (whole numbers go from {INT_MIN} to {INT_MAX})</td></tr>
-<tr><td class="ecode">E408</td><td>an exit code must be between 0 and 255, not {code}</td></tr>
-<tr><td class="ecode">E500</td><td>unknown type &#x27;{ftype}&#x27; for field &#x27;{fname}&#x27; of record &#x27;{r.name}&#x27;</td></tr>
-<tr><td class="ecode">E501</td><td>&#x27;{node.name}&#x27; is declared {node.ann}, but this is an empty {&#x27;list&#x27; if empty_list else &#x27;map&#x27;}</td></tr>
-<tr><td class="ecode">E502</td><td>argument {i} of &#x27;{node.name}&#x27; is a call to a function that returns nothing</td></tr>
-<tr><td class="ecode">E503</td><td>&#x27;{fn.name}&#x27; promises to return {declared_ret} but this return gives nothing</td></tr>
-<tr><td class="ecode">E504</td><td>&#x27;while&#x27; needs a yes/no condition (Bool), but this is {c}</td></tr>
-<tr><td class="ecode">E505</td><td>&#x27;invariant&#x27; must be a yes/no promise (Bool)</td></tr>
-<tr><td class="ecode">E506</td><td>cannot tell what an empty list holds</td></tr>
-<tr><td class="ecode">E507</td><td>&#x27;{r.name}&#x27; is used for both a record and a function</td></tr>
-<tr><td class="ecode">E508</td><td>unknown record &#x27;{node.name}&#x27;</td></tr>
-<tr><td class="ecode">E509</td><td>record &#x27;{node.name}&#x27; is missing field(s): {&#x27;, &#x27;.join(missing)}</td></tr>
-<tr><td class="ecode">E510</td><td>record &#x27;{t}&#x27; has no field &#x27;{node.field}&#x27;</td></tr>
-<tr><td class="ecode">E511</td><td>records cannot be changed in place</td></tr>
-<tr><td class="ecode">E512</td><td>cannot find imported file &#x27;{path}&#x27;</td></tr>
-<tr><td class="ecode">E513</td><td>function &#x27;{f.name}&#x27; is defined in both &#x27;{fn_src[f.name]}&#x27; and &#x27;{path}&#x27;</td></tr>
-<tr><td class="ecode">E514</td><td>&#x27;{name}&#x27; is the name of an import, so it cannot also be a variable</td></tr>
-<tr><td class="ecode">E520</td><td>&#x27;get&#x27; on a map can fail - the key may be missing, and that cannot be ignored</td></tr>
-<tr><td class="ecode">E521</td><td>&#x27;try&#x27; passes failure up, but &#x27;{fn.name}&#x27; cannot fail</td></tr>
-<tr><td class="ecode">E522</td><td>&#x27;{node.subject.name}&#x27; cannot fail - call it directly, no check needed</td></tr>
-<tr><td class="ecode">E523</td><td>&#x27;fail&#x27; is used, but &#x27;{fn.name}&#x27; does not declare it can fail</td></tr>
-<tr><td class="ecode">E524</td><td>&#x27;main&#x27; cannot be &#x27;or fail&#x27; - there is no one above it to handle the failure</td></tr>
-<tr><td class="ecode">E525</td><td>&#x27;{node.subject.name}&#x27; returns nothing - write &#x27;ok {{ ... }}&#x27; with no name</td></tr>
-<tr><td class="ecode">E530</td><td>&#x27;{f2.name}&#x27; uses effects ({&#x27;, &#x27;.join(sorted(f2.effects))}) - only pure functions can be passed as values</td></tr>
-<tr><td class="ecode">E540</td><td>type variable &#x27;{tv}&#x27; must appear in at least one parameter (a {tv} only in the return type cannot be inferred)</td></tr>
-<tr><td class="ecode">E541</td><td>type variable &#x27;{tv}&#x27; shadows a real type</td></tr>
-<tr><td class="ecode">E542</td><td>&#x27;{node.name}&#x27; argument {i} should look like {want}, but this is {got}</td></tr>
-<tr><td class="ecode">E543</td><td>&#x27;{f2.name}&#x27; is generic - generic functions cannot be passed as values yet</td></tr>
-<tr><td class="ecode">E600</td><td>broken promise: {nice_name(name)} requires {expr_str(expr)} ({vals(expr)})</td></tr>
-<tr><td class="ecode">E601</td><td>broken promise: {nice_name(name)} ensures {expr_str(expr)} ({vals(expr, (retval,))})</td></tr>
-<tr><td class="ecode">E602</td><td>position {i} is outside the text (it has {len(t)} character(s))</td></tr>
-<tr><td class="ecode">E607</td><td>this text grew too large to build</td></tr>
-<tr><td class="ecode">E608</td><td>could not write &#x27;{args[0]}&#x27;: {e.strerror or e}</td></tr>
-<tr><td class="ecode">E609</td><td>&#x27;{name}&#x27; called itself {DEPTH_LIMIT} deep - this looks like recursion that never stops</td></tr>
-<tr><td class="ecode">E700</td><td>promise cannot be kept: {nice_name(fn.name)} ensures {expr_str(ens_expr)} - proven without running the program: {vals} gives result = {rv}</td></tr>
-<tr><td class="ecode">E701</td><td>this call can break a promise: &#x27;{fnB.name}&#x27; requires {expr_str(r_expr)}, but &#x27;{ctx.caller}&#x27; can call it with {vals} - proven without running the program</td></tr>
-<tr><td class="ecode">E703</td><td>cannot prove the loop keeps &#x27;invariant {expr_str(inv_expr)}&#x27; {where} in &#x27;{ctx.caller}&#x27; - the promises allow: {vals}</td></tr>
-<tr><td class="ecode">E704</td><td>loop broke its promise: invariant {expr_str(inv_expr)} ({vals})</td></tr>
-<tr><td class="ecode">E705</td><td>this &#x27;get&#x27; can reach position {m.eval(idx, model_completion=True)}, but the list has {m.eval(length, model_completion=True)} item(s) - proven without running the program</td></tr>
-<tr><td class="ecode">E706</td><td>this can {word} zero</td></tr>
-<tr><td class="ecode">E999</td><td>self-test failed</td></tr>
+<p class="lead">Every error Velaris can give, from the error table in the compiler source, which the test suite holds against every code the compiler can raise, so this page cannot go stale. In the message templates, braces are filled with your program&rsquo;s names and values; every error also arrives with numbered fixes, and as JSON with <code>--json</code>.</p><table><tr><th>Code</th><th>What it means</th><th>Message template</th></tr>
+<tr id="E000"><td class="ecode">E000</td><td>a character the lexer cannot read, or a run that stopped without a Velaris error to report</td><td>unexpected character {source[pos]!r}</td></tr>
+<tr id="E001"><td class="ecode">E001</td><td>the program&#x27;s file cannot be found</td><td>cannot find file &#x27;{path}&#x27;</td></tr>
+<tr id="E002"><td class="ecode">E002</td><td>an unknown escape sequence in a text literal</td><td>unknown escape &#x27;\\{e}&#x27; in text</td></tr>
+<tr id="E100"><td class="ecode">E100</td><td>the parser expected something else here</td><td>expected &#x27;{want}&#x27; but found &#x27;{t.text or &#x27;end of file&#x27;}&#x27;</td></tr>
+<tr id="E101"><td class="ecode">E101</td><td>a token that cannot start an expression here</td><td>unexpected &#x27;{t.text}&#x27;</td></tr>
+<tr id="E200"><td class="ecode">E200</td><td>an unknown function, or an import with no such function</td><td>&#x27;{ns}&#x27; has no function called &#x27;{fname}&#x27;</td></tr>
+<tr id="E300"><td class="ecode">E300</td><td>an effect used but not declared in &#x27;uses&#x27;, or a name in &#x27;uses&#x27; that is not an effect</td><td>function &#x27;{fn.name}&#x27; declares &#x27;{unknown[0]}&#x27;, which is not an effect; the effects are {&#x27;, &#x27;.join(ALL_EFFECTS)}</td></tr>
+<tr id="E310"><td class="ecode">E310</td><td>an effect outside the run&#x27;s budget (while running); or a promise that calls a function with effects or uses &#x27;try&#x27;</td><td>the &#x27;{where}&#x27; promise of &#x27;{fn.name}&#x27; calls &#x27;{node.name}&#x27; which has effects ({&#x27;, &#x27;.join(sorted(eff))}); promises must be pure</td></tr>
+<tr id="E311"><td class="ecode">E311</td><td>a Python module outside the run&#x27;s ffi: grants was reached</td><td>&#x27;{what}&#x27; reaches {described}, whose owning Python module cannot be determined; this run allows ffi:{granted} and refuses what it cannot place</td></tr>
+<tr id="E313"><td class="ecode">E313</td><td>a path outside the run&#x27;s fs grants</td><td>&#x27;{what}&#x27; reaches &#x27;{path}&#x27; (resolved: {real}), which this run&#x27;s fs grants do not cover</td></tr>
+<tr id="E314"><td class="ecode">E314</td><td>a host or port outside the run&#x27;s net grants</td><td>&#x27;{what}&#x27; reaches host &#x27;{host}&#x27;, which this run does not allow: {why}</td></tr>
+<tr id="E315"><td class="ecode">E315</td><td>the run&#x27;s fs or net operation count was reached</td><td>&#x27;{what}&#x27; is the {OP_COUNTS[kind]}{_ordinal(OP_COUNTS[kind])} {kind} operation, and this run allows {limit}</td></tr>
+<tr id="E400"><td class="ecode">E400</td><td>there is no &#x27;main&#x27; function</td><td>there is no &#x27;main&#x27; - a program needs somewhere to start</td></tr>
+<tr id="E401"><td class="ecode">E401</td><td>the wrong number of arguments, or parameters on &#x27;main&#x27;</td><td>&#x27;{node.name}&#x27; expects {len(ptypes)} argument(s) but got {len(node.args)}</td></tr>
+<tr id="E402"><td class="ecode">E402</td><td>an unknown variable, or a function value that uses a name from the code around it</td><td>a function value cannot use &#x27;{node.name}&#x27; from the code around it</td></tr>
+<tr id="E403"><td class="ecode">E403</td><td>division or remainder by zero while running</td><td>remainder by zero</td></tr>
+<tr id="E405"><td class="ecode">E405</td><td>random(n) with n less than 1</td><td>random(n) needs n greater than 0</td></tr>
+<tr id="E406"><td class="ecode">E406</td><td>the placeholders in a format text and the values given do not match</td><td>this text has {holes} placeholder(s) but got {given} value(s)</td></tr>
+<tr id="E407"><td class="ecode">E407</td><td>a whole number grew past 64 bits</td><td>this arithmetic made a number too big to hold (whole numbers go from {INT_MIN} to {INT_MAX})</td></tr>
+<tr id="E408"><td class="ecode">E408</td><td>an exit code outside 0 to 255</td><td>an exit code must be between 0 and 255, not {code}</td></tr>
+<tr id="E500"><td class="ecode">E500</td><td>an unknown type</td><td>unknown type &#x27;{ftype}&#x27; for field &#x27;{fname}&#x27; of record &#x27;{r.name}&#x27;</td></tr>
+<tr id="E501"><td class="ecode">E501</td><td>types do not match</td><td>&#x27;{node.name}&#x27; is declared {node.ann}, but this is an empty {&#x27;list&#x27; if empty_list else &#x27;map&#x27;}</td></tr>
+<tr id="E502"><td class="ecode">E502</td><td>a value is needed from a function that returns nothing</td><td>argument {i} of &#x27;{node.name}&#x27; is a call to a function that returns nothing</td></tr>
+<tr id="E503"><td class="ecode">E503</td><td>a return does not match the declared return type</td><td>&#x27;{fn.name}&#x27; promises to return {declared_ret} but this return gives nothing</td></tr>
+<tr id="E504"><td class="ecode">E504</td><td>an &#x27;if&#x27; or &#x27;while&#x27; condition that is not a Bool</td><td>&#x27;while&#x27; needs a yes/no condition (Bool), but this is {c}</td></tr>
+<tr id="E505"><td class="ecode">E505</td><td>a requires, ensures or invariant that is not a Bool</td><td>&#x27;invariant&#x27; must be a yes/no promise (Bool)</td></tr>
+<tr id="E506"><td class="ecode">E506</td><td>an empty list or map with no type to say what it holds</td><td>cannot tell what an empty list holds</td></tr>
+<tr id="E507"><td class="ecode">E507</td><td>a record defined twice, a field given twice in a record, or one name used for a record and a function</td><td>&#x27;{r.name}&#x27; is used for both a record and a function</td></tr>
+<tr id="E508"><td class="ecode">E508</td><td>an unknown record</td><td>unknown record &#x27;{node.name}&#x27;</td></tr>
+<tr id="E509"><td class="ecode">E509</td><td>a record value with a missing, unknown or repeated field, or a map with a repeated key</td><td>record &#x27;{node.name}&#x27; is missing field(s): {&#x27;, &#x27;.join(missing)}</td></tr>
+<tr id="E510"><td class="ecode">E510</td><td>a field that the value does not have</td><td>record &#x27;{t}&#x27; has no field &#x27;{node.field}&#x27;</td></tr>
+<tr id="E511"><td class="ecode">E511</td><td>a record changed in place</td><td>records cannot be changed in place</td></tr>
+<tr id="E512"><td class="ecode">E512</td><td>an imported file cannot be found</td><td>cannot find imported file &#x27;{path}&#x27;</td></tr>
+<tr id="E513"><td class="ecode">E513</td><td>a function or record defined in two files</td><td>function &#x27;{f.name}&#x27; is defined in both &#x27;{fn_src[f.name]}&#x27; and &#x27;{path}&#x27;</td></tr>
+<tr id="E514"><td class="ecode">E514</td><td>a variable named like an import</td><td>&#x27;{name}&#x27; is the name of an import, so it cannot also be a variable</td></tr>
+<tr id="E520"><td class="ecode">E520</td><td>a failure that is ignored: a call that can fail, not handled with check or passed up with try</td><td>&#x27;get&#x27; on a map can fail - the key may be missing, and that cannot be ignored</td></tr>
+<tr id="E521"><td class="ecode">E521</td><td>&#x27;try&#x27; in a function that cannot fail, or a failure that escaped the program while running</td><td>&#x27;try&#x27; passes failure up, but &#x27;{fn.name}&#x27; cannot fail</td></tr>
+<tr id="E522"><td class="ecode">E522</td><td>&#x27;try&#x27; or &#x27;check&#x27; on a call that cannot fail</td><td>&#x27;{node.subject.name}&#x27; cannot fail - call it directly, no check needed</td></tr>
+<tr id="E523"><td class="ecode">E523</td><td>&#x27;fail&#x27; in a function that does not declare &#x27;or fail&#x27;, or a &#x27;main&#x27; that can fail</td><td>&#x27;fail&#x27; is used, but &#x27;{fn.name}&#x27; does not declare it can fail</td></tr>
+<tr id="E524"><td class="ecode">E524</td><td>&#x27;main&#x27; declared &#x27;or fail&#x27;</td><td>&#x27;main&#x27; cannot be &#x27;or fail&#x27; - there is no one above it to handle the failure</td></tr>
+<tr id="E525"><td class="ecode">E525</td><td>a check&#x27;s ok arm names the result of a call that returns nothing, or leaves a returned value unnamed</td><td>&#x27;{node.subject.name}&#x27; returns nothing - write &#x27;ok {{ ... }}&#x27; with no name</td></tr>
+<tr id="E530"><td class="ecode">E530</td><td>a function passed as a value that has effects or can fail</td><td>&#x27;{f2.name}&#x27; uses effects ({&#x27;, &#x27;.join(sorted(f2.effects))}) - only pure functions can be passed as values</td></tr>
+<tr id="E540"><td class="ecode">E540</td><td>a type variable that appears only in the return type</td><td>type variable &#x27;{tv}&#x27; must appear in at least one parameter (a {tv} only in the return type cannot be inferred)</td></tr>
+<tr id="E541"><td class="ecode">E541</td><td>a type variable named like a real type</td><td>type variable &#x27;{tv}&#x27; shadows a real type</td></tr>
+<tr id="E542"><td class="ecode">E542</td><td>a function value of the wrong shape</td><td>&#x27;{node.name}&#x27; argument {i} should look like {want}, but this is {got}</td></tr>
+<tr id="E543"><td class="ecode">E543</td><td>a generic function passed as a value</td><td>&#x27;{f2.name}&#x27; is generic - generic functions cannot be passed as values yet</td></tr>
+<tr id="E600"><td class="ecode">E600</td><td>a &#x27;requires&#x27; broke while running</td><td>broken promise: {nice_name(name)} requires {expr_str(expr)} ({vals(expr)})</td></tr>
+<tr id="E601"><td class="ecode">E601</td><td>an &#x27;ensures&#x27; broke while running</td><td>broken promise: {nice_name(name)} ensures {expr_str(expr)} ({vals(expr, (retval,))})</td></tr>
+<tr id="E602"><td class="ecode">E602</td><td>a position outside a list or text while running</td><td>position {i} is outside the text (it has {len(t)} character(s))</td></tr>
+<tr id="E607"><td class="ecode">E607</td><td>a text grew too large to build, or there was no input to read</td><td>this text grew too large to build</td></tr>
+<tr id="E608"><td class="ecode">E608</td><td>a file could not be written</td><td>could not write &#x27;{args[0]}&#x27;: {e.strerror or e}</td></tr>
+<tr id="E609"><td class="ecode">E609</td><td>recursion too deep, or split by empty text</td><td>&#x27;{name}&#x27; called itself {DEPTH_LIMIT} deep - this looks like recursion that never stops</td></tr>
+<tr id="E610"><td class="ecode">E610</td><td>the run&#x27;s time limit was reached and the program stopped</td><td>the program ran longer than {self.timeout} second(s) and was stopped</td></tr>
+<tr id="E611"><td class="ecode">E611</td><td>the run&#x27;s memory cap was reached and the program stopped</td><td>the program used more than {self.max_memory_mb} MB and was stopped</td></tr>
+<tr id="E612"><td class="ecode">E612</td><td>a loop whose end cannot be shown (check --strict only)</td><td></td></tr>
+<tr id="E700"><td class="ecode">E700</td><td>a promise that is provably false, with the input that breaks it</td><td>promise cannot be kept: {nice_name(fn.name)} ensures {expr_str(ens_expr)} - proven without running the program: {vals} gives result = {rv}</td></tr>
+<tr id="E701"><td class="ecode">E701</td><td>a call that can break the called function&#x27;s &#x27;requires&#x27;, with the input that does</td><td>this call can break a promise: &#x27;{fnB.name}&#x27; requires {expr_str(r_expr)}, but &#x27;{ctx.caller}&#x27; can call it with {vals} - proven without running the program</td></tr>
+<tr id="E703"><td class="ecode">E703</td><td>a loop invariant the prover cannot show holds</td><td>cannot prove the loop keeps &#x27;invariant {expr_str(inv_expr)}&#x27; {where} in &#x27;{ctx.caller}&#x27; - the promises allow: {vals}</td></tr>
+<tr id="E704"><td class="ecode">E704</td><td>a loop invariant broke while running</td><td>loop broke its promise: invariant {expr_str(inv_expr)} ({vals})</td></tr>
+<tr id="E705"><td class="ecode">E705</td><td>a list read the prover shows can go past the end</td><td>this &#x27;get&#x27; can reach position {m.eval(idx, model_completion=True)}, but the list has {m.eval(length, model_completion=True)} item(s) - proven without running the program</td></tr>
+<tr id="E706"><td class="ecode">E706</td><td>a divisor the prover shows can be zero</td><td>this can {word} zero</td></tr>
+<tr id="E999"><td class="ecode">E999</td><td>the self-test in &#x27;velaris doctor&#x27; failed</td><td>self-test failed</td></tr>
+</table>
+<h2>Findings that are not errors</h2><p>What <code>velaris check --sarif</code>, <code>proofs --sarif</code> and <code>audit --sarif</code> report besides errors, at the level SARIF reports each at.</p><table><tr><th>Rule</th><th>Level</th><th>What it means</th></tr>
+<tr id="unproven-promise"><td class="ecode">unproven-promise</td><td>warning</td><td>a requires or ensures that is checked while the program runs, not proven before it runs</td></tr>
+<tr id="contract-coverage"><td class="ecode">contract-coverage</td><td>note</td><td>a function that takes or returns data and promises nothing about it</td></tr>
+<tr id="loop-not-shown-to-end"><td class="ecode">loop-not-shown-to-end</td><td>note</td><td>a loop the termination rule cannot show to end; check --strict refuses it as E612</td></tr>
+<tr id="uses-io"><td class="ecode">uses-io</td><td>note</td><td>a function that may perform io: the console</td></tr>
+<tr id="uses-env"><td class="ecode">uses-env</td><td>note</td><td>a function that may perform env: environment variables</td></tr>
+<tr id="uses-fs"><td class="ecode">uses-fs</td><td>note</td><td>a function that may perform fs: files</td></tr>
+<tr id="uses-net"><td class="ecode">uses-net</td><td>note</td><td>a function that may perform net: the network</td></tr>
+<tr id="uses-clock"><td class="ecode">uses-clock</td><td>note</td><td>a function that may perform clock: the time</td></tr>
+<tr id="uses-rand"><td class="ecode">uses-rand</td><td>note</td><td>a function that may perform rand: randomness</td></tr>
+<tr id="uses-ffi"><td class="ecode">uses-ffi</td><td>note</td><td>a function that may perform ffi: Python, and so anything Python can do</td></tr>
 </table></main>
 <footer>Velaris is MIT-licensed open source &middot;
 <a href="https://github.com/gowrishankar-infra/velaris-lang">GitHub</a>
