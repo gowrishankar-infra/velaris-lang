@@ -31,9 +31,11 @@ clock. Not "shouldn't" — the runtime refuses, and a refusal cannot be
 caught and carried past. You do not have to read the code, understand
 it, or trust the compiler's analysis of it.
 
-`--allow io,ffi:math,json` grants Python only to calls that name those
-modules; a call naming any other is refused, though whatever a granted
-module can reach is reachable through it. Since 3.0 the same grammar
+`--allow io,ffi:math,json` grants Python for those modules only; a call
+that reaches any other module — named, or reached through an attribute of
+a granted one — is refused (E311). A granted module can still do whatever
+that module itself can do: `ffi:os` is the operating system. Since 3.0
+the same grammar
 narrows every coarse effect: `fs:read:./data`, `fs:write:./out`,
 `net:api.example.com:443`, `net:*.example.com`, and `@100` for at most
 that many operations in a run; `env` is its own effect, so an
@@ -239,7 +241,7 @@ real guard for running a program you have not read.
 velaris examples/stress.vel     # 33 checks across the whole language
 velaris examples/edges.vel      # 20 boundary, property and round-trip checks
 python check_refusals.py        # 21 wrong programs, each refused correctly
-python check_sandbox.py         # 24 escape attempts, all refused
+python check_sandbox.py         # 30 escape attempts, all refused
 python check_pool.py            # a pool must leak nothing between programs
 ```
 

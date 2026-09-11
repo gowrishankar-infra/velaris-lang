@@ -258,7 +258,7 @@ Usage:
 import json
 import os
 
-VERSION = "3.2.0"
+VERSION = "3.3.0"
 import re
 import sys
 from dataclasses import dataclass, field
@@ -1248,6 +1248,56 @@ class BudgetError(ValueError):
     """A budget that does not parse. Raised before anything runs."""
 
 
+# A path or host component can hold characters the grant grammar uses as
+# structure: `,` splits items, `@` marks a count, `[` `]` bracket an IPv6
+# address. Those five characters (with `%` itself) are percent-encoded
+# inside a path or host component and decoded when the budget is parsed,
+# so `safe_command` round-trips: a path with a comma, a host with an `@`,
+# an IPv6 literal all survive being written to text and read back. This
+# is the escaping rule of velaris-spec v0.2 (§5.1, §5.2). Only these five
+# sequences are decoded; every other `%` is literal.
+_PCT_ENCODE = (("%", "%25"), (",", "%2C"), ("@", "%40"),
+               ("[", "%5B"), ("]", "%5D"))
+_PCT_DECODE = {"%2C": ",", "%40": "@", "%5B": "[", "%5D": "]", "%25": "%"}
+
+
+def _pct_encode(s: str) -> str:
+    """Encode the five structural characters in a path or host component.
+    `%` first, so an already-`%`-bearing string is not double-decoded."""
+    for ch, enc in _PCT_ENCODE:
+        s = s.replace(ch, enc)
+    return s
+
+
+def _pct_decode(s: str) -> str:
+    """Decode exactly the five sequences, in one left-to-right pass so a
+    literal `%2C` (written `%252C`) decodes to `%2C`, not to a comma."""
+    out, i, n = [], 0, len(s)
+    while i < n:
+        chunk = s[i:i + 3].upper()
+        if s[i] == "%" and chunk in _PCT_DECODE:
+            out.append(_PCT_DECODE[chunk])
+            i += 3
+        else:
+            out.append(s[i])
+            i += 1
+    return "".join(out)
+
+
+def _net_grant_text(host: str, port) -> str:
+    """One `net:` grant as canonical text: an IPv6 host in brackets, any
+    other host with its structural characters percent-encoded, then an
+    optional `:port`."""
+    h = f"[{host}]" if ":" in host else _pct_encode(host)
+    return f"net:{h}" + (f":{port}" if port else "")
+
+
+def _ascii_digits(s: str) -> bool:
+    """True for a non-empty run of ASCII 0-9 only - not other Unicode
+    digits, which str.isdigit would accept."""
+    return bool(s) and s.isascii() and s.isdigit()
+
+
 class Budget:
     """What a run may touch, as written on the command line.
 
@@ -1281,6 +1331,7 @@ class Budget:
         self.limits: dict = {"fs": None, "net": None}
         self._fs_any = False               # a plain 'fs' was written
         self._net_any = False              # a plain 'net' was written
+        self._ffi_any = False              # a plain 'ffi' was written
 
     # ---- parsing -------------------------------------------------------
     @classmethod
@@ -1300,21 +1351,42 @@ class Budget:
                 continue
             if item.startswith("ffi:"):
                 b.effects.add("ffi")
-                b.modules = set() if b.modules is None else b.modules
-                b.modules.add(item[4:].strip().split(".")[0])
-                # continuation: ffi:a,b,c until something that is not a
-                # bare module name
+                # ffi is additive like fs and net (SPEC.md §7.1, resolved
+                # in spec v0.2 / Q2): a plain `ffi` anywhere grants every
+                # module, and the wider grant wins, so `ffi,ffi:math` and
+                # `ffi:math,ffi` both grant every module. Named modules
+                # narrow only while no plain `ffi` has been written.
+                raw = [item[4:].strip()]
                 while i < len(items) and items[i] and ":" not in items[i] \
                         and "@" not in items[i] \
                         and items[i] not in ALL_EFFECTS:
-                    b.modules.add(items[i].split(".")[0])
+                    raw.append(items[i])
                     i += 1
+                mods = []
+                for r in raw:
+                    if "@" in r:      # ffi takes no count (spec Q6)
+                        raise BudgetError(
+                            f"'{r}': ffi takes no count; a module is a "
+                            f"name, as ffi:math")
+                    m = r.split(".")[0]
+                    if not m:         # ffi: with no module (spec Q6)
+                        raise BudgetError(
+                            f"'{item}': ffi: needs a module name, as "
+                            f"ffi:math")
+                    mods.append(m)
+                if not b._ffi_any:
+                    b.modules = set() if b.modules is None else b.modules
+                    b.modules.update(mods)
             elif item == "fs" or item.startswith("fs:") or \
                     item.startswith("fs@"):
                 b._add_fs(item)
             elif item == "net" or item.startswith("net:") or \
                     item.startswith("net@"):
                 b._add_net(item)
+            elif item == "ffi":
+                b.effects.add("ffi")
+                b._ffi_any = True
+                b.modules = None           # every module; the wider grant
             elif item in ALL_EFFECTS:
                 b.effects.add(item)
             else:
@@ -1326,16 +1398,23 @@ class Budget:
 
     @staticmethod
     def _split_count(item: str) -> tuple:
-        """'fs:read:./x@50' -> ('fs:read:./x', 50); no count -> None."""
+        """'fs:read:./x@50' -> ('fs:read:./x', 50); no count -> None.
+
+        A count is ASCII digits only. Python's str.isdigit also accepts
+        other Unicode digits, so before 3.3 `fs@٣` was read as 3 and
+        `fs@²` stopped the parser with an uncaught ValueError instead of
+        a budget error (spec Q6). Only 0-9 count now."""
         at = item.rfind("@")
-        if at > 0 and item[at + 1:].isdigit():
-            n = int(item[at + 1:])
-            if n < 0:
-                raise BudgetError(f"'{item}': a count cannot be negative")
-            return item[:at], n
+        if at > 0 and _ascii_digits(item[at + 1:]):
+            body = item[:at]
+            if "@" in body:      # a second @ is a stray, not a count
+                raise BudgetError(
+                    f"'{item}': a grant takes at most one @count; write "
+                    f"an @ inside a path as %40")
+            return body, int(item[at + 1:])
         if at > 0:
             raise BudgetError(f"'{item}': what follows @ must be a whole "
-                              f"number of operations")
+                              f"number of operations, written 0-9")
         return item, None
 
     def _limit(self, kind: str, n) -> None:
@@ -1362,7 +1441,10 @@ class Budget:
             if not path:
                 raise BudgetError(f"'{item}': the path after fs:{kind}: "
                                   f"is empty")
-            prefix = os.path.normcase(os.path.realpath(path))
+            # a `,` or `@` in the path arrives percent-encoded (spec v0.2
+            # §5.1); decode before resolving, so the path names the file
+            # it means
+            prefix = os.path.normcase(os.path.realpath(_pct_decode(path)))
         if getattr(self, "_fs_any", False):
             return                             # plain fs already covers it
         if self.fs is None:
@@ -1411,15 +1493,15 @@ class Budget:
                     out.append("fs" + tail)
                 else:
                     for kind, prefix in self.fs:
-                        out.append(f"fs:{kind}" + (f":{prefix}" if prefix else "") + tail)
+                        p = f":{_pct_encode(prefix)}" if prefix else ""
+                        out.append(f"fs:{kind}" + p + tail)
             elif e == "net":
                 tail = f"@{self.limits['net']}" if self.limits["net"] is not None else ""
                 if self.net is None:
                     out.append("net" + tail)
                 else:
                     for host, port in self.net:
-                        h = f"[{host}]" if ":" in host else host
-                        out.append(f"net:{h}" + (f":{port}" if port else "") + tail)
+                        out.append(_net_grant_text(host, port) + tail)
             else:
                 out.append(e)
         return ",".join(out)
@@ -1519,21 +1601,35 @@ def parse_host_port(text: str) -> tuple:
         end = text.find("]")
         if end < 0:
             raise BudgetError(f"'{text}': unclosed [ in an IPv6 literal")
-        host = text[1:end]
+        host = _pct_decode(text[1:end])
+        if not host:
+            raise BudgetError(f"'{text}': the brackets hold no address")
         rest = text[end + 1:]
         if rest:
-            if not rest.startswith(":") or not rest[1:].isdigit():
+            if not rest.startswith(":") or not _ascii_digits(rest[1:]):
                 raise BudgetError(f"'{text}': expected :port after ]")
             port = int(rest[1:])
     else:
+        # structure is read on the encoded text - `@` and `/` are still
+        # errors as raw characters, since a host that means to hold them
+        # writes them percent-encoded (spec v0.2 §5.2)
         host, sep, tail = text.rpartition(":")
-        if sep and tail.isdigit():
+        if sep and _ascii_digits(tail):
             port = int(tail)
         else:
             host = text
         if "/" in host or "@" in host or not host:
             raise BudgetError(f"'{text}': a host is a name or address, "
                               f"with an optional :port")
+        if ":" in host:
+            # a residual colon is an unbracketed IPv6 address; it must be
+            # written net:[...] so host:port is not ambiguous (spec v0.2
+            # §5.2, Q5). This is what made net:::1 mean the host ':' at
+            # port 1 before 3.3.
+            raise BudgetError(f"'{text}': an IPv6 address must be written "
+                              f"in brackets, as net:[{host}] or "
+                              f"net:[{host}]:port")
+        host = _pct_decode(host)
     if port is not None and not 0 < port < 65536:
         raise BudgetError(f"'{text}': port out of range")
     return host.lower().rstrip("."), port
@@ -1694,6 +1790,123 @@ def allow_module(module: str, what: str, line: int) -> None:
                + ("," + ",".join(sorted(FFI_MODULES)) if FFI_MODULES
                   else ""),
                "or use a program that does not need it"])
+
+
+# A call into Python names a module (checked by allow_module) and then a
+# dotted path of attributes reached from it. Until 3.3 only the module
+# name was checked, so `py("json", "codecs.encode", ...)` ran codecs code
+# under `ffi:json` - the module json imports codecs into its namespace,
+# and the attribute chain walked straight into it. From 3.3 every step of
+# the chain is checked: an ffi:M grant is bounded to the module actually
+# reached, not merely the one named. See SPEC.md §12 and THREAT_MODEL.md.
+
+# Inert values are data, not code from any module, and are not checked:
+# returning math.pi or a JSON field reaches no module's behaviour.
+_FFI_INERT = (int, float, bool, str, bytes, bytearray, type(None),
+              list, tuple, dict, set, frozenset)
+_FFI_UNKNOWN = object()   # owning module cannot be determined -> refuse
+
+
+def _ffi_owner(obj):
+    """The top-level Python package that owns `obj` as code, `None` when
+    `obj` is inert data, or `_FFI_UNKNOWN` when it cannot be told.
+
+    Determining this soundly matters: the check refuses more rather than
+    less, so anything whose owner cannot be placed - a bare code object,
+    a frame, a reflective handle - is _FFI_UNKNOWN and is refused, not
+    allowed. A builtin method carries `__module__` `None` but is bound to
+    a class or module through `__self__`/`__objclass__`, which is where
+    its code lives; that is consulted before the object's own type, so
+    `datetime.date.today` is placed in `datetime`, not in `builtins`.
+    """
+    import types
+    if isinstance(obj, types.ModuleType):
+        name = getattr(obj, "__name__", None)
+        return name.split(".")[0] if name else _FFI_UNKNOWN
+    if isinstance(obj, _FFI_INERT):
+        return None
+    m = getattr(obj, "__module__", None)
+    if isinstance(m, str) and m:
+        return m.split(".")[0]
+    # a builtin or bound method: the class or module it belongs to holds
+    # the code, even when the method object itself reports no __module__
+    for attr in ("__self__", "__objclass__"):
+        holder = getattr(obj, attr, None)
+        if holder is None:
+            continue
+        if isinstance(holder, types.ModuleType):
+            n = getattr(holder, "__name__", None)
+            if n:
+                return n.split(".")[0]
+        hm = getattr(holder, "__module__", None)
+        if not (isinstance(hm, str) and hm):
+            hm = getattr(type(holder), "__module__", None)
+        if isinstance(hm, str) and hm:
+            return hm.split(".")[0]
+    # a foreign instance names its home in its type; a builtins-typed
+    # object with no __module__ of its own (a code object, a frame, a
+    # range) is not inert data we recognise, so it cannot be placed
+    tm = getattr(type(obj), "__module__", None)
+    if isinstance(tm, str) and tm and tm != "builtins":
+        return tm.split(".")[0]
+    return _FFI_UNKNOWN
+
+
+def ffi_reach(obj, what: str, line: int, described: str) -> None:
+    """Refuse (E311) when `obj` - a step in the attribute chain a call
+    names, an attribute read through a handle, or a non-JSON result kept
+    as a handle - is code owned by a module outside this run's ffi
+    grants, naming the module actually reached. Inert data is allowed;
+    an owner that cannot be determined is refused."""
+    if FFI_MODULES is None:
+        return
+    owner = _ffi_owner(obj)
+    if owner is None:
+        return
+    granted = ",".join(sorted(FFI_MODULES))
+    if owner is _FFI_UNKNOWN:
+        raise VelarisError("E311",
+            f"'{what}' reaches {described}, whose owning Python module "
+            f"cannot be determined; this run allows ffi:{granted} and "
+            f"refuses what it cannot place", line,
+            fixes=["name the module the object comes from directly",
+                   "or use a program that does not reach it this way"])
+    if owner not in FFI_MODULES:
+        raise VelarisError("E311",
+            f"'{what}' reaches into Python module '{owner}' (via "
+            f"{described}), which this run does not allow", line,
+            fixes=[f"allow it: --allow ffi:{owner}"
+                   + ("," + granted if FFI_MODULES else ""),
+                   "or use a program that does not need it"])
+
+
+def _ffi_resolve(module: str, func, name: str, line: int):
+    """Import the module a call names (allow_module checks the name) and
+    walk the attribute chain to the target it calls, checking the owning
+    module of every step (ffi_reach). One place for all three py* import
+    sites, so the chain is checked the same way for each."""
+    import importlib
+    mod, rest = None, ""
+    parts = str(module).split(".")
+    for cut in range(len(parts), 0, -1):      # datetime.date works:
+        try:                                  # import what imports,
+            allow_module(".".join(parts[:cut]), name, line)
+            mod = importlib.import_module(".".join(parts[:cut]))
+            rest = ".".join(parts[cut:])      # reach the rest by name
+            break
+        except ImportError:
+            continue
+    if mod is None:
+        raise FailSignal(f"cannot import '{module}'")
+    target = mod
+    for part in ([p for p in rest.split(".") if p]
+                 + [p for p in str(func).split(".") if p]):
+        nxt = getattr(target, part, None)
+        if nxt is None:
+            raise FailSignal(f"'{module}' has no '{func}'")
+        ffi_reach(nxt, name, line, f"attribute '{part}'")
+        target = nxt
+    return target
 
 
 def spend(effect: str, what: str, line: int) -> None:
@@ -1982,6 +2195,19 @@ def check_effects(funcs: list[Function], errors: list) -> None:
 
     for fn in funcs:
         try:
+            # a uses clause names effects, and only the seven exist. Until
+            # 3.3 any identifier was accepted: `uses io, teleport`
+            # compiled, reached velaris.audit/1's effects, and made its
+            # safe_command a budget that does not parse (spec Q1). An
+            # unknown name is now a compile error naming the seven.
+            unknown = [e for e in sorted(fn.effects) if e not in ALL_EFFECTS]
+            if unknown:
+                raise VelarisError("E300",
+                    f"function '{fn.name}' declares '{unknown[0]}', which "
+                    f"is not an effect; the effects are "
+                    f"{', '.join(ALL_EFFECTS)}", fn.line,
+                    fixes=[f"remove '{unknown[0]}' from the uses clause",
+                           f"or use one of: {', '.join(ALL_EFFECTS)}"])
             for stmt in fn.body:
                 walk(stmt, fn)
             for expr, _ in fn.requires:
@@ -5381,26 +5607,7 @@ def run_builtin(name: str, args: list, line: int):
         import json as _json
 
         def resolve(module: str, func: str):
-            import importlib
-            mod, rest = None, ""
-            parts = str(module).split(".")
-            for cut in range(len(parts), 0, -1):
-                try:
-                    allow_module(".".join(parts[:cut]), name, line)
-                    mod = importlib.import_module(".".join(parts[:cut]))
-                    rest = ".".join(parts[cut:])
-                    break
-                except ImportError:
-                    continue
-            if mod is None:
-                raise FailSignal(f"cannot import '{module}'")
-            target = mod
-            for part in ([p for p in rest.split(".") if p]
-                         + [p for p in str(func).split(".") if p]):
-                target = getattr(target, part, None)
-                if target is None:
-                    raise FailSignal(f"'{module}' has no '{func}'")
-            return target
+            return _ffi_resolve(module, func, name, line)
 
         def split_args(raw):
             """A JSON list of arguments; a trailing object is keywords."""
@@ -5459,9 +5666,11 @@ def run_builtin(name: str, args: list, line: int):
             target = resolve(args[0], args[1])
             pos, kw = split_args(args[2])
             try:
-                return keep(target(*pos, **kw))
+                built = target(*pos, **kw)
             except Exception as e:
                 raise FailSignal(f"{args[0]}.{args[1]} failed: {e}")
+            ffi_reach(built, name, line, "the object it built")
+            return keep(built)
 
         h = args[0]
         if not isinstance(h, HandleValue):
@@ -5469,19 +5678,27 @@ def run_builtin(name: str, args: list, line: int):
         obj = PY_OBJECTS.get(h.id)
         if obj is None:
             raise FailSignal("that handle is closed")
+        # a method or field reached through a handle is checked the same
+        # way as one reached through a module: a handle to a granted
+        # module's object must not be a door into an ungranted one
         if name == "py_field":
             got = getattr(obj, str(args[1]), None)
             if got is None:
                 raise FailSignal(f"no '{args[1]}' on {h.what}")
+            ffi_reach(got, name, line, f"field '{args[1]}' of {h.what}")
             return answer(got)
         method = getattr(obj, str(args[1]), None)
         if method is None:
             raise FailSignal(f"{h.what} has no '{args[1]}'")
+        ffi_reach(method, name, line, f"method '{args[1]}' of {h.what}")
         pos, kw = split_args(args[2])
         try:
-            return answer(method(*pos, **kw))
+            produced = method(*pos, **kw)
         except Exception as e:
             raise FailSignal(f"{h.what}.{args[1]} failed: {e}")
+        ffi_reach(produced, name, line,
+                  f"the object '{args[1]}' returned")
+        return answer(produced)
     if name.startswith("json_") or name == "py_json":
         import json as _json
 
@@ -5585,25 +5802,7 @@ def run_builtin(name: str, args: list, line: int):
                       for k, v in call_args[-1].items()}
             call_args = call_args[:-1]
         call_args = [unwrap_handle(v) for v in call_args]
-        import importlib
-        mod, rest = None, ""
-        parts = str(module).split(".")
-        for cut in range(len(parts), 0, -1):
-            try:
-                allow_module(".".join(parts[:cut]), name, line)
-                mod = importlib.import_module(".".join(parts[:cut]))
-                rest = ".".join(parts[cut:])
-                break
-            except ImportError:
-                continue
-        if mod is None:
-            raise FailSignal(f"cannot import '{module}'")
-        target = mod
-        for part in ([p for p in rest.split(".") if p]
-                     + [p for p in str(func).split(".") if p]):
-            target = getattr(target, part, None)
-            if target is None:
-                raise FailSignal(f"'{module}' has no '{func}'")
+        target = _ffi_resolve(module, func, name, line)
         try:
             out = target(*call_args, **kwargs)
         except Exception as e:
@@ -5613,30 +5812,13 @@ def run_builtin(name: str, args: list, line: int):
         try:
             return _json.dumps(out, ensure_ascii=False)
         except TypeError:                     # not JSON: keep it alive
+            ffi_reach(out, name, line, "the object it returned")
             PY_NEXT[0] += 1
             PY_OBJECTS[PY_NEXT[0]] = out
             return _json.dumps({"handle": PY_NEXT[0]})
     if name in ("py", "py_int", "py_float"):
         module, func, call_args = args[0], args[1], args[2]
-        import importlib
-        mod, rest = None, ""
-        parts = str(module).split(".")
-        for cut in range(len(parts), 0, -1):     # datetime.date works:
-            try:                                  # import what imports,
-                allow_module(".".join(parts[:cut]), name, line)
-                mod = importlib.import_module(".".join(parts[:cut]))
-                rest = ".".join(parts[cut:])      # reach the rest by name
-                break
-            except ImportError:
-                continue
-        if mod is None:
-            raise FailSignal(f"cannot import '{module}'")
-        target = mod
-        for part in ([p for p in rest.split(".") if p]
-                     + [p for p in str(func).split(".") if p]):
-            target = getattr(target, part, None)
-            if target is None:
-                raise FailSignal(f"'{module}' has no '{func}'")
+        target = _ffi_resolve(module, func, name, line)
         def as_number_if_it_is(text):
             """'16' -> 16 and '2.5' -> 2.5, so numeric functions work.
 
@@ -7610,24 +7792,15 @@ def main() -> int:
         coverage = contract_coverage(own, report.get("records", []))
 
         if "--json" in argv:
-            print(json.dumps({
-                "file": target,
-                "compiles": not report["errors"],
-                "errors": report["errors"],
-                "effects": outside,
-                "functions": len(own),
-                "proven": [f["name"] for f in proven],
-                "checked_at_runtime": [f["name"] for f in runtime],
-                "reaching_outside": {f["name"]: sorted(f["effects"])
-                                     for f in reaching},
-                "can_fail": [f["name"] for f in fallible],
-                "loops_unshown": {f["name"]: f["loops_unshown"]
-                                  for f in unshown},
-                "contract_coverage": coverage,
-                "safe_command": (f"velaris {target} --allow "
-                                 + (",".join(outside) or "''")),
-            }, indent=2))
-            return 1 if report["errors"] else 0
+            # velaris.audit/1, the same document the library, the MCP
+            # server, the HTTP door, the npm package, the CrewAI tool and
+            # the Action all emit - so a consumer meets one shape from
+            # every door (spec Q3, resolved in 3.3). Before 3.3 this
+            # printed an older, unversioned summary the schema rejected.
+            result = audit(open(target, encoding="utf-8").read(),
+                           path=target)
+            print(json.dumps(result.as_dict(), indent=2))
+            return 0 if result.ok else 1
 
         print(f"AUDIT  {target}")
         print("=" * 62)
@@ -8232,7 +8405,12 @@ def _fs_net_named(path: str, source: str | None) -> tuple:
             h = (parts.hostname or "").lower().rstrip(".")
             if not h:
                 return None
-            return f"{h}:{parts.port}" if parts.port else h
+            # IPv6 in brackets, so host:port is not ambiguous, and any
+            # structural character encoded: the entry is a grant the
+            # safe_command can be built from and parsed back (spec v0.2,
+            # Q5 resolved)
+            token = f"[{h}]" if ":" in h else _pct_encode(h)
+            return f"{token}:{parts.port}" if parts.port else token
         except ValueError:
             return None
 
@@ -8280,7 +8458,8 @@ def _safe_grants(effects, modules_named, paths, hosts) -> list:
                 if paths[kind + "_any"]:
                     out.append(f"fs:{kind}")
                 else:
-                    out.extend(f"fs:{kind}:{p}" for p in sorted(paths[kind]))
+                    out.extend(f"fs:{kind}:{_pct_encode(p)}"
+                               for p in sorted(paths[kind]))
             if not any(x.startswith("fs") for x in out):
                 out.append("fs")           # declared, never used literally
         elif e == "net":

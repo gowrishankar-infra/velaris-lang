@@ -1,5 +1,105 @@
 # Velaris changelog
 
+## 3.3 - The capability check now means what the spec says
+
+velaris-spec 0.1 was extracted from 3.1.1 and, in writing each rule down
+precisely, found five places where this compiler did not do what the
+format says. 3.2 recorded them and changed no compiler code. 3.3 fixes
+all five, and velaris-spec goes to 0.2 in step, resolving the open
+questions the fixes close.
+
+- **`ffi:M` is bounded to the module a call actually reaches, not just
+  the one it names.** The function argument of `py`, `py_int`,
+  `py_float`, `py_json` and `py_new` may be a dotted path of attributes,
+  and a granted module's attributes include the modules it imported. So
+  `py("json", "codecs.encode", ...)` ran codecs code under `ffi:json`,
+  because `json` imports `codecs` into its namespace and the chain walked
+  straight into it. The whole dotted path a call names is now checked:
+  the attribute chain is resolved step by step, and whenever a step
+  yields an object whose owning module (a module's own name, or an
+  attribute's `__module__`) has a top-level package outside the grants,
+  the call is refused with E311 naming the module actually reached. The
+  same check applies to a method or field reached through a handle
+  (`py_do`, `py_field`) and to a non-JSON result kept as a handle. Where
+  the owning module of an object reached along the chain cannot be
+  determined - a bare code object, a frame, a reflective handle - the
+  call is refused rather than allowed: the bound errs toward refusing
+  more. Inert data (numbers, text, bytes, lists, maps) is not code from
+  any module and is not checked, so a legitimate deep attribute like
+  `json.decoder.JSONDecoder` still works. This is a security fix; where
+  the chain cannot be placed soundly it refuses, and THREAT_MODEL.md and
+  the spec say what remains reachable: a granted module can still do
+  whatever that module itself can do.
+
+- **`ffi` grants are additive, like `fs` and `net`.** SPEC.md 7.1 says
+  grants are additive; the parser restricted `ffi` to the named modules
+  when both `ffi` and `ffi:M` appeared, so `ffi,ffi:math` granted `math`
+  alone. It now grants every module: a plain `ffi` means every module,
+  and the wider grant wins in either order, matching the reference text
+  and `fs`/`net`. (velaris-spec Q2.)
+
+- **`safe_command` round-trips.** It wrote an IPv6 host without brackets
+  (`net:::1`, which parses as the host `:` at port 1) and could not
+  express a path or host containing `,` or `@`. An escaping rule is
+  defined in the spec (v0.2 §5.1, §5.2) and implemented on both sides:
+  IPv6 hosts are bracketed (`net:[::1]`, `net:[::1]:443`), and `, @ [ ]
+  %` are percent-encoded inside a path or host component and decoded when
+  the budget is parsed. `parse_budget` of an audit's `safe_command` now
+  reproduces the exact budget for awkward paths and hosts.
+  (velaris-spec Q5.)
+
+- **The budget parser is strict.** An unknown effect name in a `uses`
+  clause is a compile error (E300) naming the seven real effects;
+  `uses io, teleport` no longer compiles and no longer reaches
+  `velaris.audit/1`. Every malformed budget is a clean budget error, not
+  a traceback: a count is ASCII digits only, so `fs@²` is a budget
+  error rather than an uncaught `ValueError`; `ffi` takes no count and
+  `ffi:` needs a module; an unbracketed IPv6 address, a stray bracket, a
+  doubled `@` and a scope on an effect that takes none are each refused
+  with a readable message. (velaris-spec Q1, Q6.)
+
+- **The command line's `audit --json` emits `velaris.audit/1`.** It
+  printed an older, unversioned shape the schema rejected; it now calls
+  the library's `audit().as_dict()`, the same document the library, the
+  MCP server, the HTTP door, the npm package, the CrewAI tool and the
+  Action all emit. Its `safe_command` for `examples/json_ffi.vel` now
+  says `ffi:math,io` rather than `ffi,io`. (velaris-spec Q3.)
+
+**The README's claim about `ffi:M` is restored.** In 3.2 the README's
+"grants Python for those modules only; any other is refused" was weakened
+to say what was and was not reachable, because the claim was false: a
+granted module was a door into the modules it imported. With the first
+fix above it is true again, and the strong wording is back.
+
+**velaris-spec 0.2.** The spec is revised where the behaviour changed and
+bumped to 0.2 with a dated annotated tag. It resolves Q1 (unknown names
+in `uses` are rejected), Q2 (`ffi` is additive; the wider grant wins),
+Q3 (the command line emits `velaris.audit/1`), Q5 (`safe_command` and
+`net_hosts` bracket IPv6 and the escaping rule holds `,` and `@`), and
+Q6 (non-ASCII count digits, `ffi:M@N` and `ffi:` are budget errors); the
+escaping rule is added to §5.1 and §5.2. Its section 2 still quotes this
+repository's SPEC.md §6, §7 and §7.1 word for word - those sections did
+not change, since "grants are additive" is now true for `ffi` too - so
+`tools/check_sync.py` still passes.
+
+**Sources, named** (CONTRIBUTING.md rule): every fix here comes from the
+velaris-spec 0.1 extraction of 3.1.1, recorded in that spec's section 11
+as open questions Q1, Q2, Q3, Q5 and Q6. HALL_OF_FAME.md credits the
+extraction under the standing challenge.
+
+**Verified**, on Windows 11 with Python 3.13, before tagging. With the
+prover: `run_tests.py` 92/92, `check_library.py` 82 correct,
+`check_sandbox.py` 45, `check_pool.py` 39, `check_refusals.py` 21,
+`check_fallible.py` 26, `check_termination.py` 44, none wrong. Without
+the prover, in a fresh virtual environment holding this tree and no z3 -
+the subset the conformance suite requires: `check_termination.py` 44,
+`check_sandbox.py` 45, `check_refusals.py` 11 with 10 skipped for needing
+the prover, `check_fallible.py` 26, `check_library.py` with the runtime
+fallback asserted where a proof was, none wrong. `fuzz_native.py 30`,
+`benchmark --quick --check`, `velaris test examples/std_test.vel` and
+`velaris fmt --check` all pass. velaris-spec `tools/check_sync.py` and
+`tools/validate.py` pass against this tree.
+
 ## 3.2 - The capability format, published as a spec
 
 Nothing in the compiler changed: `velaris.py` differs from 3.1.1 only

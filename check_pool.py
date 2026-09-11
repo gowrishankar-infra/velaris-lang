@@ -256,7 +256,13 @@ def main() -> int:                        # noqa: C901 - a suite, not logic
        f"{first.output!r} then {second.output!r}")
     pool.close()
 
-    with velaris.Pool(size=1, allow={"io", "ffi:io"},
+    # unscoped ffi: from 3.3 a scoped ffi:M grant is bounded to the
+    # module actually reached, so io.StringIO (its code lives in _io),
+    # os.chdir (nt/posix) and __main__.EFFECT_BUDGET.add (a set method
+    # in builtins) are reachable only under an unscoped ffi. The cliff
+    # these three exercise - and the pool's reset of what it leaves - is
+    # an unscoped-ffi property; scoped grants close the cliff outright.
+    with velaris.Pool(size=1, allow={"io", "ffi"},
                       timeout=TIMEOUT) as handles:
         one = handles.run(LEAKS_A_HANDLE)
         two = handles.run(LEAKS_A_HANDLE)
@@ -268,7 +274,7 @@ def main() -> int:                        # noqa: C901 - a suite, not logic
         ok("...on the SAME worker, so the reset is what did it",
            handles.started == 1, f"started {handles.started}")
 
-    with velaris.Pool(size=1, allow={"io", "ffi:os"},
+    with velaris.Pool(size=1, allow={"io", "ffi"},
                       timeout=TIMEOUT) as ffi:
         before = ffi.run(SAYS_DIRECTORY)
         moved = ffi.run(MOVES_DIRECTORY)
@@ -310,7 +316,7 @@ def main() -> int:                        # noqa: C901 - a suite, not logic
            and "READ IT" not in one.output + two.output,
            str(one.as_dict())[:140])
 
-    with velaris.Pool(size=1, allow={"io", "ffi:__main__"},
+    with velaris.Pool(size=1, allow={"io", "ffi"},
                       timeout=TIMEOUT) as cliff:
         widened = cliff.run(WIDENS_ITS_BUDGET)
         ok("a program CAN widen its own budget through ffi - the cliff "
@@ -519,7 +525,8 @@ def main() -> int:                        # noqa: C901 - a suite, not logic
     tree = ast.parse(source)
     CONSTANTS = {"KEYWORDS", "TOKEN_SPEC", "ESCAPES", "FALLIBLE_BUILTINS",
                  "BUILTINS", "KNOWN_TYPES", "FLIP", "BUILTIN_EFFECTS",
-                 "UNARY_BEFORE", "UNARY_KEYWORDS", "MUTABLE_GLOBALS"}
+                 "UNARY_BEFORE", "UNARY_KEYWORDS", "MUTABLE_GLOBALS",
+                 "_PCT_DECODE"}
     makers = {"dict", "list", "set", "defaultdict", "deque", "Counter",
               "OrderedDict"}
     found = set()

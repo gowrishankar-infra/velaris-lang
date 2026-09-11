@@ -204,6 +204,73 @@ fn main() uses io, net {
     }
 }
 ''', None),
+    # 3.3: an ffi:M grant is bounded to the module a call actually
+    # reaches, not merely the one it names. The attribute chain is checked
+    # step by step; an object owned by a module outside the grants is
+    # E311, naming that module, and an owner that cannot be placed is
+    # refused rather than allowed. These are the escapes that step 2.2's
+    # module-name-only check let through until 3.3.
+    ("reaching codecs through a granted json",
+     ["--allow", "io,ffi:json"], '''
+fn main() uses io, ffi {
+    check py("json", "codecs.encode", ["x"]) {
+        ok o { print("GOT THROUGH") }
+        fail w { print("failed") }
+    }
+}
+''', None),
+    ("reaching os.system through a granted os, subprocess-free",
+     ["--allow", "io,ffi:os"], '''
+fn main() uses io, ffi {
+    check py_int("os", "system", ["echo GOT THROUGH"]) {
+        ok n { print("GOT THROUGH") }
+        fail w { print("failed") }
+    }
+}
+''', None),
+    ("using a granted importlib to reach another module",
+     ["--allow", "io,ffi:importlib"], '''
+fn main() uses io, ffi {
+    check py_json("importlib", "import_module", "[\\"os\\"]") {
+        ok o { print("GOT THROUGH") }
+        fail w { print("failed") }
+    }
+}
+''', None),
+    ("reaching a builtins type through a granted module's value",
+     ["--allow", "io,ffi:math"], '''
+fn main() uses io, ffi {
+    let none: List of Text = []
+    check py("math", "pi.__class__", none) {
+        ok o { print("GOT THROUGH") }
+        fail w { print("failed") }
+    }
+}
+''', None),
+    ("laundering through __globals__ to reach builtins",
+     ["--allow", "io,ffi:json"], '''
+fn main() uses io, ffi {
+    let none: List of Text = []
+    check py("json", "dumps.__globals__.__class__", none) {
+        ok o { print("GOT THROUGH") }
+        fail w { print("failed") }
+    }
+}
+''', None),
+    ("a handle exposing an object from another module",
+     ["--allow", "io,ffi:json"], '''
+fn main() uses io, ffi {
+    check py_new("json", "decoder.JSONDecoder", "[]") {
+        ok h {
+            check py_field(h, "scan_once") {
+                ok f { print("GOT THROUGH") }
+                fail w { print("failed") }
+            }
+        }
+        fail w { print("failed") }
+    }
+}
+''', None),
 ]
 
 # things that must still work: a budget must not break honest programs
@@ -259,6 +326,44 @@ fn main() uses io, clock, rand {
     }
 }
 ''', "all fine"),
+    # 3.3: the reach check must not break honest deep access inside a
+    # granted module, and must let a grant of two modules use both.
+    ("a legitimate deep attribute inside the granted module still works",
+     ["--allow", "io,ffi:json"], '''
+fn main() uses io, ffi {
+    check py_new("json", "decoder.JSONDecoder", "[]") {
+        ok h { print("made a decoder") }
+        fail w { print(w) }
+    }
+}
+''', "made a decoder"),
+    ("a two-module grant, each module used correctly",
+     ["--allow", "io,ffi:math,ffi:base64"], '''
+fn main() uses io, ffi {
+    check py_float("math", "sqrt", ["16"]) {
+        ok r {
+            check py("base64", "b64encode", ["aGk="]) {
+                ok b { print("both modules ok") }
+                fail w { print(w) }
+            }
+        }
+        fail w { print(w) }
+    }
+}
+''', "both modules ok"),
+    # 3.3: ffi is additive like fs and net (spec v0.2, Q2). A plain ffi
+    # grants every module, so ffi,ffi:math is every module - the wider
+    # grant wins, in either order, and a module other than math works.
+    ("additive ffi: a plain ffi widens a named-module grant",
+     ["--allow", "io,ffi,ffi:math"], '''
+fn main() uses io, ffi {
+    let none: List of Text = []
+    check py("os", "getcwd", none) {
+        ok d { print("wider ffi wins") }
+        fail w { print(w) }
+    }
+}
+''', "wider ffi wins"),
     # until 2.62 `--allow io` leaked into args() as two extra words
     ("args() carries the program's arguments, not the budget",
      ["--allow", "io", "7", "eight"], '''
@@ -383,6 +488,25 @@ def scoped_allowed(box, granted_port: int, other_port: int) -> list:
         "        fail w {\n            print(\"caught: \" + w)\n        }\n"
         "    }\n}\n")
     redirect_ok = redirect.replace('print("FOLLOWED IT")', 'print("landed: " + b)')
+    # fs is additive: fs:read:D and fs:write:D grant both directions, and
+    # the program uses each. net is additive: two host grants grant both.
+    fs_additive = (
+        "fn main() uses io, fs {\n"
+        f'    check read_file("{inside}") {{\n'
+        "        ok t {\n"
+        f'            write_file("{copy}", t)\n'
+        '            print("fs additive ok")\n'
+        "        }\n        fail w { print(\"read failed: \" + w) }\n"
+        "    }\n}\n")
+    net_additive = (
+        "fn main() uses io, net {\n"
+        f'    check fetch_status("http://127.0.0.1:{granted_port}/") {{\n'
+        "        ok a {\n"
+        f'            check fetch_status("http://localhost:{other_port}/") {{\n'
+        '                ok b { print("net additive ok") }\n'
+        "                fail w { print(\"second failed: \" + w) }\n"
+        "            }\n        }\n        fail w { print(\"first failed: \" + w) }\n"
+        "    }\n}\n")
     return [
         ("an honest program using exactly its grants",
          ["--allow", f"io,env,fs:read:{data.as_posix()},"
@@ -396,6 +520,14 @@ def scoped_allowed(box, granted_port: int, other_port: int) -> list:
          ["--allow", f"io,net:127.0.0.1:{granted_port},"
                      f"net:localhost:{other_port}"],
          redirect_ok, "landed: hello"),
+        ("additive fs: read and write grants both apply",
+         ["--allow", f"io,fs:read:{data.as_posix()},"
+                     f"fs:write:{out.as_posix()}"],
+         fs_additive, "fs additive ok"),
+        ("additive net: two host grants both apply",
+         ["--allow", f"io,net:127.0.0.1:{granted_port},"
+                     f"net:localhost:{other_port}"],
+         net_additive, "net additive ok"),
     ]
 
 

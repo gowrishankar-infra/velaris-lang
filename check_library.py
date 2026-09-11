@@ -715,6 +715,162 @@ def main() -> int:
         for srv in scoped_servers:
             srv.shutdown()
 
+    print()
+    print("safe_command round-trips (3.3)")
+    print("-" * 62)
+    # A grant that names an awkward path or host must survive being
+    # written to a budget and read back unchanged: parse it, write the
+    # canonical text a safe_command is built from, parse that, and get
+    # the same budget. This is the escaping rule of spec v0.2 - IPv6 in
+    # brackets, and `, @ [ ] %` percent-encoded in a path or host - and
+    # it is a property of the budget objects, not a string comparison.
+    def budget_shape(b):
+        return (sorted(b.effects),
+                None if b.modules is None else sorted(b.modules),
+                None if b.fs is None else sorted(b.fs),
+                None if b.net is None else sorted(b.net),
+                dict(b.limits))
+
+    awkward = [
+        "net:[::1]", "net:[::1]:443", "net:[2001:db8::1]:8080",
+        "net:[fe80::1%25eth0]", "net:[::1]@3",
+        "fs:read:./a%2Cb.txt", "fs:write:./mail%40host",
+        "fs:read:./with a space", "fs:read:./café",
+        "fs:read:./data/", "fs:read:../up", "fs:read:./100%25.txt",
+        "fs:read:./a%40b%2Cc", "fs:write:./out@5",
+        "net:host%2Cname", "net:user%40host", "net:%25pct",
+        "net:api.example.com:443", "net:*.example.com",
+        "io,fs:read:./x%2Cy,net:[::1]:8443,ffi:math",
+        "fs:read:./tab\tsep", "net:[2001:db8::dead:beef]",
+    ]
+    rt_bad = [g for g in awkward
+              if budget_shape(velaris.Budget.parse(g))
+              != budget_shape(velaris.Budget.parse(
+                  velaris.Budget.parse(g).spec()))]
+    ok(f"{len(awkward)} awkward grants round-trip through the canonical "
+       "budget text", not rt_bad, f"did not round-trip: {rt_bad}")
+
+    # the same, reached through the artifact that had the bug: a program
+    # naming an IPv6 host and a comma path, whose audit.safe_command must
+    # parse back to those exact grants (spec v0.2, Q5 resolved).
+    awk_prog = ('fn grab() uses fs, net or fail {\n'
+                '    let a = try read_file("data,cache.txt")\n'
+                '    let b = try fetch("http://[2001:db8::1]:8080/x")\n'
+                '}\n'
+                'fn main() uses io { print("ok") }\n')
+    sc = velaris.audit(awk_prog).safe_command
+    b = velaris.Budget.parse(sc.split("--allow ", 1)[1])
+    ok("audit safe_command with an IPv6 host and a comma path parses back",
+       ("2001:db8::1", 8080) in (b.net or [])
+       and any((p or "").endswith("data,cache.txt") for _, p in (b.fs or [])),
+       sc)
+
+    print()
+    print("malformed budgets fail cleanly (3.3)")
+    print("-" * 62)
+    # Every malformed budget must be a clean budget error, never an
+    # unhandled traceback (spec Q6). `fs@²` used to stop the parser
+    # with a ValueError from int(); an unknown effect, a doubled colon,
+    # a stray bracket, a count on ffi, a scope on io - each must raise a
+    # readable BudgetError and nothing else.
+    def malformed_budgets():
+        out = []
+        out += ["fs::", "fs:::", "net::", "net:::1", "net:::", "fs:read:",
+                "fs:write:", ":", "@5", "net:[]", "net:[]:80"]
+        for d in ["²", "³", "٣", "⁵", "۲", "５"]:
+            out += [f"fs@{d}", f"net@{d}", f"fs:read:x@{d}", f"net:h@{d}"]
+        for t in ["x", "1x", "-1", "1.5", "0x1", "1_000", "1e9", "", "  ",
+                  "one", "+3", "1,2", "9x", "0o7", "3.0", "٤",
+                  "₂", " 5", "0b1", "1'0"]:
+            out += [f"fs@{t}", f"net@{t}", f"fs:write:x@{t}"]
+        out += ["fs@-1", "net@-5", "fs:read:x@-2", "net:h:80@-1"]
+        for p in ["0", "65536", "70000", "99999", "100000", "-1", "x", "8o",
+                  "66000", "123456", "1e3", "80.0", " 80", "0x50"]:
+            out += [f"net:h:{p}", f"net:[::1]:{p}"]
+        out += ["net:", "net:h:x", "net:[::1", "net:[a]b", "net:[a][b]",
+                "net:[", "net:h/path", "net:a:b:c", "net:h:1:2"]
+        out += ["fs:read:a@b@c", "net:h@1@2", "fs@1@2", "net@3@4"]
+        out += ["ffi@5", "ffi@1", "ffi:@5", "ffi:", "ffi:math@5",
+                "ffi:math@", "ffi:.@2", "ffi:@", "ffi:a@9", "ffi@2", "ffi@0"]
+        for e in ["io", "env", "clock", "rand"]:
+            out += [f"{e}:x", f"{e}@1", f"{e}:", f"{e}@0", f"{e}:read",
+                    f"{e}@2", f"{e}:scope"]
+        out += ["IO", "Fs", "NET", "Ffi", "banana", "io2", "fss", "nett",
+                "clockk", "randd", "envv", "xyz", "fs1", "net1",
+                "fs:reed:x", "net:*.com", "net:*", "net:*.*",
+                "fs:read:x,,net:*.com,ffi@2", "net:*.", "net:*.1.2.3",
+                "net:a*b.com", "net:*a.com", "Io", "ENV", "Clock", "RAND",
+                "http", "web", "sql", "exec", "shell", "sys", "net2",
+                "fs_", "ff", "f", "n", "e", "io.", "io-x", "read",
+                "write", "path", "host", "port", "module", "count"]
+        return sorted(set(out))
+
+    fuzz = malformed_budgets()
+    fuzz_wrong = []
+    for g in fuzz:
+        try:
+            velaris.Budget.parse(g)
+            fuzz_wrong.append(("parsed cleanly", g))
+        except ValueError as e:            # BudgetError is a ValueError
+            if not str(e):
+                fuzz_wrong.append(("no message", g))
+        except Exception as e:             # a traceback: the bug we fix
+            fuzz_wrong.append((type(e).__name__, g))
+    ok(f"{len(fuzz)} malformed budgets each raise a readable budget error "
+       "(>= 200)", len(fuzz) >= 200 and not fuzz_wrong,
+       f"{fuzz_wrong[:5]}")
+    # allow= in the library raises ValueError too, not a traceback
+    try:
+        velaris.run(PURE, allow={"fs@²"})
+        ok("a bad grant through the library is a ValueError", False)
+    except ValueError:
+        ok("a bad grant through the library is a ValueError", True)
+    except Exception as e:
+        ok("a bad grant through the library is a ValueError", False,
+           type(e).__name__)
+
+    print()
+    print("the CLI's audit --json is velaris.audit/1 (3.3)")
+    print("-" * 62)
+    # The command line was the one door that did not emit velaris.audit/1
+    # (spec Q3). It now prints audit().as_dict(), the same shape as the
+    # library, MCP server, HTTP door, npm package, CrewAI tool and Action.
+    cli = subprocess.run(
+        [sys.executable, str(HERE / "velaris.py"), "audit",
+         str(HERE / "examples" / "json_ffi.vel"), "--json"],
+        capture_output=True, text=True, timeout=300)
+    try:
+        doc = json.loads(cli.stdout)
+    except Exception as e:
+        doc = None
+        ok("the CLI's audit --json is valid JSON", False,
+           f"{e}: {cli.stdout[:120]}")
+    if doc is not None:
+        ok("the CLI's audit --json carries the velaris.audit/1 schema",
+           doc.get("schema") == "velaris.audit/1", str(doc)[:120])
+        ok("the CLI's safe_command scopes ffi to the module named "
+           "(ffi:math,io, not ffi,io)",
+           doc.get("safe_command") == "velaris <file> --allow ffi:math,io",
+           doc.get("safe_command"))
+        schema_path = (HERE.parent / "velaris-spec" / "schemas"
+                       / "velaris.audit.1.schema.json")
+        try:
+            from jsonschema import Draft202012Validator
+        except ImportError:
+            skip("the CLI's audit --json validates against the spec schema",
+                 "jsonschema is not installed")
+        else:
+            if not schema_path.exists():
+                skip("the CLI's audit --json validates against the spec "
+                     "schema", f"{schema_path} is not present")
+            else:
+                schema = json.loads(schema_path.read_text(encoding="utf-8"))
+                errs = sorted(Draft202012Validator(schema).iter_errors(doc),
+                              key=lambda e: list(e.absolute_path))
+                ok("the CLI's audit --json validates against the v0.2 "
+                   "velaris.audit/1 schema in velaris-spec",
+                   not errs, "; ".join(e.message for e in errs[:3]))
+
     print("-" * 62)
     print(f"{passed} correct, {failed} wrong")
     return 1 if failed else 0

@@ -44,8 +44,8 @@ on.
 
 | Threat | Mechanism | Tested by |
 |---|---|---|
-| A program that reads or writes files, reaches the network, asks the clock, draws randomness, or calls Python when the operator did not allow it | The effect budget: `--allow io` refuses `fs`, `net`, `clock`, `rand` and `ffi` at the call, whatever the source declares, and the refusal cannot be caught | `check_sandbox.py` - 24 escape attempts refused, 10 honest programs still run |
-| A program that reaches a Python module outside the ones the operator named | The module allow-list: `--allow io,ffi:math` refuses `ffi:os` with E311, through `py`, `py_json`, `py_new`, a submodule path, and the bounded child process | `check_sandbox.py` - four ways round the list, all refused |
+| A program that reads or writes files, reaches the network, asks the clock, draws randomness, or calls Python when the operator did not allow it | The effect budget: `--allow io` refuses `fs`, `net`, `clock`, `rand` and `ffi` at the call, whatever the source declares, and the refusal cannot be caught | `check_sandbox.py` - 30 escape attempts refused, 15 honest programs still run |
+| A program that reaches a Python module outside the ones the operator named | The module allow-list: `--allow io,ffi:math` refuses `ffi:os` with E311, through `py`, `py_json`, `py_new`, a submodule path, and the bounded child process. From 3.3 the whole dotted path a call names is checked, not only its module: the attribute chain is walked step by step and any object owned by a module outside the grants is refused, naming the module actually reached, so `py("json", "codecs.encode", ...)` under `ffi:json` is E311 for `codecs`. An object whose owning module cannot be determined is refused rather than allowed | `check_sandbox.py` - the module list, a submodule path, codecs through json, os.system through os, importlib to another module, a builtins type reached through a value, a `__globals__`/`__class__` traversal, and a foreign object exposed through a handle, all refused; a deep attribute inside the granted module (`json.decoder.JSONDecoder`) and a two-module grant still run |
 | A program that reads or writes a file outside the directory the operator named, or writes when only reading was granted | Scoped fs grants (3.0): `fs:read:./data`, `fs:write:./out`. Every path is resolved with `realpath` before comparison, so `..` and symlinks cannot leave a prefix; E313 names the path and cannot be caught | `check_sandbox.py` - a read outside the prefix, a write under a read-only grant, a `..` escape, a symlink escape (POSIX); `check_library.py` - the same through `velaris.run` and through the HTTP door's ceiling |
 | A program that reaches a host, or a port, the operator did not name | Scoped net grants (3.0): `net:api.example.com:443`, `net:*.example.com` (one label). The URL's host and port are checked before any connection; E314 cannot be caught. A redirect to an ungranted host fails the request as a catchable failure naming the target | `check_sandbox.py` - a host not in the list, a port not in the list, a wildcard that must not match its parent domain, a redirect to an ungranted host; `check_fallible.py` - the redirect failure formats and is caught |
 | A program that reads the environment under a budget meant for the console | `env` is its own effect (3.0): `env()` needs `uses env`, and `--allow io` refuses it with E310. A program written for 2.x that calls `env()` under `uses io` alone is refused at compile time with "env() now needs 'uses env'" | `check_sandbox.py` - `env()` with only io granted; `check_library.py` - the same, and the exact message |
@@ -67,8 +67,14 @@ named below.
 
 - **Anything a granted `ffi` module can do.** `ffi:os` is the whole
   operating system as the current user. The allow-list narrows which
-  modules; it does not narrow what a module does. Plain `ffi` grants
-  every module.
+  modules a call may reach; it does not narrow what a module does. Plain
+  `ffi` grants every module. From 3.3 the reach check bounds a scoped
+  grant to the module actually reached along the attribute chain, so a
+  granted module is no longer a door into the other modules it imported;
+  but within a granted module, that module's full behaviour is still
+  granted. Where the owning module of an object reached along the chain
+  cannot be determined, the call is refused rather than allowed - the
+  bound errs toward refusing more, not less.
 - **Side channels.** Timing, CPU load, cache effects, the size or
   timing of console output. Nothing measures or bounds them.
 - **Resource use below the limits.** A program may run for 29 of its

@@ -51,6 +51,28 @@ and the changelog entries now carry them too.
   HTTP envelope that was text instead of a record, a `fail_with` that
   did not fail (2.47).
 
+## The spec extraction, September 2026
+
+Writing velaris-spec 0.1 from velaris-lang 3.1.1 - stating each rule of
+the capability format precisely enough to implement without the compiler
+- turned up five places where the compiler did not do what the format
+says. 3.2 recorded them and changed no code; 3.3 fixed all five, and the
+spec went to 0.2 resolving the questions they close. Credited here under
+the standing challenge to the spec extraction, 2026-09-11. The details
+are in the 3.3 CHANGELOG entry.
+
+- **The spec extraction** - 2026-09-11 - `ffi:M` checked the module a
+  call named and not the module its attribute chain reached, so
+  `py("json", "codecs.encode", ...)` ran codecs code under `ffi:json`
+  (velaris-spec Q9); `ffi` grants were not additive, so `ffi,ffi:math`
+  granted `math` alone against the reference text (Q2); `safe_command`
+  wrote IPv6 hosts without brackets and could not carry a `,` or `@` in a
+  path or host, so it did not round-trip (Q5); the budget parser accepted
+  an unknown effect name in `uses` and read a count with non-ASCII digits
+  (`fs@²` stopped it with an uncaught error) (Q1, Q6); and the command
+  line's `audit --json` printed an unversioned shape the schema rejected
+  instead of `velaris.audit/1` (Q3).
+
 ## Automated review, September 2026
 
 - **CodeRabbit, the review bot on the CrewAI pull request
