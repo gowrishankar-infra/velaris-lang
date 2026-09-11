@@ -105,7 +105,7 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 </style></head><body>
 <nav><div class="in"><a class="brand" href="index.html">
 <span class="dot"></span>Velaris</a><a href="index.html" class="">Home</a><a href="tutorial.html" class="">Tutorial</a><a href="spec.html" class="">Reference</a><a href="library.html" class="">Library</a><a href="errors.html" class="here">Errors</a><a href="floats.html" class="">Floats</a><a href="playground.html" class="">Playground</a>
-<span class="ver">v3.4.0</span></div></nav>
+<span class="ver">v4.0.0</span></div></nav>
 <main class=""><h1>Error reference</h1>
 <p class="lead">Every error Velaris can give, from the error table in the compiler source, which the test suite holds against every code the compiler can raise, so this page cannot go stale. In the message templates, braces are filled with your program&rsquo;s names and values; every error also arrives with numbered fixes, and as JSON with <code>--json</code>.</p><table><tr><th>Code</th><th>What it means</th><th>Message template</th></tr>
 <tr id="E000"><td class="ecode">E000</td><td>a character the lexer cannot read, or a run that stopped without a Velaris error to report</td><td>unexpected character {source[pos]!r}</td></tr>
@@ -171,7 +171,7 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 <tr id="E706"><td class="ecode">E706</td><td>a divisor the prover shows can be zero</td><td>this can {word} zero</td></tr>
 <tr id="E999"><td class="ecode">E999</td><td>the self-test in &#x27;velaris doctor&#x27; failed</td><td>self-test failed</td></tr>
 </table>
-<h2>Findings that are not errors</h2><p>What <code>velaris check --sarif</code>, <code>proofs --sarif</code> and <code>audit --sarif</code> report besides errors, at the level SARIF reports each at.</p><table><tr><th>Rule</th><th>Level</th><th>What it means</th></tr>
+<h2>Findings that are not compile errors</h2><p>What <code>velaris check --sarif</code>, <code>proofs --sarif</code>, <code>audit --sarif</code> and <code>capabilities check --sarif</code> report besides the codes above, at the level SARIF reports each at.</p><table><tr><th>Rule</th><th>Level</th><th>What it means</th></tr>
 <tr id="unproven-promise"><td class="ecode">unproven-promise</td><td>warning</td><td>a requires or ensures that is checked while the program runs, not proven before it runs</td></tr>
 <tr id="contract-coverage"><td class="ecode">contract-coverage</td><td>note</td><td>a function that takes or returns data and promises nothing about it</td></tr>
 <tr id="loop-not-shown-to-end"><td class="ecode">loop-not-shown-to-end</td><td>note</td><td>a loop the termination rule cannot show to end; check --strict refuses it as E612</td></tr>
@@ -182,7 +182,12 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 <tr id="uses-clock"><td class="ecode">uses-clock</td><td>note</td><td>a function that may perform clock: the time</td></tr>
 <tr id="uses-rand"><td class="ecode">uses-rand</td><td>note</td><td>a function that may perform rand: randomness</td></tr>
 <tr id="uses-ffi"><td class="ecode">uses-ffi</td><td>note</td><td>a function that may perform ffi: Python, and so anything Python can do</td></tr>
-</table></main>
+<tr id="capability-widened"><td class="ecode">capability-widened</td><td>error</td><td>code that needs a grant velaris.capabilities does not give: an effect, a Python module, a path outside the recorded ones, a host, a scoped grant made unscoped, or more fs or net operations in a run than recorded (capabilities check)</td></tr>
+<tr id="capability-effect-gained"><td class="ecode">capability-effect-gained</td><td>error</td><td>a function velaris.capabilities records now declares an effect it did not declare there (capabilities check)</td></tr>
+<tr id="capability-narrowed"><td class="ecode">capability-narrowed</td><td>note</td><td>velaris.capabilities gives more than the code needs now; capabilities init --force records the narrower surface</td></tr>
+</table>
+<h2>Removed codes</h2>
+<p>None. A code that stops being given is listed here, and is never given again for anything else (STABILITY.md).</p></main>
 <footer>Velaris is MIT-licensed open source &middot;
 <a href="https://github.com/gowrishankar-infra/velaris-lang">GitHub</a>
 &middot; <a href="https://github.com/gowrishankar-infra/velaris-lang/issues">Issues</a></footer>

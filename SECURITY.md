@@ -19,7 +19,11 @@ unsafe behavior in `fetch` / `read_file` / `write_file`. From 3.4 also:
 a way into the HTTP door without its token, a way past either door's
 `--max-allow`, the token appearing in a log, an error message, a
 process argument or a program's environment, and a changed MCP tool
-description that `velaris mcp-verify` passes.
+description that `velaris mcp-verify` passes. From 4.0 also: a run
+through either door that gets more time or memory than its operator's
+`--max-timeout` or `--max-memory-mb`, and a change to a repository's
+code that needs more than its `velaris.capabilities` declares while
+`velaris capabilities check` passes it.
 
 ## Soundness reports are security reports
 

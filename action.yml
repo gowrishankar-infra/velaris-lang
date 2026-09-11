@@ -33,16 +33,24 @@ inputs:
     description: "Write the check's findings as SARIF 2.1.0 and upload them to GitHub code scanning (true/false). Needs security-events: write. Not uploaded on a pull request from a fork, whose token cannot upload; the file is still written."
     required: false
     default: "true"
+  capabilities:
+    description: "The capability ratchet: 'check' holds every .vel file to the surface declared in velaris.capabilities at the repository root and fails the job if anything widened; 'off' skips it. Default: 'check' when velaris.capabilities exists, otherwise 'off' - except that a pull request which deletes the file fails, since that would turn the ratchet off. Findings go to code scanning with the check's when sarif is true."
+    required: false
+    default: ""
 
 outputs:
   sarif-file:
     description: "Where the SARIF file was written, when sarif is true and there were .vel files to check."
     value: ${{ steps.check.outputs.sarif-file }}
+  capabilities-sarif-file:
+    description: "Where the capability ratchet's SARIF was written, when the ratchet ran and sarif is true."
+    value: ${{ steps.ratchet.outputs.sarif-file }}
 
 runs:
   using: "composite"
   steps:
     - name: Install Velaris
+      id: install
       shell: bash
       run: |
         pkg="velaris-lang"
@@ -91,6 +99,61 @@ runs:
       uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63  # v4.38.0
       with:
         sarif_file: ${{ steps.check.outputs.sarif-file }}
+
+    # The ratchet holds the tree to velaris.capabilities - the surface the
+    # repository declared - and never to the previous commit, so capability
+    # added over many small pull requests fails every one of them until
+    # someone widens the file itself, where the change shows in review.
+    # It runs whether or not the check passed: a file that does not
+    # compile cannot run, and the ratchet reports it rather than failing.
+    - name: Capability ratchet
+      id: ratchet
+      if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+      shell: bash
+      env:
+        MODE: ${{ inputs.capabilities }}
+        SARIF: ${{ inputs.sarif }}
+        EVENT: ${{ github.event_name }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      run: |
+        mode="$MODE"
+        if [ -z "$mode" ]; then
+          if [ -f velaris.capabilities ]; then
+            mode=check
+          elif [ "$EVENT" = "pull_request" ] \
+              && git fetch --no-tags --depth=1 origin "$BASE_SHA" >/dev/null 2>&1 \
+              && git cat-file -e "$BASE_SHA:velaris.capabilities" 2>/dev/null; then
+            echo "::error::this pull request deletes velaris.capabilities, which turns the capability ratchet off. If that is intended, set capabilities: off in the workflow, where the change shows in review."
+            echo '{"removed": true}' > "$RUNNER_TEMP/velaris-capabilities.json"
+            exit 1
+          else
+            mode=off
+          fi
+        fi
+        case "$mode" in
+          off)
+            echo "capability ratchet: off (no velaris.capabilities; write one with: velaris capabilities init)"
+            exit 0 ;;
+          check) ;;
+          *)
+            echo "::error::capabilities is 'check' or 'off', not '$mode'"
+            exit 2 ;;
+        esac
+        status=0
+        velaris capabilities check . --json > "$RUNNER_TEMP/velaris-capabilities.json" || status=$?
+        if [ "$SARIF" = "true" ]; then
+          sarif="$RUNNER_TEMP/velaris-capabilities.sarif"
+          echo "sarif-file=$sarif" >> "$GITHUB_OUTPUT"
+          velaris capabilities check . --sarif > "$sarif" || true
+        fi
+        velaris capabilities check . || true
+        exit $status
+
+    - name: Upload the ratchet's findings to code scanning
+      if: ${{ always() && steps.ratchet.outputs.sarif-file != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+      uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63  # v4.38.0
+      with:
+        sarif_file: ${{ steps.ratchet.outputs.sarif-file }}
 
     - name: Proven share
       if: ${{ inputs.min-proven != '' }}
@@ -141,6 +204,17 @@ runs:
         printf '%s\n' "$files" > /tmp/velaris_changed.txt
         export SCOPE="$scope"
 
+        # what changed since the base, as facts: the capability surface,
+        # the proven share, new fallible functions, new hosts and paths,
+        # and a risk word computed from those alone
+        review_file=""
+        if [ "$scope" = "changed" ] && velaris review --against "$BASE_SHA" --json \
+            > "$RUNNER_TEMP/velaris-review.json" 2> "$RUNNER_TEMP/velaris-review.err"; then
+          review_file="$RUNNER_TEMP/velaris-review.json"
+        fi
+        export REVIEW_FILE="$review_file"
+        export RATCHET_FILE="$RUNNER_TEMP/velaris-capabilities.json"
+
         # the comment body, from the same audit the library gives
         python - <<'PY' > /tmp/velaris_comment.json
         import json, os, sys
@@ -150,9 +224,99 @@ runs:
         scope = os.environ.get("SCOPE", "changed")
         head = os.environ["HEAD_SHA"][:7]
         status = os.environ.get("CHECKS_STATUS", "")
+
+        def load(name):
+            path = os.environ.get(name) or ""
+            try:
+                return json.load(open(path)) if path and os.path.exists(path) else None
+            except ValueError:
+                return None
+
+        def cell(text):
+            return str(text).replace("|", "\\|").replace("\n", " ")
+
+        ratchet, review = load("RATCHET_FILE"), load("REVIEW_FILE")
         L = [marker, f"## Velaris audit of {len(files)} changed file(s) at `{head}`", ""]
         L.append(f"Checks: **{status}**. Audit scope: {scope} `.vel` files.")
         L.append("")
+        if ratchet is not None:
+            L.append("### Capability ratchet")
+            L.append("")
+            findings = ratchet.get("findings") or []
+            if ratchet.get("removed"):
+                L.append("**Failed.** This pull request deletes `velaris.capabilities`, which "
+                         "turns the ratchet off. If that is intended, set `capabilities: off` "
+                         "in the workflow.")
+            elif findings:
+                L.append(f"**Failed.** The code needs more than `velaris.capabilities` declares "
+                         f"({len(findings)} widening(s)), compared with the declared surface, not "
+                         f"with the previous commit. If a widening is intended, make the edit "
+                         f"named under it to `velaris.capabilities` in this pull request, where "
+                         f"it shows in review.")
+                L.append("")
+                for f in findings:
+                    if f["kind"] == "grant":
+                        q = f["programs"][0]
+                        o = (q.get("origins") or [None])[0]
+                        what = (f"a new effect, `{f['effect']}`" if f["new_effect"] else
+                                "not in the declared surface" if f["outside_surface"] else
+                                "in the surface, not in the entry of the program that needs it")
+                        text = (f"- `{f['grant']}` - {what}; needed by "
+                                + ", ".join(f"`{p['file']}`" for p in f["programs"]))
+                        if o:
+                            text += (f"; introduced at `{o['file']}:{o['line']}` in `{o['function']}`"
+                                     + (f" (`{o['call']}`)" if o.get("call") else ""))
+                        if q.get("reached_from"):
+                            text += ", reached from " + " -> ".join(f"`{n}`" for n in q["reached_from"])
+                    elif f["kind"] == "count":
+                        now = "no bound" if f["current"] is None else f"at most {f['current']}"
+                        allows = f["surface_allows"] if f["outside_surface"] else f["entry_allows"]
+                        text = (f"- `{f['file']}`: {now} {f['effect']} operations in a run; the "
+                                f"baseline allows {allows}" + (f" - {f['why']}" if f.get("why") else ""))
+                    else:
+                        text = (f"- `{f['file']}`: `{f['function']}` gained "
+                                + ", ".join(f"`{e}`" for e in f["gained"])
+                                + " - " + "; ".join(f["because"]))
+                    L.append(text)
+                    L.append("  - if intended: " + "; ".join(f["accept"]))
+            else:
+                L.append("Passed: nothing needs more than `velaris.capabilities` declares.")
+            for w in ratchet.get("warnings") or []:
+                L.append("")
+                L.append(f"> {w}")
+            L.append("")
+        if review is not None:
+            ps = review["proven_share"]
+            share = lambda v: "no promises" if v is None else f"{v:g}%"
+            d = review.get("declared") or {}
+            declared = ("removed - the ratchet is off" if d.get("removed") else
+                        "added" if d.get("added") else
+                        "; ".join([f"+ `{w}`" for w in d.get("widened", [])]
+                                  + [f"- `{n}`" for n in d.get("narrowed", [])]) or "unchanged")
+            paths = ([f"`{p}` (read)" for p in review["new_paths"]["read"]]
+                     + [f"`{p}` (write)" for p in review["new_paths"]["write"]])
+            L.append(f"### Review against the base `{review['commit'][:7]}`")
+            L.append("")
+            L.append("| | |")
+            L.append("|---|---|")
+            L.append(f"| risk | **{review['risk']}** |")
+            L.append(f"| capability surface | {review['surface']['change']} |")
+            L.append(f"| proven share | {share(ps['before'])} -> {share(ps['after'])}"
+                     + (" (fell)" if ps["fell"] else "")
+                     + ("" if review.get("prover") else " (no prover: every promise counts as checked at runtime)")
+                     + " |")
+            L.append("| new fallible functions | " + (cell(", ".join(
+                f"`{x['file']}`: `{x['function']}`" for x in review["new_fallible"])) or "none") + " |")
+            L.append("| new hosts | " + (cell(", ".join(f"`{h}`" for h in review["new_hosts"])) or "none") + " |")
+            L.append("| new paths | " + (cell(", ".join(paths)) or "none") + " |")
+            L.append("| new Python modules | " + (cell(", ".join(f"`{m}`" for m in review["new_modules"])) or "none") + " |")
+            L.append(f"| velaris.capabilities | {cell(declared)} |")
+            L.append("")
+            for why in review.get("risk_because") or []:
+                L.append(f"- {why}")
+            if not review.get("risk_because"):
+                L.append("Low: nothing widened and the proven share did not fall.")
+            L.append("")
         if not files:
             L.append("No `.vel` files changed in this pull request.")
         for f in files:

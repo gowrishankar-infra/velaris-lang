@@ -63,8 +63,11 @@ enforced rather than the run failing - the behaviour before 3.1.
 so a suite can assert the cap where the mechanism holds and skip it
 where it does not. The timeout is enforced on every platform.
 
-An agent framework calling `run` in a loop should set both. The MCP
-server and the HTTP door default to 30 seconds and 512 MB.
+An agent framework calling `run` in a loop should set both. On the MCP
+server and the HTTP door the operator sets both, as ceilings a caller
+may lower and cannot raise: 30 seconds and 512 MB unless the operator
+names others (4.0). Before 4.0 those were only the values used when a
+caller sent none, and a caller who sent more got more.
 
 ## Many runs: a pool
 
@@ -274,7 +277,24 @@ effect, a module, a wider path, another host, a larger count, or plain
 `isError` and holds the same body the HTTP door sends with its 403:
 
 ```json
-{"error": "this server does not grant ffi", "max_allow": ["io"]}
+{"error": "this server does not grant ffi", "max_allow": ["io"],
+ "max_timeout": 30, "max_memory_mb": 512}
+```
+
+**The operator also sets the time and memory (4.0).** `--max-timeout`
+and `--max-memory-mb` are the most one run may have, 30 seconds and
+512 MB when the flags are absent. A `velaris_run` that names no
+`timeout` or `max_memory_mb` gets the ceiling; one that asks for less
+gets less; one that asks for more is refused the same way, naming the
+ceiling (`"this server allows at most 30 second(s) per run; the request
+asked for 60"`). A value that is not a number above zero is refused as
+a bad request. Before 4.0 a caller could ask for any timeout and any
+memory cap and have it.
+
+```json
+{"mcpServers": {"velaris": {"command": "python",
+  "args": ["-m", "velaris_mcp", "--max-timeout", "10",
+           "--max-memory-mb", "256"]}}}
 ```
 
 Without the flag the server grants `io` alone: a program can print,
@@ -297,10 +317,10 @@ the wheel it publishes and signed with sigstore
 To check the server you run against it:
 
 ```
-gh release download v3.4.0 --repo gowrishankar-infra/velaris-lang \
-  --pattern 'velaris-mcp-tools-3.4.0.json*'
+gh release download v4.0.0 --repo gowrishankar-infra/velaris-lang \
+  --pattern 'velaris-mcp-tools-4.0.0.json*'
 pip install sigstore
-velaris mcp-verify velaris-mcp-tools-3.4.0.json \
+velaris mcp-verify velaris-mcp-tools-4.0.0.json \
   -- python -m velaris_mcp --max-allow io
 ```
 
@@ -309,9 +329,9 @@ Everything after `--` is the command your client's configuration runs;
 and compares:
 
 ```
-manifest:  velaris-mcp-tools-3.4.0.json (4 tool(s), velaris 3.4.0)
-signature: verified, signed by https://github.com/gowrishankar-infra/velaris-lang/.github/workflows/release.yml@refs/tags/v3.4.0
-server:    python -m velaris_mcp --max-allow io (velaris 3.4.0)
+manifest:  velaris-mcp-tools-4.0.0.json (4 tool(s), velaris 4.0.0)
+signature: verified, signed by https://github.com/gowrishankar-infra/velaris-lang/.github/workflows/release.yml@refs/tags/v4.0.0
+server:    python -m velaris_mcp --max-allow io (velaris 4.0.0)
   ok       velaris_audit
   ok       velaris_card
   CHANGED  velaris_check: input schema
@@ -388,17 +408,19 @@ a Rust agent or a shell script can use the same three calls.
 
 ```
 velaris serve --token-file ~/.velaris-token \
-              --max-allow io,fs:read:./data,net:api.example.com@100
+              --max-allow io,fs:read:./data,net:api.example.com@100 \
+              --max-timeout 10 --max-memory-mb 256
                                        # localhost:8787, grants at most this
 ```
 
 ```
 GET  /health         version, whether the prover is installed; with the
-                     token, the ceiling too. The one endpoint without a token.
+                     token, the ceilings too. The one endpoint without a token.
 GET  /card           the language, for pasting into a model
 POST /check          {"source": "..."}                  -> problems, proven
 POST /audit          {"source": "..."}                  -> velaris.audit/1
-POST /run            {"source": "...", "allow": ["io"], "stdin": "", "args": []}
+POST /run            {"source": "...", "allow": ["io"], "stdin": "", "args": [],
+                      "timeout": 10, "max_memory_mb": 256}
 ```
 
 **Every endpoint but `GET /health` needs the token**, as
@@ -466,22 +488,43 @@ machine; on any other address it crosses the network readable by
 anyone on the path, so put a TLS-terminating proxy in front, and the
 door says so when it starts.
 
-There are **two ceilings**, and both are enforced. The `allow` in a
-request is the program's budget. `--max-allow` is the server's own
-limit, in the full grammar: a caller asking for more at any level - an
-effect, a module, a wider path prefix, a host the server does not
-name, a port, a larger count, or an unscoped `fs`/`net` against a
-scoped ceiling - gets 403 and is told what the server grants. Start it
-with `--max-allow io` and no caller can touch the disk, whatever they
-ask for.
+**The operator sets the limits, not the caller (4.0).** A request's
+`allow`, `timeout` and `max_memory_mb` are what the caller asks for;
+the door grants them only up to its ceilings, and a caller asking for
+more at any of the three gets 403 with the ceilings named:
+
+```
+403   {"error": "this server allows at most 30 second(s) per run; the
+       request asked for 60", "max_allow": ["io"], "max_timeout": 30,
+       "max_memory_mb": 512}
+```
+
+| Ceiling | Flag | When the flag is absent |
+|---|---|---|
+| the budget | `--max-allow` | `io` |
+| seconds per run | `--max-timeout` | 30 |
+| MB per run | `--max-memory-mb` | 512 |
+
+`--max-allow` takes the full grammar: a caller asking for more at any
+level - an effect, a module, a wider path prefix, a host the server
+does not name, a port, a larger count, or an unscoped `fs`/`net`
+against a scoped ceiling - is refused. A request that names no
+`timeout` or `max_memory_mb` gets the ceiling; one that names less gets
+less; a value that is not a number above zero is a 400. **Before 4.0
+none of this held**: a door started without `--max-allow` granted every
+effect, `ffi` included, to anyone holding the token, and a caller could
+send any timeout and any memory cap and have it. Starting a door with a
+wider ceiling now takes naming it: `--max-allow
+io,env,fs,net,clock,rand,ffi` is what 3.4 granted by default.
+`--max-memory-mb` on `velaris serve` used to set a cap on the door's
+own process (on Linux and macOS); it is now the most each run may have,
+and the door's process is not capped.
 
 It binds to `127.0.0.1` unless told otherwise, because **this endpoint
 runs programs**. Do not expose it to a network you do not control, and
 prefer `--max-allow io,fs` over granting `ffi` on a shared machine -
-the server warns about both. Without `--max-allow` the door grants
-every effect, `ffi` included, to anyone holding the token. Keep the
-token file outside every path the ceiling grants: a program allowed to
-read it can send it somewhere.
+the server warns about both. Keep the token file outside every path the
+ceiling grants: a program allowed to read it can send it somewhere.
 
 The door refuses an argument it does not know rather than ignoring
 it, so a mistyped `--max-alow io` stops it instead of leaving the
@@ -519,7 +562,7 @@ and from the MCP server, a call the ceiling refused:
 | `ts` | when the call arrived, UTC, to the millisecond |
 | `door` | `http` or `mcp` |
 | `endpoint` / `tool` | `POST /run`, `GET /card`...; an unknown path is written `POST (no such endpoint)`, never as sent. The MCP tool's name, or `(no such tool)` |
-| `outcome` | `ok`; `problems` (check or audit found some); `failed`, `refused` (the budget stopped the program), `timeout`, `out_of_memory` for a run; `ceiling` (the door's `--max-allow` refused the request); `unauthorized`; `not_local` (`--no-auth` refused a request a browser page could have sent); `bad_request`, `too_large`, `not_found`, `unknown_tool`, `caller_gone`, `error` |
+| `outcome` | `ok`; `problems` (check or audit found some); `failed`, `refused` (the budget stopped the program), `timeout`, `out_of_memory` for a run; `ceiling` (the door's `--max-allow`, `--max-timeout` or `--max-memory-mb` refused the request); `unauthorized`; `not_local` (`--no-auth` refused a request a browser page could have sent); `bad_request`, `too_large`, `not_found`, `unknown_tool`, `caller_gone`, `error` |
 | `duration_ms` | from arrival to the answer |
 | `client` | the caller's IP address (HTTP only) |
 | `budget` | the budget the program ran under, as the budget grammar writes it (paths absolute); `null` when nothing ran |
@@ -588,10 +631,11 @@ permissions:
 
 steps:
   - uses: actions/checkout@v5
-  - uses: gowrishankar-infra/velaris-lang@v3.4.0
+  - uses: gowrishankar-infra/velaris-lang@v4.0.0
     with:
       min-proven: "80"
       pr-comment: "true"
+      capabilities: "check"   # the default when velaris.capabilities exists
 ```
 
 The action installs Velaris with the prover, checks every `.vel` file
@@ -607,6 +651,130 @@ command, and the warnings (`loops_unshown`, `contract_coverage`) - and
 on later runs edits its own comment, found by a hidden HTML marker,
 rather than adding another. It talks to the REST API with the job's
 `GITHUB_TOKEN` through `curl`; no third-party action is involved.
+
+From 4.0 the comment also holds the capability ratchet's result, with
+each widening, where it came from and the edit to
+`velaris.capabilities` that would accept it; and a review of the pull
+request against its base (`velaris review`, below): whether the
+capability surface changed, the proven share before and after, new
+fallible functions, new hosts, paths and modules, whether
+`velaris.capabilities` itself changed, and a risk word.
+
+With `capabilities` left at its default the action runs the ratchet
+whenever `velaris.capabilities` exists at the repository root, and
+fails the job if the code needs more than it declares. A pull request
+that deletes the file fails too, since that would turn the ratchet off;
+`capabilities: "off"` in the workflow is the way to turn it off, where
+the change is visible. The ratchet's findings go to code scanning
+beside the check's when `sarif` is on.
+
+## Holding a repository to its capability surface
+
+```
+velaris capabilities init              # record the surface in velaris.capabilities
+velaris capabilities check             # exit 1 if the code needs more than that
+velaris capabilities check --json      # the same, for tools
+velaris capabilities check --sarif     # the same, for code scanning
+velaris review --against origin/main   # what a branch changed, as facts
+```
+
+A model, a contributor or a dependency update can add capability to a
+repository one small commit at a time: a helper that builds a URL, then
+a function that reads a file, then a call three levels down that sends
+it somewhere. A reviewer who reads each diff sees nothing alarming in
+any of them. Capability does not work that way - it is binary and
+cumulative, and forty small steps reach exactly as far as one large
+one - but only a comparison with a declared baseline sees that. A
+comparison with the previous commit sees forty small steps.
+
+`velaris capabilities init` reads every `.vel` file under the path
+(not `.git`, and not what git ignores) and writes `velaris.capabilities`
+(`velaris.capabilities/1`, specified in velaris-spec section 9):
+
+- the **surface**: every grant the repository's programs need, in the
+  budget grammar - effects, `fs:read:`/`fs:write:` paths, `net:` hosts,
+  `ffi:` modules - and for `fs` and `net` the most operations one run
+  can perform, or `null` where the text sets no bound;
+- for each **program**, its own grants and counts, and the effects each
+  of its functions declares - or `"compiles": false`;
+- the Velaris version that wrote it, and the date.
+
+It refuses to replace an existing file without `--force`: the file is
+what the repository declared, and replacing it is a decision.
+
+`velaris capabilities check` derives the same from the working tree and
+compares it with the file - never with a previous commit. It fails
+(exit 1) when:
+
+1. the code needs a grant the surface does not cover - a new effect, a
+   module, a path outside every recorded one (so `./data` widened to
+   `./` fails), a host (so `api.example.com` made `*.example.com`
+   fails), a scoped grant made unscoped - or more `fs` or `net`
+   operations in a run than the surface's count;
+2. a program the file records needs something its own entry does not
+   give, even if another program already had it; or
+3. a function the file records declares an effect it did not declare
+   there, even when the program's grants stay the same.
+
+A program or function the file does not record is held to rule 1
+alone: a new program that stays inside the surface is not a widening.
+Narrowing never fails; it is reported, so the file can be tightened. A
+file that does not compile cannot run, so it adds nothing, and it is
+reported rather than compared. A file written by another Velaris
+version is compared with a warning, never a failure on that account.
+Exit 2 means the check could not be made: no file, a file that is not
+`velaris.capabilities/1`, or one that does not read.
+
+Each widening names what widened, the file and function that introduced
+it - the call, its line, and the chain of calls from `main` that reaches
+it - and the edit to `velaris.capabilities` that would accept it:
+
+```
+WIDENED  net:collector.example.net - a new effect, net
+    needed by app.vel (its entry does not grant it)
+      lib/deliver.vel:2  send calls post("https://collector.example.net/v1")
+      reached from main -> summary -> deliver -> send
+    if intended: add "net:collector.example.net" to surface.grants; add
+    "net:collector.example.net" to the grants of app.vel
+```
+
+Accepting a widening is an edit to `velaris.capabilities`, or `velaris
+capabilities init --force` and a commit, so the change is in the diff
+a reviewer reads. `--json` is `velaris.capabilities-check/1`; `--sarif`
+reports each widening as an error at the line that introduced it
+(`capability-widened`, `capability-effect-gained`) and each narrowing
+as a note.
+
+**How the counts are found.** One run's operations are bounded from the
+text: a loop counts when a counter moves one step toward a limit on
+every turn (SPEC.md 9.5) and both its start and the limit are numbers
+the text fixes - `for i in 0 to 10`, a counter started by `let`, a
+loop over a list literal or a variable holding one; nested loops
+multiply; a branch counts its larger arm; a function counts its bound
+at every call; recursion, and a loop whose turns the text does not fix,
+have no bound. A path, URL or module is fixed when it is a literal or
+a variable bound once to one; one built while running is recorded as
+the unscoped grant (`fs:read`, `net`, `ffi`), which a scoped surface
+does not cover.
+
+**`velaris review --against REF`** runs the same derivation, and the
+audit, on the files at a git ref - read with `git show REF:PATH`, with
+nothing checked out - and on the working tree, and reports the delta:
+whether the capability surface widened, narrowed or is unchanged, the
+proven share before and after, functions that became fallible, hosts,
+paths and modules newly named, whether `velaris.capabilities` itself
+changed, and one word of risk computed from those facts alone -
+`high` when the surface widened, or the declared surface widened or was
+removed; `medium` when it did not, but a program or function the ref
+had came to need more, or the proven share fell; `low` otherwise. No
+count of changed lines enters it. It is a report for a reviewer; the
+gate is `capabilities check`, because a review against the previous
+commit cannot see a widening that was merged a commit ago.
+
+What the ratchet does not see is in [THREAT_MODEL.md](THREAT_MODEL.md):
+it reads text, so what a granted `ffi` module does is beyond it, paths
+are compared as written, and a function renamed as it gains an effect
+is a new function.
 
 ## As a commit hook
 

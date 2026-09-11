@@ -22,6 +22,12 @@ The operator's flags, after "velaris_mcp" in "args":
                          budget grammar (io,fs:read:./data,net:host@10,
                          ffi:math). Default: io only. A request for more
                          is refused, naming what the server grants.
+    --max-timeout S      the most seconds one run may have. Default: 30.
+    --max-memory-mb M    the most memory one run may have. Default: 512.
+                         A run that names neither gets these; asking for
+                         more is refused like an over-wide budget (4.0).
+                         Before 4.0 a caller could ask for any timeout
+                         and any memory cap and have it.
     --log-file PATH      the invocation log, one JSON line per tool call,
                          appended here instead of written to stderr
     --log minimal        fewer fields in each line; the log cannot be
@@ -60,8 +66,13 @@ PROTOCOL = "2024-11-05"
 DEFAULT_CEILING = "io"
 CEILING = None      # velaris.Budget, set by configure()
 LOG = None          # velaris.InvocationLog, set by configure()
+# the most one run may have, set by configure(); a request past either is
+# refused like an over-wide budget (4.0)
+MAX_TIMEOUT = velaris.DOOR_MAX_TIMEOUT
+MAX_MEMORY_MB = velaris.DOOR_MAX_MEMORY_MB
 
 USAGE = ("usage: python -m velaris_mcp [--max-allow GRANTS] "
+         "[--max-timeout SECONDS] [--max-memory-mb MB] "
          "[--log-file PATH] [--log full|minimal]")
 
 # One pool per distinct budget a caller asks for, made the first time
@@ -108,12 +119,13 @@ def log():
 def configure(argv: list) -> str | None:
     """Read the operator's flags. None when they are fine, else what is
     wrong with them."""
-    global CEILING, LOG
+    global CEILING, LOG, MAX_TIMEOUT, MAX_MEMORY_MB
     opts = {}
     i = 0
     while i < len(argv):
         a = argv[i]
-        if a in ("--max-allow", "--log-file", "--log"):
+        if a in ("--max-allow", "--max-timeout", "--max-memory-mb",
+                 "--log-file", "--log"):
             if i + 1 >= len(argv):
                 return f"{a} needs a value; {USAGE}"
             opts[a] = argv[i + 1]
@@ -125,6 +137,11 @@ def configure(argv: list) -> str | None:
                                                 DEFAULT_CEILING))
     except velaris.BudgetError as e:
         return f"--max-allow: {e}"
+    try:
+        MAX_TIMEOUT, MAX_MEMORY_MB = velaris.door_ceilings(
+            opts.get("--max-timeout"), opts.get("--max-memory-mb"))
+    except ValueError as e:
+        return str(e)
     try:
         LOG = velaris.InvocationLog(opts.get("--log-file"),
                                     opts.get("--log", "full"))
@@ -187,7 +204,10 @@ TOOLS = [
             "['io'] lets it print and nothing else. This server grants "
             "at most what its operator set with --max-allow, and without "
             "that flag it grants io only: a request for more is refused, "
-            "and the refusal names what the server grants."),
+            "and the refusal names what the server grants. The operator "
+            "also sets the most time and memory one run may have "
+            "(--max-timeout, --max-memory-mb: 30 seconds and 512 MB "
+            "unless changed); a run may ask for less, never more."),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -210,15 +230,21 @@ TOOLS = [
                 "timeout": {
                     "type": "number",
                     "description": ("seconds before the program is "
-                                    "stopped. Default 30."),
+                                    "stopped. At most the server's "
+                                    "--max-timeout (30 unless its "
+                                    "operator changed it), which is also "
+                                    "the default; more is refused."),
                 },
                 "max_memory_mb": {
                     "type": "integer",
-                    "description": ("memory cap in MB. Default 512. "
-                                    "Enforced on Linux (RLIMIT_AS) and "
-                                    "on Windows (a job object); "
-                                    "best-effort on macOS. The timeout "
-                                    "applies everywhere."),
+                    "description": ("memory cap in MB. At most the "
+                                    "server's --max-memory-mb (512 "
+                                    "unless its operator changed it), "
+                                    "which is also the default; more is "
+                                    "refused. Enforced on Linux "
+                                    "(RLIMIT_AS) and on Windows (a job "
+                                    "object); best-effort on macOS. The "
+                                    "timeout applies everywhere."),
                 },
             },
             "required": ["source"],
@@ -281,10 +307,22 @@ def call_tool(name: str, args: dict) -> tuple:
         rec["outcome"] = "bad_request"
         return as_text({"ok": False, "error": str(e)}, is_error=True), rec
     refused = ceiling().covers(wanted)
+    if not refused:
+        # the time and memory a run may have are the operator's too: less
+        # may be asked for, more is refused like an over-wide budget (4.0)
+        timeout, memory, why = velaris.run_limits(args, MAX_TIMEOUT,
+                                                  MAX_MEMORY_MB)
+        if why and why[0] == "bad_request":
+            rec["outcome"] = "bad_request"
+            return as_text({"ok": False, "error": why[1]},
+                           is_error=True), rec
+        refused = why[1] if why else None
     if refused:
         rec["outcome"] = "ceiling"
         rec["refusals"] = [{"by": "ceiling", "what": refused}]
-        return as_text({"error": refused, "max_allow": ceiling_list()},
+        return as_text({"error": refused, "max_allow": ceiling_list(),
+                        "max_timeout": MAX_TIMEOUT,
+                        "max_memory_mb": MAX_MEMORY_MB},
                        is_error=True), rec
     rec["budget"] = wanted.spec()
     try:
@@ -292,8 +330,7 @@ def call_tool(name: str, args: dict) -> tuple:
             source, allow=set(asked),
             stdin=args.get("stdin", ""),
             args=args.get("args") or [],
-            timeout=float(args.get("timeout") or 30),
-            max_memory_mb=int(args.get("max_memory_mb") or 512))
+            timeout=timeout, max_memory_mb=memory)
     except ValueError as e:
         rec["outcome"] = "bad_request"
         return as_text({"ok": False, "error": str(e)}, is_error=True), rec

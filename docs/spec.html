@@ -105,7 +105,7 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 </style></head><body>
 <nav><div class="in"><a class="brand" href="index.html">
 <span class="dot"></span>Velaris</a><a href="index.html" class="">Home</a><a href="tutorial.html" class="">Tutorial</a><a href="spec.html" class="here">Reference</a><a href="library.html" class="">Library</a><a href="errors.html" class="">Errors</a><a href="floats.html" class="">Floats</a><a href="playground.html" class="">Playground</a>
-<span class="ver">v3.4.0</span></div></nav>
+<span class="ver">v4.0.0</span></div></nav>
 <main class="wide"><h1>The Velaris language reference</h1>
 <br>
 <p>This is the specification: what Velaris means, precisely. It is not a</p>
@@ -554,7 +554,12 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 <p>Velaris follows semantic versioning. Breaking changes happen only at</p>
 <p>major versions; 2.0 made four builtins fallible and the compiler</p>
 <p>pointed at every call site that needed updating. Minor versions add;</p>
-<p>patch versions fix.</p>
+<p>patch versions fix. [STABILITY.md](STABILITY.md) states what that</p>
+<p>covers, the rules for deprecation and for error codes, and the record</p>
+<p>of the minor releases that broke the rule anyway, 3.3 and 3.4 among</p>
+<p>them. One kind of change is not counted as breaking: a prover that</p>
+<p>settles more may refuse a program whose promise, division or list read</p>
+<p>it can now show wrong, for the input it names.</p>
 <br>
 <p>The test suite runs on Linux, Windows and macOS, on two Python</p>
 <p>versions, with and without the optional solver and native backend, on</p>

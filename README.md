@@ -40,8 +40,9 @@ narrows every coarse effect: `fs:read:./data`, `fs:write:./out`,
 `net:api.example.com:443`, `net:*.example.com`, and `@100` for at most
 that many operations in a run; `env` is its own effect, so an
 `io`-only program cannot read the environment. `timeout` and
-`max_memory_mb` are available through the
-library and every door. It is still not a security boundary - but the
+`max_memory_mb` are available through the library and every door, and
+on a door the operator's limits are ceilings a caller cannot raise.
+It is still not a security boundary - but the
 caveats every review raised, the ffi cliff, unbounded execution, and
 `fs` and `net` with no path or host list, are now precise permissions
 rather than holes. It is a real guard for the situation everyone is
@@ -168,6 +169,7 @@ import velaris                        a Python library
 velaris mcp-install                   tools inside your assistant
 velaris.mcpb                          double-click install for Claude Desktop
 uses: gowrishankar-infra/velaris-lang a GitHub Action, findings as SARIF
+velaris capabilities check            CI fails when the capability surface widens
 velaris serve                         an HTTP door for any language, token required
 npx velaris-lang script.vel           npm, for the JavaScript world
 %%velaris --audit --allow io          a Jupyter cell
@@ -243,6 +245,7 @@ velaris examples/edges.vel      # 20 boundary, property and round-trip checks
 python check_refusals.py        # 21 wrong programs, each refused correctly
 python check_sandbox.py         # 30 escape attempts, all refused
 python check_pool.py            # a pool must leak nothing between programs
+python check_ratchet.py         # every widening fails, nothing else does
 ```
 
 One command that exercises the language, the standard library, the
@@ -414,10 +417,14 @@ what Velaris deliberately does not have — including
 
 ## Stability
 
-Semantic versioning: breaking changes **only at major versions** (v2.0
-migrated the fallible builtins, compiler-guided). CI tests every push
-on Linux and Windows, Python 3.10 and 3.12, with and without the
-optional dependencies. Errors are stable, numbered, and
+Semantic versioning: breaking changes **only at major versions**.
+[STABILITY.md](STABILITY.md) says what that covers - the language, the
+error codes, `velaris.audit/1`, the library API, the budget grammar and
+the command line - what it does not, the rules for deprecating and
+removing, and every time this project has broken the rule, 3.3 and 3.4
+among them. CI tests every push on Linux, Windows and macOS, Python
+3.10 and 3.12, with and without the optional dependencies. Errors are
+stable, numbered, and
 [fully documented](https://gowrishankar-infra.github.io/velaris-lang/errors.html).
 
 ## How much is proven
@@ -437,14 +444,33 @@ permissions:
 
 steps:
   - uses: actions/checkout@v5
-  - uses: gowrishankar-infra/velaris-lang@v3.4.0
+  - uses: gowrishankar-infra/velaris-lang@v4.0.0
     with:
       files: "src/*.vel"     # optional; default is every .vel file
       format: "true"         # optional; also check formatting
       min-proven: "80"       # optional; fail below this proven share
       pr-comment: "true"     # optional; audit every changed .vel on the PR
       sarif: "true"          # the default; findings to code scanning
+      capabilities: "check"  # the default once velaris.capabilities exists
 ```
+
+**The capability ratchet (4.0).** `velaris capabilities init` records
+the capability surface a repository's `.vel` files need - effects,
+paths, hosts, Python modules, how many file and network operations a
+run can perform, and each function's effects - in
+`velaris.capabilities`; commit it. From then on the action runs
+`velaris capabilities check` and fails any change that needs more,
+naming what widened, the file, function and line that introduced it,
+and the edit to the baseline that would accept it. The comparison is
+always with that file, never with the previous commit: capability
+added across many small commits, none alarming by itself, fails at
+every one of them until someone widens the file, where the change
+shows in review. With `pr-comment` the comment also reviews the pull
+request against its base - surface, proven share, new fallible
+functions, new hosts and paths - with a one-word risk computed from
+those facts. [EMBEDDING.md](EMBEDDING.md) has the rules;
+`check_ratchet.py` holds them, including a six-commit history that
+fails only at the commit that reaches the network.
 
 With `sarif` on - the default from 3.4 - the check writes its findings
 as SARIF 2.1.0 and uploads them with `github/codeql-action/upload-sarif`,
@@ -505,7 +531,8 @@ and the verification steps in [SECURITY.md](SECURITY.md).
 
 [Roadmap](ROADMAP.md) · [Support and expectations](SUPPORT.md) ·
 [How the compiler works](ARCHITECTURE.md) · [Maintainers](MAINTAINERS.md) ·
-[Security policy](SECURITY.md) · [Changelog](CHANGELOG.md)
+[Security policy](SECURITY.md) · [Stability](STABILITY.md) ·
+[Changelog](CHANGELOG.md)
 
 Maintained by one person, in the open, with the limits stated plainly
 in [SUPPORT.md](SUPPORT.md).

@@ -605,6 +605,64 @@ def main() -> int:
     _shutil_mcp.rmtree(box_mcp, ignore_errors=True)
 
     print()
+    print("the MCP server's operator sets the time and memory (4.0)")
+    print("-" * 62)
+    # Before 4.0 velaris_run took any timeout and memory cap the caller
+    # sent. The operator's --max-timeout and --max-memory-mb are now
+    # ceilings, 30 seconds and 512 MB when absent.
+    got, _, listed = mcp_session([
+        ("velaris_run", {"source": PURE, "timeout": 60}),
+        ("velaris_run", {"source": PURE, "max_memory_mb": 1024}),
+        ("velaris_run", {"source": PURE, "timeout": 20,
+                         "max_memory_mb": 300}),
+        ("velaris_run", {"source": PURE, "timeout": "soon"}),
+        ("velaris_run", {"source": PURE, "timeout": 0}),
+    ])
+    over_t, over_m = text_of(got.get(10, {})), text_of(got.get(11, {}))
+    ok("with no flags, a velaris_run asking for 60 seconds is REFUSED, "
+       "naming the 30-second ceiling",
+       got.get(10, {}).get("isError") is True
+       and "at most 30 second" in over_t.get("error", "")
+       and over_t.get("max_timeout") == 30
+       and over_t.get("max_allow") == ["io"], str(over_t)[:200])
+    ok("...and one asking for 1024 MB is REFUSED, naming 512",
+       got.get(11, {}).get("isError") is True
+       and "at most 512 MB" in over_m.get("error", "")
+       and over_m.get("max_memory_mb") == 512, str(over_m)[:200])
+    ok("...while asking for less runs",
+       text_of(got.get(12, {})).get("output", "").strip() == "42",
+       str(got.get(12))[:160])
+    ok("...and a timeout that is not a number of seconds above 0 is a bad "
+       "request, not a run",
+       all(got.get(n, {}).get("isError") is True
+           and "timeout" in text_of(got.get(n, {})).get("error", "")
+           for n in (13, 14)), str([got.get(13), got.get(14)])[:200])
+    import time as _time_mcp
+    began = _time_mcp.monotonic()
+    got, _, _ = mcp_session([("velaris_run", {"source": FOREVER}),
+                             ("velaris_run", {"source": PURE,
+                                              "timeout": 3})],
+                            "--max-timeout", "2", "--max-memory-mb", "256")
+    took = _time_mcp.monotonic() - began
+    ok("with --max-timeout 2, a run that names no timeout is stopped at 2 "
+       "seconds, and one asking for 3 is refused",
+       text_of(got.get(10, {})).get("timed_out") is True
+       and "at most 2 second" in text_of(got.get(11, {})).get("error", "")
+       and took < 120, f"{str(got)[:200]} took {took:.1f}s")
+    described = next((t["description"] for t in listed
+                      if t["name"] == "velaris_run"), "")
+    ok("velaris_run's description names --max-timeout and --max-memory-mb",
+       "--max-timeout" in described and "--max-memory-mb" in described,
+       described)
+    for flags in (["--max-timeout", "0"], ["--max-timeout", "nan"],
+                  ["--max-memory-mb", "lots"], ["--max-memory-mb", "0"]):
+        bad = subprocess.run(
+            [sys.executable, str(HERE / "velaris_mcp.py"), *flags],
+            input="", capture_output=True, text=True, timeout=120)
+        ok(f"{' '.join(flags)} stops the MCP server at start",
+           bad.returncode == 2 and flags[0] in bad.stderr, bad.stderr[:120])
+
+    print()
     print("a signed manifest of the MCP tools (3.4)")
     print("-" * 62)
     import tempfile as _tempfile
@@ -1188,6 +1246,90 @@ def main() -> int:
             srv.shutdown()
 
     print()
+    print("the HTTP door: the operator sets the limits (4.0)")
+    print("-" * 62)
+    # Before 4.0 a door started without --max-allow granted every effect,
+    # ffi included, and a caller's timeout and memory cap were whatever
+    # the caller sent. Now the ceiling is io, 30 s and 512 MB unless the
+    # operator names wider ones.
+    server, port3 = start_door(env={"VELARIS_TOKEN": TOKEN})
+    try:
+        def post3(payload):
+            code, body, _ = ask(port3, "POST", "/run", payload, token=TOKEN)
+            return code, as_json(body)
+
+        health = as_json(ask(port3, "GET", "/health", token=TOKEN)[1])
+        ok("a door started without --max-allow grants io only, 30 seconds "
+           "and 512 MB a run, and says so",
+           health.get("max_allow") == ["io"]
+           and health.get("max_timeout") == 30
+           and health.get("max_memory_mb") == 512, str(health))
+        code, d = post3({"source": READS_A_FILE, "allow": ["io", "fs"]})
+        ok("...so a caller asking for fs is REFUSED (403)",
+           code == 403 and d.get("error") == "this server does not grant fs"
+           and d.get("max_allow") == ["io"], str(d)[:160])
+        code, d = post3({"source": PURE, "allow": ["ffi"]})
+        ok("...and ffi too", code == 403 and "ffi" in d.get("error", ""),
+           str(d)[:160])
+        code, d = post3({"source": PURE, "timeout": 60})
+        ok("a caller asking for 60 seconds is REFUSED (403), naming the "
+           "30-second ceiling",
+           code == 403 and "at most 30 second" in d.get("error", "")
+           and d.get("max_timeout") == 30, str(d)[:160])
+        code, d = post3({"source": PURE, "max_memory_mb": 4096})
+        ok("...and one asking for 4096 MB, naming 512",
+           code == 403 and "at most 512 MB" in d.get("error", "")
+           and d.get("max_memory_mb") == 512, str(d)[:160])
+        code, d = post3({"source": PURE, "timeout": 10,
+                         "max_memory_mb": 256})
+        ok("asking for less runs", code == 200
+           and d.get("output", "").strip() == "42", str(d)[:160])
+        codes = [post3({"source": PURE, "timeout": v})[0]
+                 for v in (-1, 0, "30", True)]
+        codes.append(post3({"source": PURE, "max_memory_mb": 1.5})[0])
+        ok("a limit that is not a positive number - negative, zero, text, "
+           "true, a fraction of a MB - is a bad request (400)",
+           codes == [400] * 5, str(codes))
+    finally:
+        server.terminate()
+        server.wait(timeout=30)
+    server, port4 = start_door("--max-timeout", "2", "--max-memory-mb",
+                               "256", env={"VELARIS_TOKEN": TOKEN})
+    try:
+        began = time.monotonic()
+        code, body, _ = ask(port4, "POST", "/run", {"source": FOREVER},
+                            token=TOKEN)
+        took = time.monotonic() - began
+        d = as_json(body)
+        code_over, body_over, _ = ask(port4, "POST", "/run",
+                                      {"source": PURE, "timeout": 5},
+                                      token=TOKEN)
+        ok("with --max-timeout 2, a run that names no timeout stops at 2 "
+           "seconds, and asking for 5 is refused",
+           code == 200 and d.get("timed_out") is True and took < 120
+           and code_over == 403
+           and "at most 2 second" in as_json(body_over).get("error", ""),
+           f"{str(d)[:120]} {took:.1f}s {code_over}")
+        code, body, _ = ask(port4, "POST", "/run", {"source": PURE},
+                            token=TOKEN)
+        ok("...and --max-memory-mb 256 is the most each run may have, not "
+           "a cap on the door itself: the door answers and runs",
+           code == 200 and as_json(body).get("output", "").strip() == "42",
+           str(body)[:160])
+    finally:
+        server.terminate()
+        server.wait(timeout=30)
+    for flags in (["--max-timeout", "0"], ["--max-timeout", "inf"],
+                  ["--max-memory-mb", "-5"]):
+        done = _sub.run([sys.executable, str(HERE / "velaris.py"), "serve",
+                         "--port", str(free_port()), *flags],
+                        capture_output=True, text=True, timeout=60,
+                        env=dict(os.environ, VELARIS_TOKEN=TOKEN))
+        ok(f"serve {' '.join(flags)} is refused at start",
+           done.returncode == 2 and flags[0] in done.stderr,
+           done.stderr[:160])
+
+    print()
     print("safe_command round-trips (3.3)")
     print("-" * 62)
     # A grant that names an awkward path or host must survive being
@@ -1478,9 +1620,12 @@ def main() -> int:
     inside_table = set()
     for node in tree.body:
         if isinstance(node, _ast.Assign) and any(
-                getattr(t, "id", None) == "ERROR_TABLE"
+                getattr(t, "id", None) in ("ERROR_TABLE", "REMOVED_ERRORS")
                 for t in node.targets):
-            inside_table = {id(n) for n in _ast.walk(node)}
+            inside_table |= {id(n) for n in _ast.walk(node)}
+    removed = {c for c, _meaning, _gone in velaris.REMOVED_ERRORS}
+    ok("no code is both given and listed as removed (STABILITY.md rule 3)",
+       not removed & set(table), sorted(removed & set(table)))
     emitted = {n.value for n in _ast.walk(tree)
                if isinstance(n, _ast.Constant) and isinstance(n.value, str)
                and len(n.value) == 4 and n.value[0] == "E"

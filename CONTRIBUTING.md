@@ -43,6 +43,15 @@ run_tests.py, and run `velaris fmt` on them.
 Every error: a code (Exyz), a plain-English message, a location, and
 numbered fixes. Never claim "proven" unless it is literally true.
 
+## Breaking changes
+
+[STABILITY.md](STABILITY.md) says what is covered by semantic
+versioning and what is not. A change that breaks anything it covers -
+including a security fix that refuses something that used to work -
+goes in a major version, and its CHANGELOG entry says what a user has
+to change. If you are not sure whether a change breaks something, say
+so in the pull request; the answer goes in STABILITY.md.
+
 ## Naming sources
 
 When a design decision comes from published work - a paper, a

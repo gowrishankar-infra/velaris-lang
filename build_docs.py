@@ -267,16 +267,32 @@ def errors_page() -> str:
                     f"<td>{html.escape(meaning)}</td>"
                     f"<td>{html.escape(found.get(code, ''))}</td></tr>")
     body.append("</table>")
-    body.append("<h2>Findings that are not errors</h2>"
+    body.append("<h2>Findings that are not compile errors</h2>"
                 "<p>What <code>velaris check --sarif</code>, "
-                "<code>proofs --sarif</code> and <code>audit --sarif</code> "
-                "report besides errors, at the level SARIF reports each "
+                "<code>proofs --sarif</code>, <code>audit --sarif</code> "
+                "and <code>capabilities check --sarif</code> report "
+                "besides the codes above, at the level SARIF reports each "
                 "at.</p><table><tr><th>Rule</th><th>Level</th>"
                 "<th>What it means</th></tr>")
     for rule, level, meaning in velaris.SARIF_FINDINGS:
         body.append(f'<tr id="{rule}"><td class="ecode">{rule}</td>'
                     f"<td>{level}</td><td>{html.escape(meaning)}</td></tr>")
     body.append("</table>")
+    # STABILITY.md rule 3: a code is never reused, and one that is no
+    # longer given stays listed here with what it meant
+    body.append("<h2>Removed codes</h2>")
+    if velaris.REMOVED_ERRORS:
+        body.append("<table><tr><th>Code</th><th>What it meant</th>"
+                    "<th>Removed in</th></tr>")
+        for code, meaning, gone in velaris.REMOVED_ERRORS:
+            body.append(f'<tr id="{code}"><td class="ecode">{code}</td>'
+                        f"<td>{html.escape(meaning)}</td><td>{gone}</td>"
+                        f"</tr>")
+        body.append("</table>")
+    else:
+        body.append("<p>None. A code that stops being given is listed "
+                    "here, and is never given again for anything else "
+                    "(STABILITY.md).</p>")
     return "\n".join(body)
 
 

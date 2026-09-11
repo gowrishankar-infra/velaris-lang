@@ -45,6 +45,10 @@ jobs:
         run: python check_pool.py
       - name: Every loop gets the termination verdict it must
         run: python check_termination.py
+      - name: Every widening of the capability surface fails, and nothing else does
+        run: python check_ratchet.py
+      - name: This repository needs nothing its velaris.capabilities does not declare
+        run: velaris capabilities check .
       - name: Benchmark harness (one program per category; Deno rows may be absent)
         if: matrix.deps == 'full'
         run: python benchmark/run.py --quick --check

@@ -1,5 +1,291 @@
 # Velaris changelog
 
+## 4.0 - The operator sets the limits, and the capability surface cannot widen quietly
+
+This is a major version. Two gaps 3.4 left open on the doors are
+closed, which changes what a door started without flags will grant;
+the project's stability policy is written down for the first time,
+with the record of the times it was broken; and a repository can now
+declare the capability surface its programs may have and have CI fail
+any change that widens it.
+
+**The operator sets the limits, not the caller.** On the HTTP door and
+the MCP server a request's `timeout` and `max_memory_mb` were whatever
+the caller sent; the 30 seconds and 512 MB the doors have had since
+2.59 were only the values used when a caller sent none. **Before 4.0 a
+caller could exceed them, by asking.** Both doors now take
+`--max-timeout` and `--max-memory-mb`, 30 seconds and 512 MB when the
+flags are absent. A request that names neither gets the ceiling; one
+that asks for less gets less; one that asks for more is refused the way
+an over-wide budget is - 403 from the HTTP door, `isError` from the MCP
+server - with the ceilings named in the body (`max_timeout`,
+`max_memory_mb`, beside `max_allow`), and logged with outcome
+`ceiling`. A value that is not a number above zero - text, `true`,
+zero, a negative, a fraction of a MB - is a bad request. A flag value
+that is not a limit stops the door at start. `GET /health` with the
+token reports all three ceilings. The rule lives in one place,
+`velaris.run_limits`, used by both doors.
+
+**The HTTP door's default ceiling is `io`.** Without `--max-allow`,
+`velaris serve` granted every effect, `ffi` included, to anyone holding
+the token; the MCP server has defaulted to `io` since 3.4. The door now
+does too, and starting it wider takes naming the grants:
+`--max-allow io,env,fs,net,clock,rand,ffi` is what 3.4 granted by
+default. Its start-up lines say which ceiling is the default.
+
+One more change came with the flag: `velaris serve --max-memory-mb`
+was accepted before, and - through the command line's process-wide
+`--max-memory-mb` - set an address-space cap on the door's own process
+on Linux and macOS, never documented. It is now the most each run may
+have, and the door's process is not capped.
+
+**STABILITY.md.** What semantic versioning covers here - the language
+as SPEC.md states it, the error codes, `velaris.audit/1`, the library
+API, the budget grammar, the command line's commands and documented
+flags - and what it does not: internals, the proof cache, the wording
+of messages, which promises happen to prove, the formatter's style,
+anything marked provisional. The rules: breaking changes only in a
+major version, security fixes included; a deprecation announced in a
+minor version, warning for at least one more, removed no sooner than
+the next major; an error code never reused for another meaning, and a
+removed one kept listed as removed (`REMOVED_ERRORS`, and a section on
+the errors page - empty today). A stronger prover refusing a program
+its proof shows wrong is stated as the one exception, and why.
+
+Its "Breaks we have made" section is longer than expected when it was
+begun. 2.0 and 3.0 broke in major versions, as promised. **3.4 shipped
+three breaking changes in a minor version and named them as such, and
+it should have been 4.0**; it was not retagged because 3.4.0 was
+already published, and this policy exists so that it does not happen
+again. Reading every entry for STABILITY.md found more: 3.4 broke three
+further things it did not list (`serve` and the MCP server refusing an
+unknown argument, `GET /health` without the token no longer naming the
+ceiling); 3.3 shipped five breaking changes as fixes and named none;
+and eight earlier minor releases, 2.20 to 3.1, each broke something -
+64-bit integers, the formatter's style, three builtins made fallible,
+the http module's `call`, `audit().problems`, the doors' 2.59 limits,
+`args()`, Windows memory caps. E610 was reused, in 2.59, for a meaning
+other than the one 1.4 gave it. All of it is listed there, and 2.0 is
+recorded as its entry and commit describe it: four builtins made
+fallible. README and CONTRIBUTING link it; SPEC.md section 15 points
+to it.
+
+Also corrected: the 3.3 entry of this file lost its heading in the 3.4
+release, so its text read as part of 3.4. The heading is restored.
+
+**The capability ratchet.**
+
+    velaris capabilities init [path]          # write velaris.capabilities
+    velaris capabilities check [path]         # exit 1 if the surface widened
+    velaris review --against <ref> [path]     # a pull request's delta, as facts
+
+A change can add capability to a repository a little at a time - a
+helper that builds a URL, a function that reads a file, a call three
+levels down that sends one to the other - and no single diff looks
+alarming, which is how such a change passes a reviewer and a
+diff-based monitor. Capability is binary and cumulative, so the steps
+add up to exactly what one large step would have done; but only a
+comparison with a declared baseline sees the sum. This release makes
+that comparison, and makes it the only one the gate uses.
+
+- **`velaris capabilities init`** reads every `.vel` file under the
+  path, except in `.git` and what git ignores, and writes
+  `velaris.capabilities` (`velaris.capabilities/1`, velaris-spec 0.3
+  section 9): the repository's surface - every grant its programs need,
+  in the budget grammar, and for `fs` and `net` the most operations one
+  run can perform, or `null` where the text sets no bound - and for each
+  program its own grants and counts and the effects each of its
+  functions declares, or that it does not compile; with the Velaris
+  version and the date. One grant per line and one function per line,
+  so accepting a widening is a one-line diff. It refuses to replace an
+  existing file without `--force`.
+- **`velaris capabilities check`** derives the same from the working
+  tree and compares it with the file - never with the previous commit -
+  and exits 1 when anything widened: a grant the surface does not cover
+  (a new effect, a new module, a path outside every recorded one, so
+  `./data` widened to `./` fails; a host, so `api.example.com` made
+  `*.example.com` fails; a scoped grant made unscoped); more `fs` or
+  `net` operations in a run than recorded (10 raised to 1000 fails); a
+  program the file records needing something its own entry does not
+  give, even when another program already had it; and a function the
+  file records gaining an effect, even when its program's grants and
+  counts stay the same. Narrowing never fails and is reported. A new
+  program is held to the surface alone. Each widening names what
+  widened, the file, function, line and call that introduced it, the
+  chain of calls from `main` that reaches it, and the edit to the file
+  that would accept it. A baseline from another Velaris version is
+  compared with a warning, not a failure. A baseline that is missing,
+  is not `/1`, or does not read exits 2 and never passes. `--json` is
+  `velaris.capabilities-check/1`; `--sarif` reports each widening as an
+  error at its line, through the 3.4 SARIF code, with two new error
+  rules, `capability-widened` and `capability-effect-gained`, and a
+  note, `capability-narrowed`, on the errors page.
+- **What a program needs** is read from its text: the effect and type
+  checks run and the prover does not, so the result is the same with
+  and without z3. A path, URL or module is taken as named when it is a
+  literal or a variable bound once to one; one built while running is
+  recorded as the unscoped grant, which a scoped baseline does not
+  cover. The operation bound comes from loops whose counter and limit
+  the text fixes - `for i in 0 to 10`, a counter started by `let`, a
+  list literal - multiplied through nesting and calls; a loop the text
+  does not bound, and recursion, have none.
+- **`velaris review --against <ref>`** runs the derivation and the
+  audit on the files at a git ref - read with `git show <ref>:<path>`,
+  nothing checked out - and on the working tree, and reports whether
+  the capability surface changed, the proven share before and after,
+  functions that became fallible, hosts, paths and modules newly named,
+  whether `velaris.capabilities` itself changed, and one word of risk
+  computed from those facts alone: `high` when the surface widened, or
+  the declared surface widened or was removed; `medium` when it did not
+  but a program or function the ref had came to need more, or the
+  proven share fell; `low` when nothing widened and the proven share
+  did not fall. No count of changed lines enters it. It informs a
+  reviewer; the gate is `check`, since a review against the commit
+  before loses a widening the moment it is merged.
+- **The GitHub Action** has a `capabilities` input, `check` by default
+  when `velaris.capabilities` exists and `off` otherwise - except that a
+  pull request deleting the file fails, since that would turn the
+  ratchet off; `capabilities: off` in the workflow is the visible way to
+  do that. Its findings are uploaded to code scanning beside the check's
+  when `sarif` is on. The pull-request comment from 2.63 now holds the
+  ratchet's result, each widening with the edit to the baseline that
+  would accept it, and the review delta against the pull request's
+  base.
+- **This repository commits its own `velaris.capabilities`**, written by
+  `velaris capabilities init .`: 172 programs, 22 of them examples and
+  benchmark rows built to be refused, recorded as not compiling. CI runs
+  `velaris capabilities check .` on every leg.
+- **`velaris.audit/1` gains `ffi_any`**, added within version 1: true
+  when some Python call names its module with a value built while
+  running, which `ffi_modules` cannot list. The ratchet needs it - a
+  computed module name must not slip past a baseline naming `ffi:math`
+  - and it closes velaris-spec's open question Q4. The audit also warns
+  when it is true.
+
+**`check_ratchet.py`**, 62 checks, proves the rules rather than
+asserting them, through the command line in scratch trees and real git
+histories. The gradual case: six commits, the first five adding pure
+helpers, a text constant holding a URL and a call to print, each
+passing against the baseline, and the sixth sending a summary to that
+URL through a helper three calls below `main` - which fails, naming
+`net:collector.example.net` as a new effect, `lib/deliver.vel` line 2
+in `send`, and the chain `main -> summary -> deliver -> send`, while a
+review of each commit against the one before calls the first five
+`low`. Why the gate must be the baseline: a count widened and merged
+anyway keeps failing the check at every later commit, while a review
+against the previous commit reports nothing one commit later; and seven
+steps from 10 to 1000 are reported as 1000 against the declared 10,
+where the previous commit shows 640 to 1000. Widenings through an
+import (the surface unchanged, the program's entry not), through the
+standard library, through a path prefix, a count, a wildcard host, a
+URL, path and module built while running, a new module, a new
+direction, a hidden directory, and a program whose `main` is imported
+from outside the tree. An effect added to a function whose program's
+grants and counts stay exactly as they were, reported. And the changes
+that must pass: narrowing; reordering functions, imports, `uses`
+clauses and statements, renaming locals, reformatting and `velaris
+fmt`; a file with no effects; a new program inside the surface; a
+literal moved into a variable; a function renamed or moved to another
+file; a program that stops compiling. Declared prefixes, wildcards and
+ports; a baseline from an older and from a newer version (a warning
+that never hides a widening); `init` without `--force`; four baselines
+that cannot be read (exit 2); the JSON and the SARIF, which validates;
+23 covering cases and 6 operation-bound cases. CI runs it on every leg.
+
+**What the ratchet cannot do, and the cases where one of the two rules
+was not achieved.** A widening never passes and a non-widening change
+never fails, among the changes `check_ratchet.py` holds; beyond them,
+these are the known limits, each stated in THREAT_MODEL.md:
+
+- *A widening that passes:* a function renamed in the same change that
+  gives it an effect is a new function, held to its program's entry and
+  the surface but not to what its old name declared - so a pure helper
+  renamed while it gains an effect its program already had is not
+  reported as a function that gained one. What a granted `ffi` module
+  does is outside the text. A symbolic link under a recorded directory
+  is that directory's content.
+- *A change that does not widen, reported as one:* the bound on
+  operations comes from fixed rules, so a loop bound moved behind a
+  function call (`for i in 0 to limit()`) loses its bound and is
+  reported as unbounded; a path or URL passed to a helper as a
+  parameter is taken as unscoped, as it always is, even when every
+  caller passes a literal; and a path written with `\` is covered only
+  by the same text.
+
+**What a 3.4 user has to change.**
+
+1. A client of `velaris serve` that relied on the door granting more
+   than `io` without `--max-allow` must start the door with
+   `--max-allow` naming what it needs.
+2. A client of either door that sends a `timeout` over 30 seconds or a
+   `max_memory_mb` over 512 must have the operator raise
+   `--max-timeout` or `--max-memory-mb`, or ask for less.
+3. A client that sends `timeout` or `max_memory_mb` as text (`"30"`),
+   or `0` to mean the default, must send a number, or leave the field
+   out.
+4. An operator who passed `--max-memory-mb` to `velaris serve` to cap
+   the door's own process gets a per-run ceiling instead; cap the door
+   with the operating system (`ulimit -v`, a container limit) if that
+   was the intent.
+
+Additions, which break nothing: `velaris capabilities`, `velaris
+review`, the Action's `capabilities` input (off unless the file
+exists), `ffi_any`, and the new SARIF rules.
+
+**velaris-spec 0.3.** Section 9 stops being provisional:
+`velaris.capabilities/1` replaces the provisional `/0`, which no
+version of this compiler wrote. The spec states the document, the
+derivation from a program's text, the operation bound, the covering
+rule (a path holding `\` now compared whole), and the comparison as
+five rules, W1 to W5, with a table of what widens for each kind of
+scope - effect, path, host, module, count, function - and the rule that
+a check compares with the baseline and with nothing else. Q4 is
+resolved by `ffi_any`. Its conformance section adds `check_ratchet.py`.
+It still quotes this repository's SPEC.md sections 6, 7 and 7.1 word
+for word - none of them changed - so its drift check passes; its CI now
+also validates this repository's `velaris.capabilities` against the
+`/1` schema.
+
+**Sources, named** (CONTRIBUTING.md rule): the four parts of this
+release were specified by the maintainer. No published work is on
+record as the source of the ratchet's design, so none is named. The
+CHANGELOG scan behind STABILITY.md's record was made in this release,
+and its findings were checked against the entries and against git
+history (E610's two meanings are in commits `616579f`, `79808fc` and
+`b5a4582`).
+
+**The MCP manifest changes, by design.** `velaris_run`'s description
+and the descriptions of its `timeout` and `max_memory_mb` inputs now
+name the ceilings, so the signed `velaris-mcp-tools-4.0.0.json` differs
+from 3.4.0's: `velaris mcp-verify` against a 3.4.0 manifest reports
+`velaris_run` as CHANGED, which is what it is for.
+
+**Verified**, on Windows 11 with Python 3.13, before tagging, with the
+proof cache cleared first. With the prover: `run_tests.py` 92/92,
+`check_library.py` 165 correct (one skipped: the symlink case is POSIX
+only), `check_sandbox.py` 45, `check_fallible.py` 26,
+`check_refusals.py` 21, `check_termination.py` 44, `check_pool.py` 39,
+`check_ratchet.py` 62, none wrong; `fuzz_native.py 30` agrees,
+`benchmark/run.py --quick --check` matches `results.json`, `velaris
+test examples/std_test.vel` 7/7, `velaris fmt --check` clean, and
+`velaris capabilities check .` passes on the clean tree. Without the
+prover, in a fresh virtual environment holding this tree, jsonschema
+and no z3 or llvmlite: the same thirteen pass, with `check_library.py`
+162 correct (two skipped for needing the prover, one POSIX only) and
+`check_refusals.py` 11 with 10 skipped for needing the prover. Every
+workflow file and `action.yml` parse as YAML. The Action's new steps
+were run outside GitHub as far as they go: the ratchet step under Git
+Bash in four cases (no baseline, off; a baseline and nothing widened,
+pass; `clock` added, fail naming it; a pull request deleting the
+baseline, fail), and the comment's Python against real `capabilities
+check --json` and `review --json` output. `velaris review --against
+HEAD` over this repository took 45 s with the prover. velaris-spec
+0.3's `tools/check_sync.py` passes against this tree, its
+`tools/validate.py` passes with `--capabilities` on this repository's
+`velaris.capabilities`, and the `velaris.audit/1` documents 4.0.0
+produces for all 109 files in `examples/` and `stdlib/` validate
+against its audit schema, `ffi_any` included.
+
 ## 3.4 - The doors are locked, and the findings go where findings go
 
 `velaris serve` ran any program sent to it by anyone who could reach
@@ -150,6 +436,11 @@ environment, `mcp-manifest` made the manifest from its server, and
 itself was run against the sigstore bundle this workflow made for the
 3.3.0 SBOM, accepting it and refusing it for changed bytes and for the
 wrong tag.
+
+## 3.3 - The capability check now means what the spec says
+
+(This heading was lost from this file in the 3.4 release and restored
+in 4.0; the text below it is unchanged.)
 
 velaris-spec 0.1 was extracted from 3.1.1 and, in writing each rule down
 precisely, found five places where this compiler did not do what the

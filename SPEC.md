@@ -446,7 +446,12 @@ contract violations, E7xx proof results.
 Velaris follows semantic versioning. Breaking changes happen only at
 major versions; 2.0 made four builtins fallible and the compiler
 pointed at every call site that needed updating. Minor versions add;
-patch versions fix.
+patch versions fix. [STABILITY.md](STABILITY.md) states what that
+covers, the rules for deprecation and for error codes, and the record
+of the minor releases that broke the rule anyway, 3.3 and 3.4 among
+them. One kind of change is not counted as breaking: a prover that
+settles more may refuse a program whose promise, division or list read
+it can now show wrong, for the input it names.
 
 The test suite runs on Linux, Windows and macOS, on two Python
 versions, with and without the optional solver and native backend, on

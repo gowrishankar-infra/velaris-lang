@@ -150,9 +150,9 @@ def main(argv: list) -> int:
         print('    program, audit it, then run it with allow io."')
         print()
         print("Each config was backed up next to itself before writing.")
-        print("The server grants a run at most io. To let it grant more,")
-        print("add --max-allow and the grants to its args - EMBEDDING.md")
-        print("shows how.")
+        print("The server grants a run at most io, 30 seconds and 512 MB.")
+        print("To let it grant more, add --max-allow, --max-timeout or")
+        print("--max-memory-mb to its args - EMBEDDING.md shows how.")
     return 0
 
 
