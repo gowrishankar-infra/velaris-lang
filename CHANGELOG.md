@@ -1,5 +1,51 @@
 # Velaris changelog
 
+## 4.0.1 - The review read the old files from the wrong place
+
+4.0.0's CI failed on its four Windows legs, in `check_ratchet.py`: the
+five checks that go through `velaris review` failed. The capability
+check - the gate - passed every one of its cases on all twelve legs.
+
+The cause was in `review`. To find where the checked directory sits in
+the repository, it compared the working directory's path with the path
+`git rev-parse --show-toplevel` prints, as text. On the Windows runners
+the temporary directory is a short name (`C:\Users\RUNNER~1\...`) and
+git prints the long one, so the two did not match, and the files at the
+ref were materialised and read from a directory that was not the ref's
+place in the tree. The review then reported the surface as widened, or
+as unchanged, whatever the change was. `review` now asks git where it
+is (`git rev-parse --show-prefix`) and compares no paths. The same
+mismatch happens wherever the path to a checkout goes through a link or
+junction, on any system.
+
+The 4.0.0 entry's "Verified" paragraph was true of the machine it
+names, from a path git spells the same way, and was not true of the
+Windows runners. `check_ratchet.py` gains a case that runs `review`
+from a junction (Windows) or a symbolic link (elsewhere) to a
+repository whose working tree needs more than its last commit, and
+requires the review to see it: the case fails against 4.0.0 and passes
+now. 63 checks.
+
+Affected: `velaris review`, and the review section of the Action's
+pull-request comment, on a machine where the two paths differ.
+`velaris capabilities init` and `check` were not affected, and neither
+was anything else in 4.0.0. This repository's `velaris.capabilities` is
+recorded again under 4.0.1; only its `velaris_version` changed.
+
+**Verified**, on Windows 11 with Python 3.13, with the proof cache
+cleared first; the new case fails against 4.0.0's `velaris.py` and
+passes against this one. With the prover: `run_tests.py` 92/92,
+`check_library.py` 165 correct (one skipped, POSIX only),
+`check_sandbox.py` 45, `check_fallible.py` 26, `check_refusals.py` 21,
+`check_termination.py` 44, `check_pool.py` 39, `check_ratchet.py` 63,
+none wrong; `fuzz_native.py 30` agrees, `benchmark --quick --check`
+matches, `velaris test examples/std_test.vel` 7/7, `velaris fmt
+--check` clean, `velaris capabilities check .` passes. Without the
+prover, in a fresh virtual environment with no z3 or llvmlite: the same
+thirteen pass, `check_library.py` 162 correct (two skipped for the
+prover, one POSIX only) and `check_refusals.py` 11 with 10 skipped.
+Whether the Windows runners agree is for this commit's CI to say.
+
 ## 4.0 - The operator sets the limits, and the capability surface cannot widen quietly
 
 This is a major version. Two gaps 3.4 left open on the doors are

@@ -274,7 +274,7 @@ Usage:
 import json
 import os
 
-VERSION = "4.0.0"
+VERSION = "4.0.1"
 import re
 import sys
 from dataclasses import dataclass, field
@@ -12348,8 +12348,11 @@ def review(against: str, root: str = ".") -> dict:
         raise RuntimeError(f"no commit called '{against}' in this "
                            f"repository (a shallow clone may need: git "
                            f"fetch --depth=1 origin {against})")
-    rel_root = os.path.relpath(os.path.abspath(root), top) \
-        .replace(os.sep, "/")
+    # where root sits in the repository, as git itself says - not by
+    # comparing paths, which differ when one side is a Windows short
+    # name (RUNNER~1) or a link (macOS's /var is /private/var)
+    rel_root = _git(["rev-parse", "--show-prefix"], root).strip() \
+        .rstrip("/") or "."
     listed = _git(["ls-tree", "-r", "--name-only", "-z", commit], top)
     scratch = tempfile.mkdtemp(prefix="velaris-review-")
     try:

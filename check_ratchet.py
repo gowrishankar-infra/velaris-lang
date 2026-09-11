@@ -363,6 +363,66 @@ def main() -> int:
                and rev.get("declared", {}).get("removed") is True,
                rev.get("declared"))
 
+            # The working directory's path and the one git reports for the
+            # repository can be spelled differently - a Windows short name
+            # (RUNNER~1 on CI), a junction, a symbolic link (macOS's /var
+            # is /private/var). 4.0.0 compared the two as text and read the
+            # ref's files from the wrong place; review must ask git.
+            t = tree({"sub/app.vel": GREETER, "sub/lib/text.vel": TEXT_LIB},
+                     git=True)
+            t.commit("a tree under a subdirectory")
+            # uncommitted: the working tree now needs net, the ref does not,
+            # so only a review that really reads the ref's files sees a
+            # widening
+            t.write({"sub/app.vel": GREETER.replace(
+                "fn main() uses io {",
+                "fn main() uses io, net {\n"
+                '    check fetch_status("https://x.example.org") {\n'
+                "        ok s {\n"
+                "            print(to_text(s))\n"
+                "        }\n"
+                "        fail w {\n"
+                "            print(w)\n"
+                "        }\n"
+                "    }")})
+            link = Path(tempfile.mkdtemp(prefix="velaris-link-")) / "repo"
+            made = False
+            try:
+                if os.name == "nt":
+                    made = subprocess.run(
+                        ["cmd", "/c", "mklink", "/J", str(link),
+                         str(t.root)], capture_output=True).returncode == 0
+                else:
+                    os.symlink(t.root, link, target_is_directory=True)
+                    made = True
+            except OSError:
+                made = False
+            if not made:
+                skip("review from a path spelled unlike git's",
+                     "cannot make a junction or link here")
+            else:
+                done = subprocess.run(
+                    [sys.executable, str(VELARIS), "review", "--against",
+                     "HEAD", ".", "--json"], cwd=str(link / "sub"),
+                    capture_output=True, text=True, encoding="utf-8",
+                    timeout=600)
+                try:
+                    rev = json.loads(done.stdout)
+                except ValueError:
+                    rev = {"_stderr": done.stderr}
+                ok("review from a path spelled unlike git's own reads the "
+                   "ref's files, not the working tree: io before, net "
+                   "after, high",
+                   rev.get("risk") == "high"
+                   and rev.get("surface", {}).get("before", {})
+                   .get("grants") == ["io"]
+                   and "net:x.example.org" in rev.get("surface", {})
+                   .get("after", {}).get("grants", []), rev)
+                if os.name == "nt":
+                    os.rmdir(link)             # the junction, not its target
+                else:
+                    link.unlink()
+
         # ------------------------------------------------------------------
         print()
         print("widenings, each by another route")
