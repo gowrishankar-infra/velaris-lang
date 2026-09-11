@@ -1,13 +1,24 @@
 % References for paper/velaris.md. Every entry is cited in the text.
-% Details of TACIT, CaMeL, WASI, object capabilities, in-toto, SLSA,
-% SARIF, effect systems and Deno are those velaris-spec PRIOR_ART.md
-% records; Hills et al. was read on arXiv on 2026-09-11.
+% Details of CaMeL, WASI, object capabilities, in-toto, SLSA, SARIF,
+% effect systems and Deno are those velaris-spec PRIOR_ART.md records.
+% Author lists and titles were checked on 2026-09-11: TACIT against
+% arXiv:2603.00991, Crossref's record of its DOI and the CAIS paper's
+% own first page; CaMeL and Hills et al. against arXiv (Cooper
+% Stickland is a family name, as that paper cites its own author);
+% Dennis and Van Horn, Lucassen and Gifford, and Z3 against Crossref
+% and, for Lucassen and Gifford, the paper's first page; Miller against
+% the title page of the dissertation in Johns Hopkins's JScholarship;
+% in-toto against USENIX's page for the paper. Braces keep a title's
+% capitals where BibTeX styles would lower them.
 
 @inproceedings{odersky2026tacit,
   author    = {Odersky, Martin and Zhao, Yaoyu and Xu, Yichen and
                Bra{\v{c}}evac, Oliver and Pham, Cao Nguyen},
   title     = {Securing Agents With Tracked Capabilities},
-  booktitle = {ACM Conference on AI and Agentic Systems (CAIS '26)},
+  booktitle = {Proceedings of the ACM Conference on AI and Agentic Systems
+               (CAIS '26)},
+  pages     = {812--838},
+  publisher = {ACM},
   year      = {2026},
   doi       = {10.1145/3786335.3813127},
   note      = {Preprint as ``Tracking Capabilities for Safer Agents'',
@@ -28,9 +39,9 @@
 
 @misc{wasi,
   author       = {{WebAssembly Community Group}},
-  title        = {{WASI}: the {WebAssembly} System Interface},
+  title        = {{WASI}: the {WebAssembly System Interface}},
   howpublished = {\url{https://wasi.dev}},
-  note         = {Preview 1, and Preview 2 on the Component Model}
+  note         = {{Preview 1}, and Preview 2 on the Component Model}
 }
 
 @article{dennis1966semantics,
@@ -40,7 +51,8 @@
   volume  = {9},
   number  = {3},
   pages   = {143--155},
-  year    = {1966}
+  year    = {1966},
+  doi     = {10.1145/365230.365252}
 }
 
 @phdthesis{miller2006robust,
@@ -53,8 +65,8 @@
 
 @misc{sarif2020,
   author       = {{OASIS}},
-  title        = {Static Analysis Results Interchange Format ({SARIF})
-                  Version 2.1.0},
+  title        = {{Static Analysis Results Interchange Format (SARIF)
+                  Version 2.1.0}},
   howpublished = {OASIS Standard},
   year         = {2020}
 }
@@ -62,21 +74,22 @@
 @inproceedings{torresarias2019intoto,
   author    = {Torres-Arias, Santiago and Afzali, Hammad and Kuppusamy,
                Trishank Karthik and Curtmola, Reza and Cappos, Justin},
-  title     = {in-toto: Providing farm-to-table guarantees for bits and
+  title     = {{in-toto}: Providing farm-to-table guarantees for bits and
                bytes},
   booktitle = {28th USENIX Security Symposium},
+  pages     = {1393--1410},
   year      = {2019}
 }
 
 @misc{intoto_attestation,
   author       = {{in-toto project}},
-  title        = {in-toto Attestation Framework},
+  title        = {{in-toto Attestation Framework}},
   howpublished = {\url{https://github.com/in-toto/attestation}}
 }
 
 @misc{slsa,
   author       = {{SLSA}},
-  title        = {Supply-chain Levels for Software Artifacts},
+  title        = {{Supply-chain Levels for Software Artifacts}},
   howpublished = {\url{https://slsa.dev}},
   note         = {Including its provenance predicate}
 }
@@ -95,7 +108,8 @@
   booktitle = {Proceedings of the 15th ACM SIGPLAN-SIGACT Symposium on
                Principles of Programming Languages (POPL '88)},
   pages     = {47--57},
-  year      = {1988}
+  year      = {1988},
+  doi       = {10.1145/73560.73564}
 }
 
 @misc{deno_security,
@@ -119,16 +133,16 @@
 
 @software{velaris_lang,
   author  = {Palakurthi, Gowri Shankar},
-  title   = {Velaris},
-  version = {4.1.0},
+  title   = {{Velaris}},
+  version = {4.2.1},
   year    = {2026},
   url     = {https://github.com/gowrishankar-infra/velaris-lang}
 }
 
 @software{velaris_spec,
   author  = {Palakurthi, Gowri Shankar},
-  title   = {velaris-spec: the Velaris capability format},
-  version = {0.4},
+  title   = {velaris-spec: the {Velaris} capability format},
+  version = {0.5.1},
   year    = {2026},
   url     = {https://github.com/gowrishankar-infra/velaris-spec}
 }

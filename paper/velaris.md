@@ -28,17 +28,17 @@ program cannot catch. Contracts are checked by the Z3 prover where it
 can settle them, and at run time where it cannot. A repository can
 commit a baseline of the capability surface its programs need, and a
 check fails any change that needs more. The central claim is about
-that surface: in a repository whose Velaris programs are held to a
-committed baseline by a required check, a change that makes a program
+that surface. Suppose a repository's Velaris programs are held to a
+committed baseline by a required check. If a change makes a program
 need an effect, path, host, module or operation count the baseline does
-not grant it fails the check at every commit, from the one that
-introduces it on, at which the program still compiles and still needs
-it, until a person edits the baseline. The claim is not about which
-function an effect is attributed to: a function renamed in the change
-that gives it an effect its program already had escapes the
-function-level rule. On a benchmark of 63 programs, 56 with one defect
-and 7 correct, each written in Velaris, in JavaScript for Deno and in
-Python, Velaris caught 54 of the 56 defects, 42 of them before running;
+not grant, the check fails. It goes on failing at every later commit at
+which the program still compiles and still needs it, until a person
+edits the baseline. The claim is not about which function an effect is
+attributed to: a function renamed in the change that gives it an effect
+its program already had escapes the function-level rule. On a benchmark
+of 63 programs, 56 with one defect and 7 correct, each written in
+Velaris, in JavaScript for Deno and in Python, Velaris caught 54 of the
+56 defects, 42 of them before running;
 Deno caught 32 and Python 28; none of the three flagged a correct
 program. One of Velaris's two misses is a logic error with no contract;
 the other no tool should catch. The capability format is published
@@ -80,11 +80,63 @@ comparison of each commit with the one before sees each step alone,
 and once a step is merged, sees nothing more of it.
 
 Velaris addresses the three needs with three mechanisms, and adds a
-fourth, proofs of contracts, that the others do not depend on. Section
-2 describes them, section 3 the implementation, section 4 what has been
-measured, section 5 related work and section 6 the limitations.
+fourth, proofs of contracts, that the others do not depend on. Sections
+2.1 to 2.4 describe the four, and section 2.5 the format, published
+separately, that specifies the three and not the proofs; section 3
+describes the implementation, section 4 what has been measured, section
+5 related work and section 6 the limitations.
 
 ## 2. Design
+
+Figure 1 shows the pieces this section describes: one program from its
+signature to a refused operation, and one repository whose commits are
+each compared with the same baseline.
+
+```
+(a) One program, one run: examples/effects.vel
+
+fn save_report(text: Text) uses fs {       <- the signature
+    write_file("report.txt", text)
+}
+fn main() uses io, fs, clock, rand { ... }
+      |
+      |  velaris audit, before it runs
+      v
+effects: clock, fs, io, rand               <- the audit
+reads and writes: report.txt
+      |
+      |  the operator writes the budget
+      v
+--allow io,clock,rand,fs:read:./data       <- the budget
+      |
+      |  at the call, before the write
+      v
+E313, line 13: 'write_file' reaches        <- the refusal
+'report.txt', which this run's fs grants
+do not cover. Nothing is written; the run
+ends, and the program cannot catch it.
+
+(b) One repository, one baseline
+
+c0: baseline committed, with poll.vel at 10 requests a run
+
+         poll.vel     check, against     review, against
+commit   needs        the baseline       the commit before
+c1       20           fails: 20 > 10     high
+c2       20           fails: 20 > 10     low, sees nothing
+c3..c8   40..1000     fails at each;     at c8, sees only
+                      c8: 1000 > 10      640 -> 1000
+c9       1000, and the baseline edited to 1000:
+                      passes             high, names the edit
+```
+
+Figure 1: (a) `examples/effects.vel`: what a signature declares, what
+the audit reports before the program runs, a budget its operator
+writes, and the refusal of the write that budget does not grant. (b)
+the second history of section 4.3, from `check_ratchet.py`: c1 raises a
+count and is merged, c2 is an unrelated change, and the check compares
+every commit with the baseline committed at c0, never with the commit
+before it, which is what a review compares.
 
 ### 2.1 Effects in signatures
 
@@ -192,17 +244,20 @@ file, in review.
 
 Because the comparison is with the baseline, a widening merged once
 goes on failing at every later check until someone edits the file, and
-a widening assembled over many commits is reported as its whole sum.
-That is the property the gradual attacks of section 1 need to defeat.
+a widening assembled over many commits is reported as its whole sum
+(Figure 1b). That is the property the gradual attacks of section 1 need
+to defeat.
 
-**The central claim.** In a repository whose Velaris programs are held
-to a committed baseline by a required check, a change that makes a
+**The central claim.** Suppose a repository's Velaris programs are held
+to a committed baseline by a required check. If a change makes a
 program need an effect, path, host, module or operation count the
-baseline does not grant it - the surface, for a program the baseline
-does not record or records as not compiling, and also its own entry,
-for one it records as compiling - fails the check at every commit, from
-the one that introduces it on, at which the program still compiles and
-still needs it, until a person edits the baseline.
+baseline does not grant, the check fails. It goes on failing at every
+later commit at which the program still compiles and still needs it,
+until a person edits the baseline. Which entries count depends on the
+program: for one the baseline does not record, or records as not
+compiling, the baseline grants what its surface grants; for one it
+records as compiling, only what both the surface and the program's own
+entry grant.
 
 "Needs" there is what the program's text requires by the derivation of
 velaris-spec section 9.3: the declared surface. Three things follow
@@ -247,13 +302,14 @@ signing to Sigstore's tools.
 ## 3. Implementation
 
 The implementation, velaris-lang [@velaris_lang], is one Python file,
-`velaris.py`, of 13,269 lines, in the order a program passes through
-it: lexer, parser, loader, effect checker, type checker, prover,
-native code generation, interpreter. The prover needs the optional
-`z3-solver` package and the native code generator the optional
-`llvmlite`; without them, contracts are checked while running and
-everything is interpreted, and the effect checks and the budget are
-unchanged.
+`velaris.py`, of 13,497 lines - one file by design: nothing to install
+but Python, nothing vendored, a single artifact to sign and audit. It
+is laid out in the order a program passes through it: lexer, parser,
+loader, effect checker, type checker, prover, native code generation,
+interpreter. The prover needs the optional `z3-solver` package and the
+native code generator the optional `llvmlite`; without them, contracts
+are checked while running and everything is interpreted, and the
+effect checks and the budget are unchanged.
 
 The budget is enforced in the interpreter, at each builtin that
 performs an operation, before the operation. A run with a time limit
@@ -370,14 +426,15 @@ carry on, a module reached through a submodule path, `py_json` or a
 handle, a path out of a prefix by `..` or a symbolic link, a host, a
 port, a wildcard's parent domain, a count, a URL with no scheme taken
 as HTTPS - each refused with the code it must carry, and 16 honest
-programs that must still run. With the prover, `check_ratchet.py`
-holds 114 checks of the ratchet, `check_library.py` 184 of the library,
-the doors and the audit, `check_refusals.py` 21 wrong programs each
-refused with the right code, `check_fallible.py` 26 fallible builtins,
-and `check_termination.py` 44 adversarial loops; without it,
-`check_library.py` runs 181 and `check_refusals.py` 11, skipping the
-checks that are about proofs, and the rest are unchanged (CHANGELOG,
-4.1).
+programs that must still run. Run on Windows with the prover,
+`check_ratchet.py` passes 114 checks of the ratchet, `check_library.py`
+196 of the library, the doors, the audit and its attestations (its one
+symbolic-link case runs only on POSIX), `check_refusals.py` 21 wrong
+programs each refused with the right code, `check_fallible.py` 26
+fallible builtins, and `check_termination.py` 44 adversarial loops;
+without it, `check_library.py` passes 193 and `check_refusals.py` 11,
+skipping the checks that are about proofs, and the rest are unchanged
+(CHANGELOG, 4.2).
 
 Those suites drive velaris-lang's own command line and Python library,
 so until velaris-lang 4.1 an implementation in another language could
@@ -396,7 +453,7 @@ on Python's object model, four need a Python host, one is a run given
 no budget, which the format leaves to the implementation, and two are
 about velaris-lang's command-line flags. `velaris conformance` runs the
 corpus against velaris-lang; it passes at all three levels
-(velaris-spec `tests/index.json`; CHANGELOG, 4.1).
+(velaris-spec `tests/index.json`; CHANGELOG, 4.2).
 
 Writing the corpus found a defect. The audit of a program refused for
 naming an unknown effect still listed that name among the program's
@@ -436,15 +493,21 @@ every leg.
 
 The ratchet has not been measured on the gradual-attack benchmark of
 Hills et al., whose code is not Velaris, or on any repository but its
-own. What is claimed for it is the property of section 2.4 and the
-cases of `check_ratchet.py`, not a detection rate.
+own. What is claimed for it is a property of a deterministic
+comparison, in the same sense that soundness is a property of a type
+system, and not a detection rate. A rate measures how often a heuristic
+notices something. The ratchet does not notice; it computes, and the
+cases in `check_ratchet.py` show what it computes. The property is the
+one stated in section 2.4, with the three things it does not say there
+and the five known limits of section 6, and it rests on the
+comparison's definition and on those cases: it has not been proved
+mechanically.
 
 ## 5. Related work
 
 This section says what each piece of work does and how Velaris differs.
 It claims priority over none of it; velaris-lang's changelog does not
-name any of it as the source of a design decision, and where a
-resemblance is close the record is silent about influence.
+name any of it as the source of a design decision.
 
 **Object capabilities.** Dennis and Van Horn introduced the capability,
 a reference that both names a resource and carries the right to use it
@@ -590,13 +653,18 @@ at their tags:
 
     git clone https://github.com/gowrishankar-infra/velaris-lang
     git clone https://github.com/gowrishankar-infra/velaris-spec
+    git -C velaris-spec checkout v0.5.1
     cd velaris-lang
-    git checkout v4.1.0
+    git checkout v4.2.1
     pip install ".[full,test]"         # the prover, the native compiler, jsonschema
 
     # Table 1 (needs Deno 2.x on PATH for the Deno column; 5 to 8 minutes)
     python benchmark/run.py            # rewrites benchmark/RESULTS.md and results.json
-    python benchmark/run.py --check    # or: compare every verdict with results.json
+    python benchmark/run.py --check    # the same, and fails if a verdict differs
+
+    # Figure 1a
+    velaris audit examples/effects.vel
+    velaris examples/effects.vel --allow io,clock,rand,fs:read:./data
 
     # section 4.2 and 4.3
     python check_sandbox.py
@@ -619,15 +687,17 @@ Where each number comes from:
 | Number | File |
 |---|---|
 | 63 programs, 56 dangerous, 7 controls; 42/12/2, 5/27/24, 0/28/28; 0 false positives; Velaris 4.1.0, Deno 2.9.6, Python 3.13.13, Windows 11; 5 s timeout, 256 MB cap; the misses `04c` and `09c` | `benchmark/RESULTS.md` |
-| eleven categories; three of each six programs written against the tools | `benchmark/README.md` |
+| eleven categories; three of each six programs written against the tools; 5 to 8 minutes for a full run | `benchmark/README.md` |
 | the same table from Velaris 3.0.0 | `benchmark/RESULTS.md` at v4.0.0, and `CHANGELOG.md`, 4.1 entry |
 | seven effects; the refusal codes E310, E311, E313, E314, E315 | `SPEC.md` section 7 and 7.1 |
 | E407, E520, E700, E701, E705, E706; 62 error codes | `velaris.py`, `ERROR_TABLE` |
-| 13,269 lines | `velaris.py` |
+| Figure 1a: the program, its effects and paths, line 13 | `examples/effects.vel` |
+| 13,497 lines | `velaris.py` |
 | 34 escape attempts and 16 honest programs | `check_sandbox.py`, `ESCAPES` and `HONEST` |
-| 114, 184, 21, 26, 44 checks; 181 and 11 without the prover | `CHANGELOG.md`, 4.1 entry |
+| Linux, Windows and macOS; Python 3.10 and 3.12; with and without the prover | `.github/workflows/test.yml` |
+| 114, 196, 21, 26, 44 checks; 193 and 11 without the prover | `CHANGELOG.md`, 4.2 entry |
 | 444 cases: 298, 37, 109; 280 budgets, 18 audits; 13 left out | velaris-spec `tests/index.json` |
-| the six-commit history; line 2 of `lib/deliver.vel`; 10 to 1000, 640 to 1000 | `check_ratchet.py`, `SEQUENCES` |
+| the six-commit history; line 2 of `lib/deliver.vel`; 10 to 1000, 640 to 1000, and Figure 1b | `check_ratchet.py`, `SEQUENCES` |
 | five known limits | `check_ratchet.py`, `CHECKS`; `CHANGELOG.md`, 4.0 entry |
 | 172 programs, 22 not compiling | `velaris.capabilities` |
 
