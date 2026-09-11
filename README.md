@@ -31,12 +31,14 @@ clock. Not "shouldn't" — the runtime refuses, and a refusal cannot be
 caught and carried past. You do not have to read the code, understand
 it, or trust the compiler's analysis of it.
 
-`--allow io,ffi:math,json` grants Python for those modules only; any
-other is refused. Since 3.0 the same grammar narrows every coarse
-effect: `fs:read:./data`, `fs:write:./out`, `net:api.example.com:443`,
-`net:*.example.com`, and `@100` for at most that many operations in a
-run; `env` is its own effect, so an `io`-only program cannot read the
-environment. `timeout` and `max_memory_mb` are available through the
+`--allow io,ffi:math,json` grants Python only to calls that name those
+modules; a call naming any other is refused, though whatever a granted
+module can reach is reachable through it. Since 3.0 the same grammar
+narrows every coarse effect: `fs:read:./data`, `fs:write:./out`,
+`net:api.example.com:443`, `net:*.example.com`, and `@100` for at most
+that many operations in a run; `env` is its own effect, so an
+`io`-only program cannot read the environment. `timeout` and
+`max_memory_mb` are available through the
 library and every door. It is still not a security boundary - but the
 caveats every review raised, the ffi cliff, unbounded execution, and
 `fs` and `net` with no path or host list, are now precise permissions
@@ -62,6 +64,29 @@ error[E700] promise cannot be kept: 'discount' ensures result >= 0
 That `ensures` is not a comment or a runtime assert. The Z3 theorem
 prover verifies it for **every possible input** before execution — and
 refutes it with an exact counterexample when it lies.
+
+## Related work
+
+[TACIT](https://github.com/lampepfl/tacit) ("Securing Agents With
+Tracked Capabilities", ACM CAIS '26;
+[arXiv 2603.00991](https://arxiv.org/abs/2603.00991)) has agents write
+Scala 3, whose capture checking tracks file, network and command
+capabilities as values in the type system;
+[CaMeL](https://arxiv.org/abs/2503.18813) has a model turn the user's
+request into a restricted subset of Python and tags every value with its
+provenance and permitted readers, checking a policy at each tool call;
+[WASI](https://wasi.dev) gives a WebAssembly module only the resources
+its host hands it. Velaris is a small language a model learns from a
+3,300-word card, in which functions declare their effects, the runtime
+enforces the operator's budget at each operation, and contracts are
+checked by the Z3 theorem prover; it does not track data flow, which
+CaMeL and TACIT both do, and its command line grants every effect when
+no budget is given, where a WASI module given nothing reaches nothing.
+The capability
+format is published separately, under CC0, as
+[velaris-spec](https://github.com/gowrishankar-infra/velaris-spec),
+whose [PRIOR_ART.md](https://github.com/gowrishankar-infra/velaris-spec/blob/main/PRIOR_ART.md)
+sets out these differences and the older work in full.
 
 ## Why Velaris
 
@@ -184,7 +209,7 @@ one. The rules are stated in full in [EMBEDDING.md](EMBEDDING.md).
 ## Written by a model, audited by you, run in a box
 
 ```
-velaris card > card.md          # ~1,500 words: paste into any model
+velaris card > card.md          # ~3,300 words: paste into any model
 velaris audit script.vel        # what it can touch, before you run it
 velaris script.vel --allow io   # it cannot touch anything else
 ```

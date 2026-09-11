@@ -42,3 +42,11 @@ run_tests.py, and run `velaris fmt` on them.
 
 Every error: a code (Exyz), a plain-English message, a location, and
 numbered fixes. Never claim "proven" unless it is literally true.
+
+## Naming sources
+
+When a design decision comes from published work - a paper, a
+standard, another project's documented design - name the source in the
+CHANGELOG entry for the release that makes it. A finding from a review
+counts too: say which person, model or bot found it. If you do not know
+where something came from, leave it unattributed rather than guess.

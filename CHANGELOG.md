@@ -1,5 +1,127 @@
 # Velaris changelog
 
+## 3.2 - The capability format, published as a spec
+
+Nothing in the compiler changed: `velaris.py` differs from 3.1.1 only
+in its version string.
+
+**velaris-spec 0.1.** The capability format has a specification of its
+own now, in a separate repository,
+[gowrishankar-infra/velaris-spec](https://github.com/gowrishankar-infra/velaris-spec),
+tagged v0.1: the seven effects and what "transitive" means; the grant
+grammar - `fs:read:path`, `net:host:port`, `net:*.domain`,
+`ffi:module`, `@N` - as this compiler parses and enforces it, edge
+cases included; what a budget guarantees at runtime and what it does
+not; `velaris.audit/1` field by field; and `velaris.capabilities/0`, a
+ratchet baseline for CI that this compiler does not read yet, marked
+provisional until it does. It is written so that the format can be
+implemented in another language without reading `velaris.py`, and
+where a rule could not be stated precisely it says so, as one of eleven
+open questions. Its section 2 quotes sections 6, 7 and 7.1 of this
+repository's SPEC.md word for word; `tools/check_sync.py` there, run
+weekly by its CI, fails if the two drift. The spec is CC0, so anyone
+may implement it; this implementation stays MIT.
+
+Conformance is defined here, not there. ARCHITECTURE.md now names
+`check_termination.py`, `check_sandbox.py`, `check_refusals.py`,
+`check_fallible.py` and `check_library.py` as the conformance suite,
+and an implementation claiming velaris.capabilities compliance must
+pass the subset that does not require the prover. The spec's JSON
+Schema for `velaris.audit/1` was held against the audit of every one of
+the 107 `.vel` files in `examples/` and `stdlib/`, and all 107
+validate.
+
+**What writing it down found.** Stating each rule precisely enough for
+someone else to implement it turned up places where the compiler, its
+documentation and its own SPEC.md do not say the same thing. None is
+fixed here, because this release changes no compiler code; each is
+recorded in the spec as what the reference does, and listed there as an
+open question:
+
+- **`velaris audit` on the command line is not `velaris.audit/1`.**
+  With `--json` it prints an older, unversioned summary - `compiles`
+  for `ok`, `errors` for `problems`, `functions` as a count - and both
+  its `safe_command` and the command it prints under HOW TO RUN IT
+  SAFELY are built from the coarse effects alone: for
+  `examples/json_ffi.vel`, which calls only `math`, it says
+  `--allow ffi,io` where `velaris.audit()` says `--allow ffi:math,io`.
+  The library, the MCP server, the HTTP door, the npm package, the
+  CrewAI tool and the Action's PR comment are all built on
+  `velaris.audit/1`; the command line is the exception. The schema
+  rejects the command line's output, and the spec says so rather than
+  bending the schema to fit.
+- **Grants are not all additive.** SPEC.md 7.1 says they are. For `fs`
+  and `net` that holds; for `ffi` it does not: `ffi,ffi:math` grants
+  `math` alone. The spec follows the parser, since that is the reading
+  that refuses.
+- **`ffi:M` checks the module name a call gives, not what is reachable
+  through the module.** The function argument of `py` may be a dotted
+  path of attributes, and a granted module's attributes include the
+  modules it imported. THREAT_MODEL.md already said the allow-list
+  narrows which modules and not what a module does; the README said
+  "any other is refused", and now says what is refused and what is
+  not.
+- **`safe_command` is wrong in three cases.** It writes an IPv6 host
+  without brackets (`net:::1`, which parses as the host `:` at port 1);
+  it passes through a path containing `,` or `@`, which the grammar
+  cannot hold; and it copies in any name a `uses` clause gives, because
+  `uses io, teleport` compiles and `teleport` reaches the audit.
+- **The budget parser reads a count with Python's `isdigit`**, so
+  `fs@٣` is a count of 3 and `fs@²` stops the parser with an uncaught
+  error instead of a budget error; and `ffi:math@5` is accepted as a
+  module literally named `math@5`.
+- **Six rules the spec states have no case in any `check_*.py`
+  suite**: a dotted function path through a granted module, `ffi`
+  together with `ffi:M`, a URL without a scheme taken as HTTPS, IPv6
+  grants, an existence check under a write-only grant, and `@0` or a
+  count spent by an operation that then fails. The spec lists them as
+  its Q9; adding the cases is work for a release that may change
+  behaviour if a case fails.
+
+**Related work, cited.** The README has a Related work section after
+the opening, naming TACIT (ACM CAIS '26, arXiv 2603.00991), CaMeL and
+WASI, what each does, and what Velaris does differently, including what
+it does not do: it tracks no data flow, and its command line grants
+every effect when no budget is given. The spec's PRIOR_ART.md has the
+longer account, with object capabilities, in-toto and SLSA, SARIF,
+Deno's permissions and effect systems. The README's `velaris card` line
+said ~1,500 words, the size of the card in 2.41; it is 3,335 words by
+`wc -w` now, and the README says ~3,300 in both places.
+
+**Sources, named.** CONTRIBUTING.md gains a rule: when a design
+decision comes from published work, name the source in the CHANGELOG
+entry for that release; say which person, model or bot found a review
+finding; and when the origin is not known, do not guess. Applied
+backwards where the record allows it. 2.41.1 (a Gemini model), 2.41.2
+(a ChatGPT model), 2.42 and 2.44 to 2.47 (a Claude model) now say which
+model family found what, from the maintainer's account, since none of
+those entries recorded it at the time and HALL_OF_FAME.md had declined
+to guess; HALL_OF_FAME.md carries the same names now. 2.59 names
+CodeRabbit on crewAIInc/crewAI#7279, from the public pull request,
+which also dates its review 2026-09-05; HALL_OF_FAME.md had said
+2026-09-10, and is corrected. Nothing else was attributed, because no
+other entry's provenance is on record.
+
+This release's own sources, under the new rule: the schemas are JSON
+Schema draft 2020-12, the spec's requirement words are those of RFC
+2119 and RFC 8174, and its license is Creative Commons CC0 1.0. The
+work in PRIOR_ART.md is related work, not a source - none of it is on
+record as the origin of a Velaris design decision, and the spec says
+so.
+
+**Verified**, on Windows 11 with Python 3.13, before tagging. With the
+prover: `run_tests.py` 92/92, `check_library.py` 75 correct,
+`check_sandbox.py` 34, `check_pool.py` 39, `check_refusals.py` 21,
+`check_fallible.py` 26, `check_termination.py` 44, none wrong; the one
+skip in each of the first two is the symlink escape, which needs POSIX.
+Without the prover, in a fresh virtual environment holding this tree
+and no z3, as rule 7 asks - the subset the conformance suite requires:
+`check_termination.py` 44, `check_sandbox.py` 34, `check_refusals.py`
+11 with 10 skipped for needing the prover, `check_fallible.py` 26,
+`check_library.py` 73 with the runtime fallback asserted where a proof
+was, none wrong. The reference implementation passes its own
+conformance subset.
+
 ## 3.1.1 - A pool test that passed for the wrong reason
 
 `check_pool.py` claimed to hold a program that reaches into the
@@ -553,6 +675,13 @@ The CrewAI tool does too, reports STOPPED with the limit it hit, and
 gained the assertion the reviewer asked for: a refused effect must not
 reach the program's own fail branch either.
 
+Attribution, added in 3.2 from the public record: the reviewer was
+CodeRabbit (`coderabbitai[bot]`), on
+[crewAIInc/crewAI#7279](https://github.com/crewAIInc/crewAI/pull/7279)
+at 2026-09-05 06:56 UTC, under the heading "Denial of Service (CWE-400):
+Uncontrolled Resource Consumption"; the fail-branch assertion answers a
+second finding in the same review.
+
 ## 2.58 - Ready to submit to the frameworks
 Three integrations in `integrations/`, each written to the target's
 own conventions and each with tests that assert the effect budget
@@ -893,6 +1022,9 @@ file being run - which the runtime already enforced.
 void-returning fallible call), sort_by keys are Int, the _or_fail
 guidance, the Answer record, and log.die's semantics.
 
+Attribution, added in 3.2 from the maintainer's account: the third pass
+was by the Claude model whose review is 2.44.
+
 ## 2.46 - Contents, not just lengths
 Two additions, both from the adversarial rubric's remaining points.
 
@@ -911,6 +1043,9 @@ follows. The unguarded version correctly does NOT prove - the
 candidate is dropped when a step can break it - and the runtime check
 catches it with the actual offending list. Sound in both directions,
 and the suite's wall time did not move.
+
+Attribution, added in 3.2 from the maintainer's account: the rubric is
+that of the Claude model's review in 2.44.
 
 ## 2.45 - The road from 84
 Three of the four items that separate this language from the low 90s,
@@ -945,6 +1080,9 @@ now teaches it with the reasoning. The decision names the condition
 under which it would be revisited.
 
 The fourth item is not code: another adversarial round, finding less.
+
+Attribution, added in 3.2 from the maintainer's account: the grading is
+the second pass of the Claude model's review in 2.44.
 
 ## 2.44 - Everything the adversarial report found
 A model ran 86 adversarial artifacts against 2.43 - one production
@@ -987,6 +1125,10 @@ can fail, `apply_to_each` maps T to T only, the `--allow`/`--deny`
 budget flags, `velaris proofs --detail`, and codes E400 E405 E509 E513
 E521 E523 E542 E602 E704 - plus the E506/E507 correction (E507 is
 about duplicate records, not empty maps).
+
+Attribution, added in 3.2 from the maintainer's account: the reviewing
+model was a Claude model, and the same review's later passes are behind
+2.45, 2.46 and 2.47.
 
 ## 2.43 - The prover crosses the loop boundary
 The sharpest finding in the last review was that the prover went blind
@@ -1048,6 +1190,9 @@ Left as-is, deliberately: the ffi escape hatch is total, and
 `velaris audit` already says so unprompted - which the model noted
 approvingly.
 
+Attribution, added in 3.2 from the maintainer's account: the model was
+a Claude model.
+
 ## 2.41.2 - A loop no longer hides a divide by zero
 A second model read `velaris card`, wrote an expense report, then
 deliberately removed a `requires length(items) > 0` guard and predicted
@@ -1072,6 +1217,9 @@ claimed falsely.
 Two models, two programs, two real defects found in one evening. The
 card is doing what it was built for.
 
+Attribution, added in 3.2 from the maintainer's account: the model was
+a ChatGPT model (the one in 2.41.1 was a Gemini model).
+
 ## 2.41.1 - The card worked, and the first program it produced found a bug
 Pasting `velaris card` into a model that had never heard of Velaris
 produced a correct program on the first attempt - and that program
@@ -1086,6 +1234,9 @@ of answering it.
 
 Worth recording plainly: the card's first user found a real defect
 within minutes, which is exactly why it was worth building.
+
+Attribution, added in 3.2 from the maintainer's account: the model was
+a Gemini model.
 
 ## 2.41 - Written by a model, audited by you, run in a box
 Three pieces that make one story.

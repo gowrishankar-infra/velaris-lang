@@ -71,6 +71,16 @@ prover could not settle.
 | `check_termination.py` | does each loop get the termination verdict it must |
 | `velaris test examples/std_test.vel` | does the standard library behave |
 
+`check_termination.py`, `check_sandbox.py`, `check_refusals.py`,
+`check_fallible.py` and `check_library.py` together constitute the
+conformance suite for [velaris-spec](https://github.com/gowrishankar-infra/velaris-spec),
+the capability format published separately. An implementation claiming
+velaris.capabilities compliance must pass the subset that does not
+require the prover: each of the five as it runs with no z3 installed
+(rule 7 below says how to make that Python). velaris-spec's SPEC.md
+section 10 says what the claim covers and what the suites do not yet
+test.
+
 ## The rules this project holds
 
 1. **Never claim something is proven when it is not.** If a premise
