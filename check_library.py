@@ -691,6 +691,82 @@ def main() -> int:
            not r.ok and any(p.code in ("E600", "E601")
                             for p in r.problems), str(r.problems))
 
+    # ---- a proof that runs out of time must SAY it ran out of time ----
+    #
+    # examples/fp_proof_bad.vel is refuted in about fifteen seconds on an
+    # idle machine. On a loaded one the same refutation can run past its
+    # budget, and until 4.3.1 that looked exactly like a clean file:
+    # "ok - 2 function(s), 0 with proven promises", exit 0. A lost
+    # refutation reading as a clean bill of health is the worst failure
+    # this compiler can have, so it is pinned here. A budget of a fifth
+    # of a second makes it deterministic; the answer is the same one a
+    # thirty-second budget gives on a machine that is busy enough.
+    if HAVE_PROVER:
+        def in_a_hurry(*args):
+            return subprocess.run(
+                [sys.executable, str(HERE / "velaris.py"), *args,
+                 "--proof-timeout", "0.2", "--no-cache"],
+                capture_output=True, text=True, timeout=300,
+                cwd=str(HERE))
+
+        fp = str(HERE / "examples" / "fp_proof_bad.vel")
+        late = in_a_hurry("check", fp)
+        said = late.stderr
+        ok("a proof that runs out of time says so, in those words",
+           "ran out of time" in said and "abandoned" in said,
+           said[:200] or "(nothing on stderr)")
+        ok("and says explicitly that it is not a clean result",
+           "not 'the prover found nothing wrong'" in said
+           and "nothing was proven and nothing was refuted" in said,
+           said[:200])
+        ok("and names the flag that would give it longer",
+           "--proof-timeout" in said and "VELARIS_PROOF_TIMEOUT" in said,
+           said[:200])
+        ok("check does not report an abandoned proof the way it reports "
+           "a settled one", "abandoned" in late.stdout,
+           late.stdout.strip()[:200])
+
+        detail = in_a_hurry("proofs", fp, "--detail")
+        ok("proofs --detail marks it [timeout], not [runtime]",
+           "[timeout]" in detail.stdout and "[runtime]" not in detail.stdout,
+           detail.stdout[:200])
+
+        js = in_a_hurry("explain", fp, "--json")
+        rep = json.loads(js.stdout)
+        add_twice = [f for f in rep["functions"] if f["name"] == "add_twice"]
+        ok("the report carries the abandoned proof as data",
+           bool(rep.get("proof_timeouts"))
+           and rep["proof_timeouts"][0]["name"] == "add_twice"
+           and add_twice and add_twice[0]["proof_timeout"] is True
+           and add_twice[0]["status"] != "proven",
+           str(rep.get("proof_timeouts"))[:200])
+
+        hard = in_a_hurry("check", fp, "--strict")
+        ok("--strict refuses it and says it was abandoned, not unprovable",
+           hard.returncode == 1
+           and "ran out of time" in hard.stderr
+           and "abandoned, not settled" in hard.stderr,
+           hard.stderr[:200])
+
+        # nothing was settled, so nothing is worth remembering: a run
+        # that is not in a hurry must still try
+        import shutil as _shutil_fp
+        import tempfile as _tempfile_fp
+        with _tempfile_fp.TemporaryDirectory() as tmp:
+            _shutil_fp.copy(fp, os.path.join(tmp, "fp.vel"))
+            args = [sys.executable, str(HERE / "velaris.py"), "check",
+                    "fp.vel", "--proof-timeout", "0.2"]
+            first = subprocess.run(args, capture_output=True, text=True,
+                                   cwd=tmp, timeout=300)
+            again = subprocess.run(args, capture_output=True, text=True,
+                                   cwd=tmp, timeout=300)
+            ok("an abandoned proof is not remembered - the next run says "
+               "it again", "ran out of time" in first.stderr
+               and "ran out of time" in again.stderr,
+               again.stderr[:200])
+    else:
+        skip("a proof that runs out of time says so, in those words")
+
     a = velaris.audit(READS_A_FILE)
     ok("audit names every effect", a.effects == ["fs", "io"],
        str(a.effects))

@@ -1,0 +1,95 @@
+// DISCOUNT_BAD - the same rule as examples/discount.vel, with the last
+// guard in discount_for deleted.
+//
+// velaris check examples/discount_bad.vel
+//
+// The cap holds the discount to 20.00. It does not hold it to what the
+// basket is worth, so a 5.00 flat discount on a 3.00 basket takes the
+// total below zero. The promises are unchanged and one of them is now
+// false, so this program does not run: the refusal names the basket
+// and the rule that break it.
+
+import "money.vel" as money
+
+record Item {
+    name: Text
+    unit_price: Money of INR
+    quantity: Int
+}
+
+record Rule {
+    percent: Int  // this much off, once the basket is
+    above: Money of INR  // worth at least this,
+    flat: Money of INR  // and this much off as well,
+    cap: Money of INR  // but never more than this, all together
+}
+
+fn not_negative(m: Money of INR) -> Bool {
+    return m >= money(0, "INR")
+}
+
+fn line_total(item: Item) -> Money of INR
+    requires item.quantity >= 0
+    requires item.unit_price >= money(0, "INR")
+    ensures result >= money(0, "INR")
+{
+    return item.unit_price * item.quantity
+}
+
+fn basket_total(lines: List of Money of INR) -> Money of INR
+    requires all_of(lines, not_negative)
+    ensures result >= money(0, "INR")
+    ensures units_of(result) == units_of(lines)
+{
+    return money(units_of(lines), "INR")
+}
+
+fn discount_for(total: Money of INR, rule: Rule) -> Money of INR
+    requires total >= money(0, "INR")
+    requires rule.percent >= 0
+    requires rule.percent <= 100
+    requires rule.flat >= money(0, "INR")
+    requires rule.cap >= money(0, "INR")
+    ensures result >= money(0, "INR")
+    ensures total - result >= money(0, "INR")
+{
+    let off = money(0, "INR")
+    if total >= rule.above {
+        off = percent_of(total, rule.percent, 100, "half_up")
+    }
+    off = off + rule.flat
+    if off > rule.cap {
+        off = rule.cap
+    }
+    // examples/discount.vel has one more guard here, and that guard
+    // is the whole difference between the two files: if the discount
+    // came out larger than the basket, it is held at the basket's
+    // own worth.
+    return off
+}
+
+fn total_after(total: Money of INR, rule: Rule) -> Money of INR
+    requires total >= money(0, "INR")
+    requires rule.percent >= 0
+    requires rule.percent <= 100
+    requires rule.flat >= money(0, "INR")
+    requires rule.cap >= money(0, "INR")
+    ensures result >= money(0, "INR")
+    ensures result <= total
+{
+    return total - discount_for(total, rule)
+}
+
+fn main() uses io {
+    let rule = Rule(percent: 10, above: money(5000, "INR"),
+    flat: money(500, "INR"), cap: money(2000, "INR"))
+    let basket = [Item(name: "sachet", unit_price: money(300, "INR"),
+    quantity: 1)]
+    let lines: List of Money of INR = []
+    for item in basket {
+        lines = push(lines, line_total(item))
+    }
+    let total = basket_total(lines)
+    print(format("basket  {}", text_of(total)))
+    print(format("payable {}", text_of(total_after(total, rule))))
+}

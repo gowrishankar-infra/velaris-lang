@@ -262,11 +262,25 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
         with:
           node-version: "20"
+      # The Marketplace times out - "Request timeout: /_apis/gallery" -
+      # often enough that it took out 3.3.0, 3.4.0 and 4.3.0. That is
+      # their outage, not this release's, so: three attempts with a
+      # growing wait, and a publish that landed anyway counts. Anything
+      # that is NOT a timeout (a bad token, a manifest the Marketplace
+      # rejects) still fails the step, because that is this repository's
+      # problem to fix. Either way the summary below says which, so a
+      # red mark here never has to be remembered and ignored.
       - name: Publish to the Marketplace
+        id: publish
         working-directory: editor/vscode
         run: |
+          say() {
+            echo "verdict=$1" >> "$GITHUB_OUTPUT"
+            echo "detail=$2" >> "$GITHUB_OUTPUT"
+          }
           if [ -z "$VSCE_TOKEN" ]; then
             echo "no VSCE_TOKEN secret set - skipping"
+            say skipped "no VSCE_TOKEN secret is set on this repository"
             exit 0
           fi
           npm install -g @vscode/vsce
@@ -275,17 +289,66 @@ jobs:
             0) TAG="$TAG.0.0" ;;           # npm wants three parts:
             1) TAG="$TAG.0" ;;             # v2.36 becomes 2.36.0
           esac
+          echo "version=$TAG" >> "$GITHUB_OUTPUT"
           npm version "$TAG" --no-git-tag-version --allow-same-version
-          if vsce publish --pat "$VSCE_TOKEN"; then
-            echo "published $TAG"
-          elif vsce show gowrishankar-infra.velaris | grep -q "$TAG"; then
-            echo "$TAG is already on the Marketplace - nothing to do"
-          else
-            echo "publish failed for a real reason"
-            exit 1
-          fi
+          landed() { vsce show gowrishankar-infra.velaris | grep -q "$TAG"; }
+          # what an outage looks like in vsce's own words
+          outage="Request timeout|ETIMEDOUT|ECONNRESET|ECONNREFUSED"
+          outage="$outage|socket hang up|EAI_AGAIN|503|502|504"
+          attempt=0
+          for wait in 30 120 stop; do
+            attempt=$((attempt + 1))
+            echo "--- attempt $attempt of 3"
+            if vsce publish --pat "$VSCE_TOKEN" > publish.log 2>&1; then
+              cat publish.log
+              say published "published on attempt $attempt of 3"
+              exit 0
+            fi
+            cat publish.log
+            if landed; then
+              say published "$TAG was already on the Marketplace"
+              exit 0
+            fi
+            if ! grep -Eqi "$outage" publish.log; then
+              echo "this is not a Marketplace outage - not retrying"
+              say failed "vsce refused the publish; the log says why"
+              exit 1
+            fi
+            if [ "$wait" = stop ]; then
+              break
+            fi
+            echo "the Marketplace timed out; waiting ${wait}s before the next attempt"
+            sleep "$wait"
+          done
+          say timed-out "the Marketplace timed out on all 3 attempts (30s and 120s apart)"
+          exit 0
         env:
           VSCE_TOKEN: ${{ secrets.VSCE_TOKEN }}
+      # One line, always written, saying whether the extension is on the
+      # Marketplace or not. Nothing else in this job needs reading.
+      - name: Whether the extension published
+        if: always()
+        env:
+          VERDICT: ${{ steps.publish.outputs.verdict }}
+          DETAIL: ${{ steps.publish.outputs.detail }}
+          EXTV: ${{ steps.publish.outputs.version }}
+        run: |
+          case "$VERDICT" in
+            published)
+              LINE="PUBLISHED - the VS Code extension $EXTV is on the Marketplace ($DETAIL)." ;;
+            timed-out)
+              LINE="NOT PUBLISHED - $DETAIL. The release is unaffected; publish $EXTV by hand with 'vsce publish', or re-run this job." ;;
+            skipped)
+              LINE="NOT PUBLISHED - $DETAIL, so nothing was attempted." ;;
+            failed)
+              LINE="NOT PUBLISHED - $DETAIL. This one needs fixing; it is not a Marketplace outage." ;;
+            *)
+              LINE="NOT PUBLISHED - the publish step did not run to a verdict. Read its log." ;;
+          esac
+          echo "### VS Code extension" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "$LINE" >> "$GITHUB_STEP_SUMMARY"
+          echo "$LINE"
 
   attestation:
     name: a signed in-toto attestation of one example program

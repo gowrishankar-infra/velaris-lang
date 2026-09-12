@@ -342,6 +342,16 @@ host language; and any obligation the solver cannot settle within its
 budget. Loop invariants are inferred only for simple counter bounds;
 anything richer must be written.
 
+A proof gets **120 seconds** when the function mentions `Float` and
+**3 seconds** otherwise, and either can be replaced for one run with
+`--proof-timeout SECONDS` or `VELARIS_PROOF_TIMEOUT`. A proof that
+spends its budget without an answer is **abandoned**, and an
+implementation must say so: reporting it the same way it reports a
+promise the prover looked at and found nothing wrong is a soundness
+bug, because a reader would take "nothing was found" from a run in
+which nothing was looked for. A run does not remember an abandoned
+proof, so the next one tries again.
+
 ### 9.4 Calls, and the soundness rule
 
 Calls are proven **modularly**: at a call site the callee's `ensures`

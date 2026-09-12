@@ -28,6 +28,7 @@ EXPECT = {
     "generics.vel": "RUNS",
     "ledger.vel": "RUNS",
     "settlement.vel": "RUNS",
+    "discount.vel": "RUNS",
     "rec_proof.vel": "RUNS",
     "native_float.vel": "RUNS",
     "qlist_proof.vel": "RUNS",
@@ -75,6 +76,7 @@ EXPECT = {
     "builtin_unhandled.vel": "REJECTED",
     "std_bad.vel": "REJECTED",
     "fp_proof_bad.vel": "REJECTED",
+    "discount_bad.vel": "REJECTED",
     "fail_proof_bad.vel": "REJECTED",
     "qlist_bad.vel": "REJECTED",
     "rec_proof_bad.vel": "REJECTED",
@@ -103,6 +105,7 @@ ARGS = {
     "wordcount.vel": ["examples/sample.txt", "3"],
     # the settlement needs the console and nothing else, and says so
     "settlement.vel": ["--allow", "io"],
+    "discount.vel": ["--allow", "io"],
 }
 
 STDIN = {

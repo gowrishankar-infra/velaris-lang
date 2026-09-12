@@ -1,5 +1,125 @@
 # Velaris changelog
 
+## 4.3.1 - A discount that cannot go negative, and a timeout that says it timed out
+
+A patch version. Every program that compiled under 4.3.0 compiles, runs
+and means the same; nothing is added to the language, the capability
+surface or any document format.
+
+**A proof that runs out of time now says it ran out of time.** This is
+the part that mattered. Z3 answers `unknown` for two unrelated reasons:
+the question is outside what it decides, or the clock ran out. Until now
+Velaris treated both the same way - it abandoned the proof and fell back
+to the runtime check, silently. For `examples/fp_proof_bad.vel`, whose
+refutation takes about fifteen seconds against what was a thirty-second
+budget, a busy machine could therefore produce this:
+
+    $ velaris check examples/fp_proof_bad.vel
+    examples/fp_proof_bad.vel: ok - 2 function(s), 0 with proven promises
+    $ echo $?
+    0
+
+which is exactly what a clean file looks like. It caused one false alarm
+here, and it is the worst failure this compiler can have: a lost
+refutation reading as a clean bill of health. The distinction did not
+exist, and now it does. A proof that spends its whole budget without an
+answer is **abandoned**, and every report says so in those words:
+
+    note: the proof of 'add_twice' ran out of time after 120s and was
+    abandoned - nothing was proven and nothing was refuted, so its
+    promises are checked while running instead. This is not 'the prover
+    found nothing wrong'. Give it longer with --proof-timeout 240 (or
+    VELARIS_PROOF_TIMEOUT=240).
+
+The note goes to stderr from the prover itself, so it appears for
+`velaris check`, a plain run, `explain`, `proofs` and the library alike.
+Beside it: `velaris check` marks the file `(1 proof(s) abandoned: out of
+time, nothing settled)` rather than leaving `ok - ...` to speak for
+itself; `velaris proofs --detail` marks the function `[timeout]` rather
+than `[runtime]`; `check --strict` fails as before but says the proof was
+abandoned, not that the promise could not be proven; the `unproven-
+promise` SARIF result says the same; and `velaris explain --json` carries
+`proof_timeouts` and a `proof_timeout` flag on each function. An
+abandoned proof is **not** written to the proof cache, so the next run
+spends the budget again instead of remembering a non-answer.
+
+**The budget for float proofs is 120 seconds, and either budget can be
+replaced for one run.** A query about `Float` is decided by bit-blasting
+and is slow; everything else finishes in milliseconds. The two defaults
+are now 120 seconds with `Float` and 3 seconds without - the second is
+unchanged - and `--proof-timeout SECONDS` (accepted by every command; the
+flag is taken out of the command line before any command reads it) or
+`VELARIS_PROOF_TIMEOUT` replaces both. `velaris.set_proof_timeout()` does
+the same from the library. SPEC.md 9.3 states the defaults and requires
+an implementation to distinguish an abandoned proof from a settled one;
+docs/floats.md shows what it looks like.
+
+The larger budget is a widening of the prover's reach as STABILITY.md
+defines it: a float promise that a slower machine abandoned at 30
+seconds can now be refuted, so a program that compiled on such a
+machine may be refused with E700. Every such program could already
+break its promise while running, for the input the refutation names.
+
+check_library.py adds seven cases for it, made deterministic with
+`--proof-timeout 0.2`: that the words appear, that they say explicitly
+this is not a clean result, that the flag is named, that `check`,
+`proofs --detail`, `--strict` and the JSON report each mark it, and that
+a second run says it again rather than reading a cached non-answer.
+
+**`examples/discount.vel`: a rule the customer wrote, proven before it
+runs.** A commerce platform lets each customer write their own discount
+rule - a percentage off above a threshold, a flat amount off as well, and
+a cap on the two together. The platform cannot read every rule, and no
+sandbox can tell it that a rule's arithmetic works: a sandbox stops the
+rule reading a file and will happily return a total of minus four hundred
+rupees.
+
+Five of five functions prove:
+
+  * `line_total` - a line's quantity times its unit price is not negative
+  * `basket_total` - `units_of` over a list of amounts is what they add
+    up to, so `ensures units_of(result) == units_of(lines)` is the whole
+    of "the total is the sum of its parts"
+  * `discount_for` - the discount is never negative, and
+    `ensures total - result >= money(0, "INR")`: what is left after it is
+    never negative either
+  * `total_after` - the payable amount is not negative and not more than
+    the basket, from `discount_for`'s promises through a call summary
+  * `charged_per_line` - `money.split` again, so the per-line charges add
+    up to the payable amount exactly and none of them is negative
+
+The percentage is `percent_of(total, rule.percent, 100, "half_up")`, with
+the mode written, because a discount that rounds is a decision. Every
+amount is `Money of INR`; the program is pure apart from printing and
+runs under `--allow io`.
+
+**`examples/discount_bad.vel`** is the same rule with the last guard
+deleted - the one that holds a discount to what the basket is worth. The
+cap still holds it to a fixed ceiling, which is not the same thing, and
+the program does not run:
+
+    $ velaris check examples/discount_bad.vel
+    examples/discount_bad.vel:54: [E700] promise cannot be kept:
+    'discount_for' ensures total - result >= money(0, "INR") - proven
+    without running the program: rule = Rule(percent: 0, above: 0,
+    flat: 2, cap: 1), total = 0 gives result = 1
+
+In paise: a basket worth nothing, a flat discount of two paise held down
+to a cap of one, and one paisa handed back anyway. Both files are in
+run_tests.py, as RUNS and REJECTED, and both are in `velaris.capabilities`
+- `io` only, nothing else. README.md shows the pair.
+
+**The VS Code publish retries, and the job says whether it published.**
+The Marketplace answered `Request timeout: /_apis/gallery` on 3.3.0,
+3.4.0 and 4.3.0. The step now makes three attempts, waiting 30 and then
+120 seconds, treats a publish that landed anyway as a success, and stops
+retrying at once if the failure is not an outage (a bad token, a manifest
+the Marketplace refuses) - that one still fails the step, because it is
+this repository's to fix. A second step, `if: always()`, writes one line
+to the job summary saying PUBLISHED or NOT PUBLISHED and why, so the job
+is read rather than remembered and ignored. It stays
+`continue-on-error`, so a Marketplace outage still cannot fail a release.
+
 ## 4.3 - Money, which is not a float
 
 A minor version, and an additive one: every program that compiled under

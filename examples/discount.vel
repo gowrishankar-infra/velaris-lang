@@ -1,0 +1,163 @@
+// DISCOUNT - a rule the customer wrote, proven before it runs.
+//
+// velaris examples/discount.vel --allow io
+// velaris proofs examples/discount.vel --detail
+//
+// A commerce platform lets each customer write their own discount
+// rule. The one here is an ordinary shape: a percentage off once the
+// basket passes a threshold, a flat amount off as well, and a cap on
+// the two together.
+//
+// The platform does not need to know what such a rule computes. It
+// needs to know that whatever it computes, the shopper is never
+// charged a negative amount and never given back more than the basket
+// was worth. Those are the promises on discount_for and total_after,
+// and they are settled for every basket and every rule the types
+// allow, before anything runs.
+//
+// A sandbox answers a different question. It can stop this rule
+// reading a file; it cannot tell you the arithmetic holds.
+// examples/discount_bad.vel is the same rule with one guard removed,
+// and is refused with the basket and rule that break it.
+//
+// Every amount is a whole number of paise, held as Money of INR. No
+// Float touches any of it, and the one place that rounds says how.
+
+import "money.vel" as money
+
+record Item {
+    name: Text
+    unit_price: Money of INR
+    quantity: Int
+}
+
+// The rule is data, not code the platform runs: four numbers, each
+// with a meaning.
+record Rule {
+    percent: Int  // this much off, once the basket is
+    above: Money of INR  // worth at least this,
+    flat: Money of INR  // and this much off as well,
+    cap: Money of INR  // but never more than this, all together
+}
+
+fn not_negative(m: Money of INR) -> Bool {
+    return m >= money(0, "INR")
+}
+
+fn line_total(item: Item) -> Money of INR
+    requires item.quantity >= 0
+    requires item.unit_price >= money(0, "INR")
+    ensures result >= money(0, "INR")
+{
+    return item.unit_price * item.quantity
+}
+
+// units_of over a list of amounts is what they add up to, so this
+// promise is the whole of "the total is the sum of the parts".
+fn basket_total(lines: List of Money of INR) -> Money of INR
+    requires all_of(lines, not_negative)
+    ensures result >= money(0, "INR")
+    ensures units_of(result) == units_of(lines)
+{
+    return money(units_of(lines), "INR")
+}
+
+// The customer's rule, applied to a basket. The percentage rounds half
+// away from zero, and the mode is written because a discount that
+// rounds is a decision.
+//
+// The last 'if' is the one that matters. Without it a flat amount
+// larger than a small basket walks straight past the cap, and the two
+// promises below stop being true. discount_bad.vel is this function
+// with that line deleted.
+fn discount_for(total: Money of INR, rule: Rule) -> Money of INR
+    requires total >= money(0, "INR")
+    requires rule.percent >= 0
+    requires rule.percent <= 100
+    requires rule.flat >= money(0, "INR")
+    requires rule.cap >= money(0, "INR")
+    ensures result >= money(0, "INR")
+    ensures total - result >= money(0, "INR")
+{
+    let off = money(0, "INR")
+    if total >= rule.above {
+        off = percent_of(total, rule.percent, 100, "half_up")
+    }
+    off = off + rule.flat
+    if off > rule.cap {
+        off = rule.cap
+    }
+    if off > total {
+        off = total
+    }
+    return off
+}
+
+// A subtraction that cannot go below zero, because the caller must
+// show what discount_for already promises.
+fn total_after(total: Money of INR, rule: Rule) -> Money of INR
+    requires total >= money(0, "INR")
+    requires rule.percent >= 0
+    requires rule.percent <= 100
+    requires rule.flat >= money(0, "INR")
+    requires rule.cap >= money(0, "INR")
+    ensures result >= money(0, "INR")
+    ensures result <= total
+{
+    return total - discount_for(total, rule)
+}
+
+// What each line is charged after the discount. The parts add up to
+// the payable amount exactly and none of them is negative - both from
+// money.split's own proven promises, carried through here.
+fn charged_per_line(payable: Money of INR, lines: Int)
+-> List of Money of INR
+    requires payable >= money(0, "INR")
+    requires lines > 0
+    ensures length(result) == lines
+    ensures units_of(result) == units_of(payable)
+    ensures all_of(result, not_negative)
+{
+    return money.split(payable, lines)
+}
+
+fn show(basket: List of Item, rule: Rule) uses io {
+    let lines: List of Money of INR = []
+    for item in basket {
+        lines = push(lines, line_total(item))
+        print(format("  {} x{} {}", item.name, item.quantity,
+        text_of(line_total(item))))
+    }
+    let total = basket_total(lines)
+    let off = discount_for(total, rule)
+    let payable = total_after(total, rule)
+    print(format("  basket   {}", text_of(total)))
+    print(format("  discount {}", text_of(off)))
+    print(format("  payable  {}", text_of(payable)))
+    let parts = charged_per_line(payable, length(basket))
+    let i = 0
+    while i < length(parts) {
+        print(format("    line {} {}", i + 1, text_of(get(parts, i))))
+        i = i + 1
+    }
+}
+
+fn main() uses io {
+    // 10% off a basket worth 50.00 or more, another 5.00 off, and
+    // never more than 20.00 off in total
+    let rule = Rule(percent: 10, above: money(5000, "INR"),
+    flat: money(500, "INR"), cap: money(2000, "INR"))
+    let big = [Item(name: "chai", unit_price: money(2500, "INR"),
+    quantity: 2), Item(name: "notebook",
+    unit_price: money(4500, "INR"), quantity: 1),
+    Item(name: "pen", unit_price: money(1200, "INR"), quantity: 3)]
+    print("a basket the rule was written for")
+    show(big, rule)
+    // the same rule on a basket smaller than its flat amount. The
+    // guard in discount_for holds it at the basket's own worth; the
+    // promise says it always will.
+    let small = [Item(name: "sachet", unit_price: money(300, "INR"),
+    quantity: 1)]
+    print("a basket the rule was not written for")
+    show(small, rule)
+}

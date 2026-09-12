@@ -85,7 +85,9 @@ names. This is the one way a program that compiled under 4.x can be
 refused by a later 4.x, and the CHANGELOG names each release that does
 it. 4.3 widened it once: a division whose divisor mentions a loop's
 values is translated when the loop's condition and invariants show the
-divisor positive.
+divisor positive. 4.3.1 widened it again, not by translating more but
+by allowing more time: a float proof gets 120 seconds where it had
+30, so a refutation a slower machine used to abandon now lands.
 
 **A new builtin gives way to your own function.** A builtin added in
 4.3 or later is not reached in a program that defines a function of the

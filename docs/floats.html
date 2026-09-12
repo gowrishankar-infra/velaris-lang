@@ -105,7 +105,7 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 </style></head><body>
 <nav><div class="in"><a class="brand" href="index.html">
 <span class="dot"></span>Velaris</a><a href="index.html" class="">Home</a><a href="tutorial.html" class="">Tutorial</a><a href="spec.html" class="">Reference</a><a href="library.html" class="">Library</a><a href="errors.html" class="">Errors</a><a href="floats.html" class="here">Floats</a><a href="playground.html" class="">Playground</a>
-<span class="ver">v4.3.0</span></div></nav>
+<span class="ver">v4.3.1</span></div></nav>
 <main class=""><h1>Your verifier is probably lying to you about floats</h1>
 <br>
 <p>Here is a promise that looks obviously true:</p>
@@ -171,11 +171,37 @@ error[E700] promise cannot be kept: &#x27;add_twice&#x27; ensures result == x + 
 <br>
 <p><b>It is slow.</b> The FP theory is decided by bit-blasting — expanding</p>
 <p>64-bit values into circuits of individual bits and handing the result</p>
-<p>to a SAT solver. The refutation above takes about fifteen seconds.</p>
-<p>Integer proofs in the same compiler finish in milliseconds. Velaris</p>
-<p>gives float queries a thirty second budget and everything else three</p>
-<p>seconds, and only pays the larger cost for functions that actually</p>
-<p>mention floats.</p>
+<p>to a SAT solver. The refutation above takes about fifteen seconds on an</p>
+<p>idle machine and several times that on a busy one. Integer proofs in</p>
+<p>the same compiler finish in milliseconds. Velaris gives float queries a</p>
+<p><b>120 second</b> budget and everything else three seconds, and only pays</p>
+<p>the larger cost for functions that actually mention floats. Either</p>
+<p>budget can be replaced for one run:</p>
+<br>
+<pre><code>
+velaris check f.vel --proof-timeout 300
+VELARIS_PROOF_TIMEOUT=300 velaris check f.vel
+</code></pre>
+<br>
+<p><b>A budget that runs out says so.</b> If the solver spends its whole</p>
+<p>budget without an answer, the proof is *abandoned* — nothing proven,</p>
+<p>nothing refuted — and every report says that in those words:</p>
+<br>
+<pre><code>
+note: the proof of &#x27;add_twice&#x27; ran out of time after 120s and was
+abandoned - nothing was proven and nothing was refuted, so its promises
+are checked while running instead. This is not &#x27;the prover found
+nothing wrong&#x27;.
+</code></pre>
+<br>
+<p><code>velaris check</code> marks the file `1 proof(s) abandoned: out of time,</p>
+<p>nothing settled<code>, </code>velaris proofs --detail` marks the function</p>
+<p><code>[timeout]</code> rather than <code>[runtime]</code>, and <code>--strict</code> fails and says the</p>
+<p>proof was abandoned rather than unprovable. An abandoned proof is not</p>
+<p>written to the proof cache, so the next run spends the budget again. A</p>
+<p>slow machine must never be able to make a lost refutation look like a</p>
+<p>clean bill of health — that is the same commitment as the one below,</p>
+<p>read from the other side.</p>
 <br>
 <p><b>Fewer things are provable.</b> Plenty of true-in-the-reals facts are</p>
 <p>simply false in IEEE-754, and plenty of true-in-IEEE facts are too</p>

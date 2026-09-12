@@ -68,6 +68,69 @@ That `ensures` is not a comment or a runtime assert. The Z3 theorem
 prover verifies it for **every possible input** before execution — and
 refutes it with an exact counterexample when it lies.
 
+## A rule the customer wrote
+
+A commerce platform lets each customer write their own discount rule.
+This one has the shape most of them have: a percentage off once the
+basket passes a threshold, a flat amount off as well, and a cap on the
+two together.
+
+```
+record Rule {
+    percent: Int         // this much off, once the basket is
+    above: Money of INR  // worth at least this,
+    flat: Money of INR   // and this much off as well,
+    cap: Money of INR    // but never more than this, all together
+}
+
+fn discount_for(total: Money of INR, rule: Rule) -> Money of INR
+    requires total >= money(0, "INR")
+    requires rule.percent >= 0
+    requires rule.percent <= 100
+    requires rule.flat >= money(0, "INR")
+    requires rule.cap >= money(0, "INR")
+    ensures result >= money(0, "INR")
+    ensures total - result >= money(0, "INR")
+{
+    let off = money(0, "INR")
+    if total >= rule.above {
+        off = percent_of(total, rule.percent, 100, "half_up")
+    }
+    off = off + rule.flat
+    if off > rule.cap {
+        off = rule.cap
+    }
+    if off > total {
+        off = total
+    }
+    return off
+}
+```
+
+The two `ensures` are what the platform needs to know about a rule it
+did not write: a discount is never a surcharge, and what is left after
+it is never negative. Both are settled for every basket and every rule
+the types allow, before the program runs.
+[`examples/discount.vel`](examples/discount.vel) is the whole program —
+five of five functions proven, and it runs under `--allow io`.
+
+[`examples/discount_bad.vel`](examples/discount_bad.vel) is the same
+rule with the last `if` deleted. The cap still holds the discount to a
+fixed ceiling; nothing holds it to what the basket is worth:
+
+```
+$ velaris check examples/discount_bad.vel
+examples/discount_bad.vel:54: [E700] promise cannot be kept: 'discount_for' ensures total - result >= money(0, "INR") - proven without running the program: rule = Rule(percent: 0, above: 0, flat: 2, cap: 1), total = 0 gives result = 1
+```
+
+The amounts are in paise: a basket worth nothing, a flat discount of
+two paise held down to a cap of one, and one paisa handed back anyway.
+The program does not run.
+
+A sandbox answers a different question. It can stop this rule reading a
+file or opening a socket; it cannot tell you whether the arithmetic
+holds.
+
 ## Related work
 
 [TACIT](https://github.com/lampepfl/tacit) ("Securing Agents With
@@ -464,7 +527,7 @@ permissions:
 
 steps:
   - uses: actions/checkout@v5
-  - uses: gowrishankar-infra/velaris-lang@v4.3.0
+  - uses: gowrishankar-infra/velaris-lang@v4.3.1
     with:
       files: "src/*.vel"     # optional; default is every .vel file
       format: "true"         # optional; also check formatting

@@ -63,11 +63,37 @@ The bill arrives immediately.
 
 **It is slow.** The FP theory is decided by bit-blasting — expanding
 64-bit values into circuits of individual bits and handing the result
-to a SAT solver. The refutation above takes about fifteen seconds.
-Integer proofs in the same compiler finish in milliseconds. Velaris
-gives float queries a thirty second budget and everything else three
-seconds, and only pays the larger cost for functions that actually
-mention floats.
+to a SAT solver. The refutation above takes about fifteen seconds on an
+idle machine and several times that on a busy one. Integer proofs in
+the same compiler finish in milliseconds. Velaris gives float queries a
+**120 second** budget and everything else three seconds, and only pays
+the larger cost for functions that actually mention floats. Either
+budget can be replaced for one run:
+
+```
+velaris check f.vel --proof-timeout 300
+VELARIS_PROOF_TIMEOUT=300 velaris check f.vel
+```
+
+**A budget that runs out says so.** If the solver spends its whole
+budget without an answer, the proof is *abandoned* — nothing proven,
+nothing refuted — and every report says that in those words:
+
+```
+note: the proof of 'add_twice' ran out of time after 120s and was
+abandoned - nothing was proven and nothing was refuted, so its promises
+are checked while running instead. This is not 'the prover found
+nothing wrong'.
+```
+
+`velaris check` marks the file `1 proof(s) abandoned: out of time,
+nothing settled`, `velaris proofs --detail` marks the function
+`[timeout]` rather than `[runtime]`, and `--strict` fails and says the
+proof was abandoned rather than unprovable. An abandoned proof is not
+written to the proof cache, so the next run spends the budget again. A
+slow machine must never be able to make a lost refutation look like a
+clean bill of health — that is the same commitment as the one below,
+read from the other side.
 
 **Fewer things are provable.** Plenty of true-in-the-reals facts are
 simply false in IEEE-754, and plenty of true-in-IEEE facts are too

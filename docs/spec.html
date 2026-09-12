@@ -105,7 +105,7 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 </style></head><body>
 <nav><div class="in"><a class="brand" href="index.html">
 <span class="dot"></span>Velaris</a><a href="index.html" class="">Home</a><a href="tutorial.html" class="">Tutorial</a><a href="spec.html" class="here">Reference</a><a href="library.html" class="">Library</a><a href="errors.html" class="">Errors</a><a href="floats.html" class="">Floats</a><a href="playground.html" class="">Playground</a>
-<span class="ver">v4.3.0</span></div></nav>
+<span class="ver">v4.3.1</span></div></nav>
 <main class="wide"><h1>The Velaris language reference</h1>
 <br>
 <p>This is the specification: what Velaris means, precisely. It is not a</p>
@@ -156,7 +156,7 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 <h2>3. Types</h2>
 <br>
 <p>    Int  Float  Bool  Text  Handle</p>
-<p>    Money of CUR             (an amount in a currency, §4.4)</p>
+<p>    Money of CUR             (an amount in a currency, §4.3)</p>
 <p>    List of T</p>
 <p>    Map of K to V            (K is Text or Int)</p>
 <p>    fn(T, ...) -&gt; R          (a function value; pure only)</p>
@@ -449,6 +449,16 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 <p>host language; and any obligation the solver cannot settle within its</p>
 <p>budget. Loop invariants are inferred only for simple counter bounds;</p>
 <p>anything richer must be written.</p>
+<br>
+<p>A proof gets <b>120 seconds</b> when the function mentions <code>Float</code> and</p>
+<p><b>3 seconds</b> otherwise, and either can be replaced for one run with</p>
+<p><code>--proof-timeout SECONDS</code> or <code>VELARIS_PROOF_TIMEOUT</code>. A proof that</p>
+<p>spends its budget without an answer is <b>abandoned</b>, and an</p>
+<p>implementation must say so: reporting it the same way it reports a</p>
+<p>promise the prover looked at and found nothing wrong is a soundness</p>
+<p>bug, because a reader would take &quot;nothing was found&quot; from a run in</p>
+<p>which nothing was looked for. A run does not remember an abandoned</p>
+<p>proof, so the next one tries again.</p>
 <br>
 <h3>9.4 Calls, and the soundness rule</h3>
 <br>

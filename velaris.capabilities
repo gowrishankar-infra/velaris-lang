@@ -1,6 +1,6 @@
 {
   "schema": "velaris.capabilities/1",
-  "velaris_version": "4.3.0",
+  "velaris_version": "4.3.1",
   "date": "2026-09-12",
   "surface": {
     "grants": [
@@ -765,6 +765,38 @@
         "main": ["ffi", "io"],
         "open_db": ["ffi"],
         "run": ["ffi"]
+      }
+    },
+    {
+      "file": "examples/discount.vel",
+      "grants": [
+        "io"
+      ],
+      "counts": {},
+      "functions": {
+        "basket_total": [],
+        "charged_per_line": [],
+        "discount_for": [],
+        "line_total": [],
+        "main": ["io"],
+        "not_negative": [],
+        "show": ["io"],
+        "total_after": []
+      }
+    },
+    {
+      "file": "examples/discount_bad.vel",
+      "grants": [
+        "io"
+      ],
+      "counts": {},
+      "functions": {
+        "basket_total": [],
+        "discount_for": [],
+        "line_total": [],
+        "main": ["io"],
+        "not_negative": [],
+        "total_after": []
       }
     },
     {

@@ -149,6 +149,10 @@ Usage:
   velaris proofs [path] [--min 80]         how much is proven, not just checked
   velaris proofs . --detail                which functions, one by one
   velaris proofs . --sarif                 promises left to runtime, as SARIF
+  velaris <any command> --proof-timeout S  how long one proof may take
+                                           (default: 120 s with Float, 3 s
+                                           without; a proof that runs out
+                                           says it was abandoned)
   velaris clean                            forget remembered proofs
   velaris test program.vel                 run every test_ function
   velaris trace program.vel                show every call as it happens
@@ -278,7 +282,7 @@ Usage:
 import json
 import os
 
-VERSION = "4.3.0"
+VERSION = "4.3.1"
 import re
 import sys
 from dataclasses import dataclass, field
@@ -3751,6 +3755,73 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
 CACHE_DIR = ".velaris"
 CACHE_FILE = os.path.join(CACHE_DIR, "proofs.json")
 
+# ---- how long one proof may take --------------------------------------
+# A query about Float is decided by bit-blasting - 64-bit values expanded
+# into circuits of individual bits - and it is slow: refuting
+# examples/fp_proof_bad.vel takes about fifteen seconds on an idle
+# machine and several times that on a busy one. Every other query
+# finishes in milliseconds. So a function that mentions Float gets two
+# minutes and every other function three seconds.
+#
+# Either can be replaced for one run, when a proof needs longer or a CI
+# leg needs to give up sooner:
+#
+#     velaris check f.vel --proof-timeout 300
+#     VELARIS_PROOF_TIMEOUT=300 velaris check f.vel
+#
+# A proof that spends its budget without an answer is ABANDONED, and
+# every report says so in those words. It is never counted as a proof
+# that looked and found nothing wrong; docs/floats.md says why that
+# distinction is the whole point.
+FLOAT_PROOF_SECONDS = 120.0
+PROOF_SECONDS = 3.0
+PROOF_TIMEOUT_ENV = "VELARIS_PROOF_TIMEOUT"
+_proof_timeout: float | None = None      # set by --proof-timeout
+
+
+def set_proof_timeout(seconds) -> None:
+    """Give every proof in this process `seconds` instead of the two
+    defaults. None restores them. ValueError names what was wrong."""
+    global _proof_timeout
+    if seconds is None:
+        _proof_timeout = None
+        return
+    _proof_timeout = _proof_seconds(seconds, "--proof-timeout")
+
+
+def _proof_seconds(value, where: str) -> float:
+    try:
+        s = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{where} needs a number of seconds greater "
+                         f"than 0, as {where} 300")
+    if not (s > 0) or s == float("inf"):
+        raise ValueError(f"{where} needs a number of seconds greater "
+                         f"than 0, as {where} 300")
+    return s
+
+
+def proof_timeout_env() -> float | None:
+    """VELARIS_PROOF_TIMEOUT, or None when it is unset or unusable."""
+    env = os.environ.get(PROOF_TIMEOUT_ENV)
+    if not env:
+        return None
+    try:
+        return _proof_seconds(env, PROOF_TIMEOUT_ENV)
+    except ValueError:
+        return None          # said once by check_proofs, not per query
+
+
+def proof_timeout_seconds(float_heavy: bool) -> float:
+    """What one query gets, in seconds: the flag, then the environment,
+    then the default for its kind."""
+    if _proof_timeout is not None:
+        return _proof_timeout
+    from_env = proof_timeout_env()
+    if from_env is not None:
+        return from_env
+    return FLOAT_PROOF_SECONDS if float_heavy else PROOF_SECONDS
+
 
 def proof_key(fn: Function, table: dict, records: list) -> str:
     """What this function's proof actually depends on.
@@ -4026,7 +4097,8 @@ def loop_termination(fn, table: dict | None = None) -> list:
 
 def check_proofs(funcs: list[Function], records: list,
                  errors: list, proven_out: set | None = None,
-                 use_cache: bool = False) -> None:
+                 use_cache: bool = False,
+                 timeouts_out: list | None = None) -> None:
     # Nothing to prove means nothing to import. Loading z3 costs about
     # 350ms, and most programs - every hello world, every script whose
     # functions carry no promises - were paying it for no work at all.
@@ -4081,6 +4153,14 @@ def check_proofs(funcs: list[Function], records: list,
               "(install with: pip install z3-solver)", file=sys.stderr)
         return
 
+    if (_proof_timeout is None and os.environ.get(PROOF_TIMEOUT_ENV)
+            and proof_timeout_env() is None):
+        print(f"note: {PROOF_TIMEOUT_ENV}="
+              f"{os.environ[PROOF_TIMEOUT_ENV]!r} is not a number of "
+              f"seconds greater than 0, so the default proof budgets "
+              f"apply ({FLOAT_PROOF_SECONDS:.0f}s with Float, "
+              f"{PROOF_SECONDS:.0f}s without)", file=sys.stderr)
+
     table = {f.name: f for f in funcs}
     # an amount is its minor units here: the type checker has already
     # kept every currency apart, so what is left is Int arithmetic
@@ -4106,7 +4186,35 @@ def check_proofs(funcs: list[Function], records: list,
     saw_fp = [False]                   # FP queries earn a bigger budget
 
     def solver_budget() -> int:
-        return 30000 if saw_fp[0] else 3000
+        return int(proof_timeout_seconds(saw_fp[0]) * 1000)
+
+    # 'unknown' has two meanings and they are nothing alike. Z3 says it
+    # when the question is outside what it decides - and it says it when
+    # the clock ran out, which is not an answer at all. Telling them
+    # apart is the difference between "this cannot be proven, so it is
+    # checked while running" and "nobody looked".
+    ran_out = [False]                  # this function's clock ran out
+    timed_out: dict = {}               # function name -> what it got
+
+    def verdict_of(solver):
+        """solver.check(), remembering an answer that was a clock."""
+        v = solver.check()
+        if v == z3.unknown:
+            try:
+                why = solver.reason_unknown()
+            except z3.Z3Exception:
+                why = ""
+            if "timeout" in why or "canceled" in why:
+                ran_out[0] = True
+                fn_ = current_fn[0]
+                timed_out.setdefault(
+                    fn_.name if fn_ is not None else "?",
+                    {"name": fn_.name if fn_ is not None else "?",
+                     "line": fn_.line if fn_ is not None else 0,
+                     "file": (fn_.src_file if fn_ is not None else None),
+                     "seconds": proof_timeout_seconds(saw_fp[0]),
+                     "float": bool(saw_fp[0])})
+        return v
     counter = [0]
 
     class RecVal:
@@ -4449,7 +4557,7 @@ def check_proofs(funcs: list[Function], records: list,
             solver.add(*ctx.param_assum)
             solver.add(*ctx.conds)
             solver.add(z3.Not(need))
-            if solver.check() == z3.sat:
+            if verdict_of(solver) == z3.sat:
                 m = solver.model()
                 vals = ", ".join(
                     show_val(pname, a, m)
@@ -4824,7 +4932,7 @@ def check_proofs(funcs: list[Function], records: list,
         solver.add(*ctx.param_assum)
         solver.add(*ctx.conds)
         solver.add(divisor <= 0)
-        return solver.check() == z3.unsat
+        return verdict_of(solver) == z3.unsat
 
     def prove_nonzero(divisor, ctx, line, op: str):
         """Prove the divisor is never zero; only report real violations."""
@@ -4840,7 +4948,7 @@ def check_proofs(funcs: list[Function], records: list,
         solver.add(*ctx.param_assum)
         solver.add(*ctx.conds)
         solver.add(divisor == 0)
-        if solver.check() == z3.sat:
+        if verdict_of(solver) == z3.sat:
             m = solver.model()
             names = sorted({d.name() for d in m.decls()
                             if not d.name().startswith("__")})
@@ -4869,7 +4977,7 @@ def check_proofs(funcs: list[Function], records: list,
         solver.add(*ctx.param_assum)
         solver.add(*ctx.conds)
         solver.add(z3.Not(z3.And(idx >= 0, idx < length)))
-        if solver.check() == z3.sat:
+        if verdict_of(solver) == z3.sat:
             m = solver.model()
             raise VelarisError("E705",
                 f"this 'get' can reach position "
@@ -4952,7 +5060,7 @@ def check_proofs(funcs: list[Function], records: list,
         solver.add(*ctx.assum)
         solver.add(*ctx.conds)
         solver.add(z3.Not(goal))
-        verdict = solver.check()
+        verdict = verdict_of(solver)
         if verdict == z3.sat and mentions_total(goal):
             raise Unprovable()       # a sum Z3 was not given: the state it
                                      # found may be one no list is in
@@ -5180,7 +5288,7 @@ def check_proofs(funcs: list[Function], records: list,
                     solver.add(*pctx.assum)
                     solver.add(*pctx.conds)
                     solver.add(z3.Not(goal))
-                    if solver.check() != z3.unsat:
+                    if verdict_of(solver) != z3.unsat:
                         ok = False
                         break
                 if ok:
@@ -5343,7 +5451,7 @@ def check_proofs(funcs: list[Function], records: list,
                     reach.add(*ctx.param_assum)
                     reach.add(*ctx.conds)
                     reach.add(z3.Not(start <= last))
-                    if reach.check() == z3.unsat:      # the turn happens
+                    if verdict_of(reach) == z3.unsat:      # the turn happens
                         env_last, lfacts = havoc_like(env, changed)
                         env_last[counter] = last
                         ctx_last = Ctx(
@@ -5403,6 +5511,7 @@ def check_proofs(funcs: list[Function], records: list,
         before_errors = len(errors)
         current_fn[0] = fn
         saw_fp[0] = False              # FP budget only when FP appears
+        ran_out[0] = False             # and a fresh clock with it
         total_facts.clear()            # the sums of the last function's
         _total_seen.clear()            # lists say nothing about this one's
         env = {}
@@ -5512,7 +5621,7 @@ def check_proofs(funcs: list[Function], records: list,
                     solver.add(*pctx.assum)
                     solver.add(*pctx.conds)
                     solver.add(z3.Not(goal))
-                    verdict = solver.check()
+                    verdict = verdict_of(solver)
                     if verdict == z3.sat:
                         if has_fresh(ret) or has_fresh(goal) or any(
                                 has_fresh(c) for c in pctx.conds):
@@ -5555,7 +5664,9 @@ def check_proofs(funcs: list[Function], records: list,
                                 "file": e.file}
                                for e in errors[before_errors:]]}
         except Unprovable:
-            if key is not None:
+            # a proof the clock ended is not remembered: nothing was
+            # settled, so the next run should spend its budget again
+            if key is not None and not ran_out[0]:
                 settled[key] = {"proven": False, "errors": [
                     {"code": e.code, "message": e.message, "line": e.line,
                      "fixes": e.fixes, "file": e.file}
@@ -5574,6 +5685,26 @@ def check_proofs(funcs: list[Function], records: list,
 
     if use_cache:
         _cache_save(settled)
+
+    # A proof that ran out of time says so, here and in every report
+    # built from this run. Silence would read exactly like the prover
+    # looking and finding nothing wrong, which is the one thing it must
+    # never be mistaken for.
+    left = [t for name, t in sorted(timed_out.items())
+            if proven_out is None or name not in proven_out]
+    if timeouts_out is not None:
+        timeouts_out.extend(left)
+    for t in left:
+        spent = (f"{t['seconds']:.0f}" if t["seconds"] >= 1
+                 else f"{t['seconds']:g}")
+        print(f"note: the proof of {nice_name(t['name'])} ran out of time "
+              f"after {spent}s and was abandoned - nothing was proven and "
+              f"nothing was refuted, so its promises are checked while "
+              f"running instead. This is not 'the prover found nothing "
+              f"wrong'. Give it longer with --proof-timeout "
+              f"{max(2, int(t['seconds'] * 2))} (or "
+              f"{PROOF_TIMEOUT_ENV}={max(2, int(t['seconds'] * 2))}).",
+              file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -7294,12 +7425,16 @@ def inspect_source(path: str, source: str | None = None, require_main: bool = Fa
     except VelarisError as e:          # a raise instead of an append is
         errors.append(e)               # still one problem, not a crash
     proved: set = set()
+    abandoned: list = []
     if not errors:
         try:
             check_proofs(funcs, records, errors, proved,
-                         use_cache="--no-cache" not in sys.argv)
+                         use_cache="--no-cache" not in sys.argv,
+                         timeouts_out=abandoned)
         except VelarisError as e:
             errors.append(e)
+    report["proof_timeouts"] = abandoned
+    out_of_time = {t["name"] for t in abandoned}
     seen_e = set()
     for e in errors:                # one problem, one message, everywhere
         key = (e.code, e.file or path, e.line, e.message)
@@ -7337,6 +7472,9 @@ def inspect_source(path: str, source: str | None = None, require_main: bool = Fa
                        "proven" if f.name in proved and HAVE_Z3 else
                        "checked at runtime" if (f.requires or f.ensures)
                        else "no promises"),
+            # the promise is checked while running either way; this says
+            # the prover ran out of time rather than settling anything
+            "proof_timeout": f.name in out_of_time,
             "file": f.src_file or path,
         })
     return report
@@ -8949,6 +9087,30 @@ def main() -> int:
     argv = sys.argv[1:]
     if argv[:1] == ["--pool-worker"]:
         return pool_worker(argv[1:])       # one child behind velaris.Pool
+    # --proof-timeout S is taken out of argv here, before any command
+    # sees it, so every command accepts it and none mistakes its number
+    # for a file name.
+    while "--proof-timeout" in argv:
+        at = argv.index("--proof-timeout")
+        if at + 1 >= len(argv):
+            print("--proof-timeout needs a number of seconds, as "
+                  "--proof-timeout 300", file=sys.stderr)
+            return 1
+        try:
+            set_proof_timeout(argv[at + 1])
+        except ValueError as e:
+            print(str(e), file=sys.stderr)
+            return 1
+        del argv[at:at + 2]
+        sys.argv = [sys.argv[0]] + argv
+    for a in [a for a in argv if a.startswith("--proof-timeout=")]:
+        try:
+            set_proof_timeout(a.split("=", 1)[1])
+        except ValueError as e:
+            print(str(e), file=sys.stderr)
+            return 1
+        argv.remove(a)
+        sys.argv = [sys.argv[0]] + argv
     if "--max-memory-mb" in argv and argv[:1] not in (
             ["serve"], ["mcp-verify"], ["mcp-manifest"]):
         # before anything else this process does: a cap asked for late
@@ -9019,7 +9181,7 @@ def main() -> int:
             print(f"{len(files)} file(s)")
             print("-" * 62)
             for path in files:
-                rep_ = inspect_source(path)
+                rep_ = reports[path]      # already inspected once
                 own = [f for f in rep_["functions"]
                        if os.path.abspath(f["file"])
                        == os.path.abspath(path)
@@ -9029,6 +9191,7 @@ def main() -> int:
                 print(path)
                 for f in own:
                     mark = ("proven " if f["status"] == "proven"
+                            else "timeout" if f.get("proof_timeout")
                             else "runtime")
                     print(f"    [{mark}] {f['name']}")
                     if f["status"] != "proven":
@@ -9372,7 +9535,10 @@ def main() -> int:
                               f"not accept runtime checks:",
                               file=sys.stderr)
                         for f in fell_back:
-                            print(f"  {f['name']}", file=sys.stderr)
+                            why = ("  (the proof ran out of time - it "
+                                   "was abandoned, not settled)"
+                                   if f.get("proof_timeout") else "")
+                            print(f"  {f['name']}{why}", file=sys.stderr)
                             for e in f["ensures"]:
                                 print(f"      promises {e}",
                                       file=sys.stderr)
@@ -9417,6 +9583,13 @@ def main() -> int:
                             else "  (no z3: runtime checks)")
                     if strict:
                         note = "  (--strict: every promise proven)"
+                    # "ok" here would read as "the prover looked and
+                    # found nothing wrong", which is the one thing a
+                    # clock running out is not
+                    late = rep_.get("proof_timeouts") or []
+                    if late:
+                        note = (f"  ({len(late)} proof(s) abandoned: "
+                                f"out of time, nothing settled)")
                     print(f"{target}: ok - {len(own)} function(s), "
                           f"{proven} with proven promises{note}")
         return 1 if bad else 0
@@ -11218,6 +11391,9 @@ def _sarif_unproven(run: "_SarifRun", own: list, prover: bool,
                          + [f"ensures {e}" for e in f["ensures"]])
         why = ("" if prover else
                " (the prover, z3-solver, is not installed)")
+        if f.get("proof_timeout"):      # abandoned, not settled
+            why = (" (the proof ran out of time and was abandoned - "
+                   "nothing was proven and nothing was refuted)")
         run.add("unproven-promise",
                 f"'{f['name']}': {said} - not proven before running; "
                 f"checked while the program runs{why}",
