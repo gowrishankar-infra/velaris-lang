@@ -660,6 +660,16 @@ that are recorded in its changelog.
 
 ## Reproducibility
 
+This paper describes Velaris 4.2.1 and velaris-spec 0.5.1, and every
+number in it was verified against those two tags. Releases after them
+postdate the paper and are not reflected in it: 4.3.0 added `Money of
+CUR`, an exact decimal whose split is proven to add back up; 4.3.1 made
+a proof that exhausts its time budget say so rather than fall silently
+back to a runtime check; and later patches corrected documentation and
+packaging. What each one changed is in the two repositories' changelogs.
+The tags below are therefore the ones to check out, not the current
+releases.
+
 The numbers in this paper can be regenerated from the two repositories
 at their tags:
 
