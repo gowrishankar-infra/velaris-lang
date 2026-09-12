@@ -21,7 +21,7 @@ class _RunInput(BaseModel):
 class VelarisCardTool(BaseTool):
     name: str = "velaris_card"
     description: str = (
-        "The Velaris language in about 2,300 words. Read it before "
+        "The Velaris language in about 3,700 words. Read it before "
         "writing Velaris.")
 
     def _run(self, *_, **__) -> str:

@@ -1,3 +1,9 @@
+<!-- mcp-name: io.github.gowrishankar-infra/velaris -->
+<!-- The line above proves to the MCP registry that this package and the
+     server io.github.gowrishankar-infra/velaris have the same owner. It is
+     read from this file as published to PyPI; removing it breaks publishing
+     to the registry. See integrations/mcp_registry/server.json. -->
+
 <div align="center">
 
 # Velaris
@@ -143,7 +149,7 @@ request into a restricted subset of Python and tags every value with its
 provenance and permitted readers, checking a policy at each tool call;
 [WASI](https://wasi.dev) gives a WebAssembly module only the resources
 its host hands it. Velaris is a small language a model learns from a
-3,300-word card, in which functions declare their effects, the runtime
+3,700-word card, in which functions declare their effects, the runtime
 enforces the operator's budget at each operation, and contracts are
 checked by the Z3 theorem prover; it does not track data flow, which
 CaMeL and TACIT both do, and its command line grants every effect when
@@ -281,7 +287,7 @@ one. The rules are stated in full in [EMBEDDING.md](EMBEDDING.md).
 ## Written by a model, audited by you, run in a box
 
 ```
-velaris card > card.md          # ~3,300 words: paste into any model
+velaris card > card.md          # ~3,700 words: paste into any model
 velaris audit script.vel        # what it can touch, before you run it
 velaris attest script.vel --output script.intoto.json   # the same, bound to its bytes
 velaris script.vel --allow io   # it cannot touch anything else
@@ -527,7 +533,7 @@ permissions:
 
 steps:
   - uses: actions/checkout@v5
-  - uses: gowrishankar-infra/velaris-lang@v4.3.1
+  - uses: gowrishankar-infra/velaris-lang@v4.3.2
     with:
       files: "src/*.vel"     # optional; default is every .vel file
       format: "true"         # optional; also check formatting

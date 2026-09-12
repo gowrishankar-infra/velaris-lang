@@ -1,5 +1,52 @@
 # Velaris changelog
 
+## 4.3.2 - The card's true size, and a registry manifest on the current schema
+
+A patch version. Every program that compiled under 4.3.1 compiles, runs
+and means the same; nothing is added to the language, the capability
+surface or any document format. Three documents were wrong about a
+number, and one integration file was written against a schema that has
+since been replaced.
+
+**The language card is 3,682 words, and now says so.** Eight places
+described its size and none of them were right: `README.md` said 3,300
+words in two places, and `EMBEDDING.md`, `velaris_mcp.py` (twice),
+`mcpb/manifest.json` and the CrewAI and LangChain tool descriptions all
+said about 2,300. The card is generated from `LLM.md`, which has grown
+with the language - `Money of CUR` arrived in 4.3 - and the figures were
+last touched when it was smaller. Measured from `velaris card` output:
+3,682 words in all, 2,537 outside the code blocks. Every one of those
+places now says about 3,700. This matters more than a documentation
+nit, because two of them are tool descriptions a model reads when
+deciding whether to fetch the card at all.
+
+**The MCP registry manifest is on the registry's current schema.**
+`integrations/mcp_registry/server.json` was written against
+`2025-07-09`, which the registry has replaced with `2025-12-11`. Five
+fields were renamed under it - `version_detail.version` to `version`,
+`registry_name` to `registryType`, a package's `name` to `identifier`,
+`runtime_hint` to `runtimeHint` and `package_arguments` to
+`runtimeArguments` - a `transport` object became required, and
+`description` is now capped at 100 characters, which the old one
+exceeded at 167. The file is now validated against the published schema
+rather than by eye.
+
+**A `mcp-name:` marker in `README.md`.** The registry proves that a
+PyPI package and the server entry claiming it have the same owner by
+looking for `mcp-name: <server name>` in the package's description -
+which is this README, as published to PyPI. Without it the registry
+refuses the entry. It is an HTML comment at the top of the file, so
+nothing renders, and there is a note beside it saying what removing it
+would break.
+
+**The npm package says what the compiler is.** `npx velaris-lang`
+without `pip install velaris-lang` fell back to a fully interpreted run
+with no prover and said so in one line that was easy to miss, so anyone
+arriving through npm got the slow path and no proofs without knowing
+there was another. `npm/README.md` now has a section on it: the
+compiler is a Python package, `pip install "velaris-lang[full]"` adds
+z3 and llvmlite, and what each of those buys.
+
 ## 4.3.1 - A discount that cannot go negative, and a timeout that says it timed out
 
 A patch version. Every program that compiled under 4.3.0 compiles, runs

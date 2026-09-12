@@ -31,7 +31,7 @@ run = velaris.run(source, allow={"io"})
 print(run.ok, run.output, run.refused_effect)
 ```
 
-`velaris.card()` returns the language in about 2,300 words - paste it
+`velaris.card()` returns the language in about 3,700 words - paste it
 into a model before asking for Velaris.
 
 ## Limits: time and memory

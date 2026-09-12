@@ -20,7 +20,8 @@ those services.
 | `velaris attest`, a producer of the predicate type | `53fa3cb5c008d202dec6abf56e76d496d4221da3`, v4.2.0; GitHub release published 2026-09-11T14:52:36Z | 2026-09-11T19:50:49+05:30 |
 | The author's name with a capital S | 4.2.1, tag `v4.2.1` | 2026-09-11 |
 | `Money of CUR`, an exact amount whose split is proven to add up | 4.3.0, tag `v4.3.0` | 2026-09-12 |
-| This version: a proof that runs out of time says so, and a discount rule that cannot go negative | 4.3.1, tag `v4.3.1` | 2026-09-12 |
+| A proof that runs out of time says so, and a discount rule that cannot go negative | 4.3.1, tag `v4.3.1` | 2026-09-12 |
+| This version: the language card's size stated correctly, and the MCP registry manifest on the registry's current schema | 4.3.2, tag `v4.3.2` | 2026-09-12 |
 
 ## velaris-spec
 

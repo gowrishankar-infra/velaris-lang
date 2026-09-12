@@ -6,7 +6,7 @@ can touch, and run it in a box, without leaving the conversation. This
 speaks the Model Context Protocol over stdin/stdout, so any MCP client
 can offer:
 
-    velaris_card    the whole language, ~2,300 words, for writing it
+    velaris_card    the whole language, ~3,700 words, for writing it
     velaris_check   compile without running; problems as data
     velaris_audit   what a program touches, promises and can fail at
     velaris_run     run it under an effect budget you choose
@@ -159,7 +159,7 @@ TOOLS = [
     {
         "name": "velaris_card",
         "description": (
-            "The Velaris language in about 2,300 words: syntax, the "
+            "The Velaris language in about 3,700 words: syntax, the "
             "rules models get wrong, every builtin with its effects and "
             "whether it can fail, full standard-library signatures, and "
             "the error table. Read this before writing Velaris."),

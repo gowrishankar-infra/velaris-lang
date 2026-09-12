@@ -282,7 +282,7 @@ Usage:
 import json
 import os
 
-VERSION = "4.3.1"
+VERSION = "4.3.2"
 import re
 import sys
 from dataclasses import dataclass, field

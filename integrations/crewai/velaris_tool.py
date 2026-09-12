@@ -42,7 +42,7 @@ class VelarisCardTool(BaseTool):
     """The Velaris language, small enough to read before writing it."""
     name: str = "velaris_card"
     description: str = (
-        "Read the Velaris language card (about 2,300 words) before "
+        "Read the Velaris language card (about 3,700 words) before "
         "writing Velaris. It covers syntax, the rules models get wrong, "
         "every builtin with its effects, and the error table.")
 
