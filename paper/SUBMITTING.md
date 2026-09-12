@@ -154,7 +154,7 @@ arXiv's metadata fields take ASCII only
 | Title | Velaris: effects in signatures, budgets at run time, and a baseline for a repository's capability surface |
 | Authors | Gowri Shankar Palakurthi |
 | Abstract | the text in section 6 below |
-| Comments | 11 pages, 1 figure, 2 tables. Code: https://github.com/gowrishankar-infra/velaris-lang ; format and conformance corpus: https://github.com/gowrishankar-infra/velaris-spec |
+| Comments | 12 pages, 1 figure, 2 tables. Code: https://github.com/gowrishankar-infra/velaris-lang ; format and conformance corpus: https://github.com/gowrishankar-infra/velaris-spec |
 | Primary category | cs.PL |
 | Cross-list | cs.CR |
 | ACM-class | D.3.3; D.4.6; D.2.4 |

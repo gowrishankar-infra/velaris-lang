@@ -1,5 +1,18 @@
 \begin{thebibliography}{}
 
+\bibitem[Allan, 2026a]{agentlanguages}
+Allan, A. (2026a).
+\newblock Agent languages: a catalogue of programming languages designed for
+  {AI} agents.
+\newblock \url{https://agentlanguages.dev}.
+\newblock Read at the version of 11 September 2026, tracking 41 projects.
+  Mirrored at \url{https://research.tedneward.com/places/agentlanguages.html}.
+
+\bibitem[Allan, 2026b]{vera}
+Allan, A. (2026b).
+\newblock {Vera}: a language with mandatory contracts and tiered verification.
+\newblock Version 0.1.13. \url{https://github.com/aallan/vera}.
+
 \bibitem[{de Moura} and Bj{\o}rner, 2008]{demoura2008z3}
 {de Moura}, L. and Bj{\o}rner, N. (2008).
 \newblock {Z3}: An efficient {SMT} solver.
@@ -23,6 +36,23 @@ Dennis, J.~B. and Van~Horn, E.~C. (1966).
 \newblock Security and permissions.
 \newblock \url{https://docs.deno.com/runtime/fundamentals/security/}.
 \newblock Accessed 2026-09-11.
+
+\bibitem[{dollspace-gay} and Levesque, 2026]{thermite}
+{dollspace-gay} and Levesque, M. (2026).
+\newblock {Thermite}: contract-first verification with per-obligation assurance
+  levels.
+\newblock \url{https://github.com/dollspace-gay/Thermite}.
+
+\bibitem[Edmondson, 2026]{ailang}
+Edmondson, M. (2026).
+\newblock {AILANG}: row-polymorphic effects with capability grants.
+\newblock Version 0.20.1. \url{https://github.com/sunholo-data/ailang}.
+
+\bibitem[{escapeboy}, 2026]{boruna}
+{escapeboy} (2026).
+\newblock {Boruna}: a deterministic, capability-safe programming language and
+  framework for {LLM}-native applications.
+\newblock Version 3.2.0. \url{https://github.com/escapeboy/boruna}.
 
 \bibitem[Hills et~al., 2026]{hills2026distributed}
 Hills, J., Caspary, I., and Cooper~Stickland, A. (2026).

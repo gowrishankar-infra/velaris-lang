@@ -43,7 +43,7 @@ no character needed replacing - the abstract has none outside ASCII):
 Code written by language models is increasingly run by people who have not read it. Velaris is a small programming language for that situation. A function's signature declares which of seven effects it may perform, and the compiler checks the declaration across the whole call graph. A runtime refuses any operation outside a budget the operator writes - before the operation happens, and in a way the program cannot catch. Contracts are checked by the Z3 prover where it can settle them, and at run time where it cannot. A repository can commit a baseline of the capability surface its programs need, and a check fails any change that needs more. The central claim is about that surface. Suppose a repository's Velaris programs are held to a committed baseline by a required check. If a change makes a program need an effect, path, host, module or operation count the baseline does not grant, the check fails. It goes on failing at every later commit at which the program still compiles and still needs it, until a person edits the baseline. The claim is not about which function an effect is attributed to: a function renamed in the change that gives it an effect its program already had escapes the function-level rule. On a benchmark of 63 programs, 56 with one defect and 7 correct, each written in Velaris, in JavaScript for Deno and in Python, Velaris caught 54 of the 56 defects, 42 of them before running; Deno caught 32 and Python 28; none of the three flagged a correct program. One of Velaris's two misses is a logic error with no contract; the other no tool should catch. The capability format is published separately, under CC0, with a conformance corpus of 444 cases that an implementation in any language can run.
 
 Comments:
-11 pages, 1 figure, 2 tables. Code: https://github.com/gowrishankar-infra/velaris-lang ; format and conformance corpus: https://github.com/gowrishankar-infra/velaris-spec
+12 pages, 1 figure, 2 tables. Code: https://github.com/gowrishankar-infra/velaris-lang ; format and conformance corpus: https://github.com/gowrishankar-infra/velaris-spec
 
 Primary category:
 cs.PL (Programming Languages)
@@ -137,3 +137,41 @@ REBUILT 2026-09-12 (velaris-lang 4.3.4)
   gave 11 clean pages from the same source, but the engine build is not
   the one arXiv uses. Read the PDF arXiv builds before confirming, which
   was always the last step anyway.
+
+
+REBUILT 2026-09-12 (related work: the AI-first language field)
+  velaris.md's related work gained one paragraph, "AI-first languages",
+  at the end of section 5: that a catalogue of languages designed for
+  models exists, its three camps, that Velaris sits in two of them, and
+  the four entries occupying close ground (Boruna, Thermite, Vera,
+  AILANG) with what differs in each. references.bib gained five keys -
+  agentlanguages, boruna, thermite, vera, ailang - so the bibliography
+  went from 15 entries to 20.
+
+  velaris.tex is pandoc output and was regenerated, not edited, with
+  pandoc 3.11 and the same command as step 1 above. Because the
+  bibliography changed, velaris.bbl WAS rebuilt this time (step 2:
+  pdflatex, bibtex, pdflatex, pdflatex with the .bib beside it), unlike
+  the 2026-09-12 rebuild above.
+
+  Checked as step 3: velaris.tex and velaris.bbl alone in an empty
+  folder, pdflatex twice, no bibtex. Result: 12 pages - one more than
+  before, from the added paragraph and five added bibliography entries,
+  so the Comments field above now reads "12 pages, 1 figure, 2 tables";
+  no undefined citation or reference; no overfull or underfull box; no
+  error; the same one harmless caption warning. A third pdflatex run
+  cleared the "Label(s) may have changed" notice and left the page count
+  at 12. All 20 cited keys have an entry in velaris.bbl and every entry
+  is cited; both files are still pure ASCII (checked byte by byte).
+
+  BibTeX warns "entry type for ... isn't style-file defined" for the six
+  @software entries, including the four new ones: apalike.bst has no
+  @software type and falls back to @misc formatting. The warning is
+  pre-existing - velaris_lang and velaris_spec already produced it - and
+  the entries render correctly in the .bbl. The catalogue is cited as
+  @misc with an author rather than an editor field, because apalike.bst
+  ignores editor on @misc and the entry would otherwise print unlabelled.
+
+  Engine: MiKTeX 25.12 again, not the TeX Live arXiv runs. The caveat in
+  the entry above still applies - read the PDF arXiv builds before
+  confirming.

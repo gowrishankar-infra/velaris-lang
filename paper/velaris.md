@@ -584,6 +584,40 @@ needs capability the baseline did not declare, and nothing else: a side
 task that stays within the declared surface, or is not written in
 Velaris, is outside it.
 
+**AI-first languages.** A catalogue of languages designed for models
+rather than for people lists 41 projects in three camps: syntactic ones
+that strip ambiguity at the token level, verification ones that make
+contracts mechanically checkable, and orchestration ones that treat the
+matter as agent coordination [@agentlanguages]. Velaris belongs in the
+second and third, and several entries occupy close ground, reached
+independently: velaris-lang cites none of them. Boruna is a
+deterministic, capability-safe workflow language whose functions
+declare effects in a `!{...}` clause, whose virtual machine gates every
+call against an operator's policy over capabilities, endpoints, models
+and per-step budgets, and whose runs produce hash-chained evidence
+bundles that replay to identical outputs [@boruna]; it parses `ensures`
+without enforcing it and has no prover, its evidence describes a run
+where Velaris's audit describes a source text and binds to in-toto and
+SARIF, and it grants nothing by default, where Velaris without a budget
+grants all seven effects. Thermite mandates `req`, `ens` and `fx` on
+every function and settles each obligation separately on a five-rung
+ladder from reconstruction in Lean down to an always-active runtime
+check, recording engine and level per clause [@thermite]; its
+verification is well ahead of Velaris's single Z3 tier, and the
+difference is who writes the policy - Thermite derives a seccomp filter
+from the program's own `fx`, where a Velaris budget is the operator's
+and may be narrower than the program declares. Vera makes `requires`,
+`ensures` and `effects` mandatory and sorts each obligation into Z3's
+decidable fragment or a compiled runtime guard, with a conformance
+corpus and a draft specification [@vera], but bounds no paths or hosts
+at run time and keeps no audit record. AILANG declares effects as rows
+in signatures and grants capability categories at the command line, not
+wideable from within [@ailang] - Velaris's arrangement, at the
+granularity of the category rather than the resource. No entry combines
+all four of effects in signatures, an operator's budget refused against
+at the operation, a prover with a runtime fallback, and a published
+format for the declared surface.
+
 ## 6. Limitations
 
 These are stated as velaris-lang's THREAT_MODEL.md states them.
