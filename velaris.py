@@ -291,7 +291,7 @@ Usage:
 import json
 import os
 
-VERSION = "5.0.0"
+VERSION = "5.0.1"
 import re
 import sys
 from dataclasses import dataclass, field

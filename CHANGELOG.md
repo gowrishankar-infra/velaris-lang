@@ -1,5 +1,26 @@
 # Velaris changelog
 
+## 5.0.1 - check_library.py runs on Linux and macOS again
+
+A test-suite fix. Nothing a user runs changes: the compiler, the
+library, the doors and every document are as 5.0.0 published them.
+
+`check_library.py`'s npm-wrapper section builds throwaway virtual
+environments in which one Velaris is reachable under one spelling of
+`python`, so that the wrapper's choice can be asserted. On POSIX a
+venv's `bin/python`, `bin/python3` and `bin/pythonX.Y` are a chain of
+symbolic links ending at the base interpreter, and the section got two
+things wrong about that: copying one of those names onto another is
+`SameFileError`, and removing the others would have left whichever name
+remained dangling. The first of the two is what failed, and it failed
+every Linux and macOS leg of CI from 4.3.4, where the section was
+added, through 4.3.4, 4.4.0 and 5.0.0 - eight of the twelve legs, on a
+file no release ships. Windows, where a venv's interpreters are real
+copies, was unaffected and green throughout. The name is now remade as
+a link straight to the end of the chain, so both spellings survive the
+removals; `pyvenv.cfg`, not the name of the link, is what makes it a
+venv.
+
 ## 5.0 - The default is io, not everything
 
 A major version, and a breaking one. Until now, `velaris program.vel`

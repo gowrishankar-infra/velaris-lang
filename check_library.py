@@ -1627,9 +1627,26 @@ def main() -> int:
                 suffix = ".exe" if _os_npm.name == "nt" else ""
                 real = scripts / ("python" + suffix)
                 want = scripts / (called + suffix)
-                if want != real:
-                    _sh_npm.copyfile(real, want)
-                    _os_npm.chmod(want, 0o755)
+                if _os_npm.name == "nt":
+                    if want != real:
+                        _sh_npm.copyfile(real, want)
+                        _os_npm.chmod(want, 0o755)
+                else:
+                    # A venv's bin/python, bin/python3 and bin/pythonX.Y
+                    # are a chain of symbolic links ending at the base
+                    # interpreter. Two things follow, and this suite got
+                    # both wrong on Linux and macOS from 4.3.4 until
+                    # 5.0: copying one name onto another is
+                    # SameFileError, which is what failed; and removing
+                    # the siblings below would leave whichever name is
+                    # left dangling. So remake `called` as a link
+                    # straight to the end of the chain, and then the
+                    # siblings can go. pyvenv.cfg is what makes it a
+                    # venv, not the name of the link.
+                    target = real.resolve()
+                    if want.is_symlink() or want.exists():
+                        want.unlink()
+                    _os_npm.symlink(target, want)
                 # every other spelling goes, so only `called` is found
                 for entry in list(scripts.iterdir()):
                     if entry.name.startswith("python") and entry != want \
