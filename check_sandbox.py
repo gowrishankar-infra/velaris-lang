@@ -473,9 +473,24 @@ fn main() uses io, net {
         spec=["5.4"]),
     escape("env-under-io", "env() with only io granted", '''
 fn main() uses io, env {
-    print("READ IT " + env("PATH", ""))
+    let path = env("PATH", "")
+    if path == "" {
+        print("READ IT (nothing there)")
+    }
+    print("READ IT")
 }
 ''', allow="io", refused="E310", spec=["3.1", "6 G2"]),
+    # 6.0: the runtime half of the declassify effect. The compiler keeps
+    # a Secret away from every sink; this keeps the one way out behind
+    # the operator's budget, so a program that says it declassifies can
+    # still be run without being allowed to.
+    escape("declassify-not-granted",
+           "declassify() with env and io granted but not declassify", '''
+fn main() uses io, env, declassify {
+    let key = env("PATH", "")
+    print("READ IT " + declassify(key, "this demo prints it"))
+}
+''', allow="io,env", refused="E310", spec=["3.1", "6 G2"]),
     escape("fs-symlink-escape", "escaping the prefix through a symlink",
            _read("{DATA}/link.txt"), allow="io,fs:read:{DATA}",
            refused="E313", requires=["symlink"], spec=["5.1"]),
@@ -545,6 +560,28 @@ fn main() uses io, clock {
     }
 }
 ''', allow="io,clock", stdout=["time moves"], spec=["4.1"]),
+    # 6.0: the two honest halves of Secret. A program may read the
+    # environment and compare what it got without any grant beyond env;
+    # and one granted declassify may let a value out, which is the only
+    # way a secret becomes an ordinary value.
+    honest("secret-kept-under-env", "a secret read and compared, never let "
+           "out", '''
+fn main() uses io, env {
+    let key = env("VELARIS_NOT_SET", "")
+    if key == "" {
+        print("no key, and this program could not print one")
+    }
+}
+''', allow="io,env",
+        stdout=["no key, and this program could not print one"],
+        spec=["3.1"]),
+    honest("declassify-granted", "declassify when declassify is allowed",
+           '''
+fn main() uses io, env, declassify {
+    let key = env("VELARIS_NOT_SET", "opened")
+    print(declassify(key, "this demo shows what declassify does"))
+}
+''', allow="io,env,declassify", stdout=["opened"], spec=["3.1"]),
     honest("ffi-granted-module", "an allowed module works under the allow-list",
            '''
 fn main() uses io, ffi {

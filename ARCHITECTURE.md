@@ -27,7 +27,13 @@ missing effect is a clearer error than a type mismatch downstream.
 
 **Type checker** infers local types, checks calls, unifies generics at
 call sites, and decides which builtins are fallible in context (`get`
-on a map can fail; on a list it cannot).
+on a map can fail; on a list it cannot). It also carries `Secret of T`
+(6.0, SPEC.md §3.1): which record types hold a secret is a fixpoint
+computed once per program; a pure operation over a secret gives one, a
+comparison gives a plain Bool, and no builtin that declares an effect
+accepts an argument carrying one (E560). `declassify` is the only way
+out, and it is an effect, so the effect checker above enforces it like
+any other.
 
 **Prover** is the interesting part. For each function it explores the
 body symbolically, building Z3 formulas, and asks whether the
@@ -68,7 +74,7 @@ prover could not settle.
 
 | Suite | Asks |
 |---|---|
-| `run_tests.py` | do all 92 examples reach their expected verdict |
+| `run_tests.py` | do all 97 examples reach their expected verdict |
 | `fuzz_native.py` | do the native and interpreted engines agree exactly |
 | `check_refusals.py` | is each wrong program refused with the RIGHT code |
 | `check_sandbox.py` | can the effect budget be escaped |
@@ -77,6 +83,7 @@ prover could not settle.
 | `check_pool.py` | can a pooled worker leak anything to the next program |
 | `check_termination.py` | does each loop get the termination verdict it must |
 | `check_money.py` | are amounts exact, kept to one currency, and rounded only where the call says so |
+| `check_secret.py` | can a `Secret` reach anything that emits it, and is `declassify` the only way out |
 | `check_ratchet.py` | does every widening of the capability surface fail, against the declared baseline and not the previous commit, and does every change that does not widen pass |
 | `velaris test examples/std_test.vel` | does the standard library behave |
 | `velaris conformance` | does this implementation pass velaris-spec's corpus, at L1, L2 and L3 |
@@ -85,7 +92,7 @@ prover could not settle.
 
 Conformance to [velaris-spec](https://github.com/gowrishankar-infra/velaris-spec),
 the capability format published separately, is its corpus: from 4.1,
-444 JSON cases in velaris-spec's `tests/`, at three levels its
+455 JSON cases in velaris-spec's `tests/`, at three levels its
 CONFORMANCE.md defines, which an implementation in any language runs
 its own way. Until 4.1 it was six suites of this repository -
 `check_termination.py`, `check_sandbox.py`, `check_refusals.py`,
@@ -151,7 +158,7 @@ needs the prover.
 ## Working on it
 
     pip install -e ".[full]" pyinstaller
-    python run_tests.py          # 92 examples, expected verdicts
+    python run_tests.py          # 97 examples, expected verdicts
     velaris test examples/std_test.vel
     python fuzz_native.py 60     # both engines must agree
     velaris fmt examples/*.vel stdlib/*.vel --check

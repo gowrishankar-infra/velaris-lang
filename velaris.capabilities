@@ -5,6 +5,7 @@
   "surface": {
     "grants": [
       "clock",
+      "declassify",
       "env",
       "ffi:base64",
       "ffi:builtins",
@@ -657,18 +658,7 @@
         "ping": ["net"]
       }
     },
-    {
-      "file": "benchmark/corpus/11_scoped_budget/c_secret_from_env.vel",
-      "grants": [
-        "env",
-        "io"
-      ],
-      "counts": {},
-      "functions": {
-        "config": ["env"],
-        "main": ["env", "io"]
-      }
-    },
+    {"file": "benchmark/corpus/11_scoped_budget/c_secret_from_env.vel", "compiles": false},
     {
       "file": "examples/avg_bad.vel",
       "grants": [
@@ -1562,6 +1552,23 @@
       }
     },
     {
+      "file": "examples/secret.vel",
+      "grants": [
+        "env",
+        "io"
+      ],
+      "counts": {},
+      "functions": {
+        "authorization": [],
+        "build": [],
+        "is_set": [],
+        "key": ["env"],
+        "main": ["env", "io"],
+        "summary": []
+      }
+    },
+    {"file": "examples/secret_bad.vel", "compiles": false},
+    {
       "file": "examples/settlement.vel",
       "grants": [
         "io"
@@ -1641,6 +1648,7 @@
     {
       "file": "examples/stdlib_tools.vel",
       "grants": [
+        "declassify",
         "env",
         "ffi:builtins",
         "ffi:sqlite3",
@@ -1648,7 +1656,7 @@
       ],
       "counts": {},
       "functions": {
-        "main": ["env", "ffi", "io"]
+        "main": ["declassify", "env", "ffi", "io"]
       }
     },
     {
@@ -1840,13 +1848,15 @@
     {
       "file": "stdlib/env_tools.vel",
       "grants": [
+        "declassify",
         "env",
         "io"
       ],
       "counts": {},
       "functions": {
         "give_up": ["io"],
-        "number_setting": ["env"],
+        "number_setting": ["declassify", "env"],
+        "public_setting": ["declassify", "env"],
         "setting": ["env"],
         "succeed": ["io"]
       }

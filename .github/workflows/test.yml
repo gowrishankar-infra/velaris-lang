@@ -51,6 +51,8 @@ jobs:
         run: python check_money.py
       - name: The sandbox cannot be escaped
         run: python check_sandbox.py
+      - name: A Secret reaches nothing that emits it
+        run: python check_secret.py
       - name: A worker pool leaks nothing between programs
         run: python check_pool.py
       - name: The reference platform refuses what it says it refuses

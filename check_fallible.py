@@ -33,6 +33,7 @@ import velaris  # noqa: E402
 CALLS = {
     "to_int":      'to_int("x")',
     "read_file":   'read_file("nope.txt")',
+    "read_file_secret": 'read_file_secret("nope.txt")',
     "fetch":       'fetch("https://example.invalid")',
     "post":        'post("https://example.invalid", "b")',
     "fetch_status": 'fetch_status("https://example.invalid")',
@@ -62,7 +63,8 @@ CALLS = {
 
 # effects each call needs declared, and setup lines
 NEEDS = {
-    "read_file": "fs", "fetch": "net", "post": "net",
+    "read_file": "fs", "read_file_secret": "fs",
+    "fetch": "net", "post": "net",
     "fetch_status": "net", "request": "net",
     "py": "ffi", "py_int": "ffi", "py_float": "ffi", "py_json": "ffi",
     "py_new": "ffi", "py_do": "ffi", "py_field": "ffi",

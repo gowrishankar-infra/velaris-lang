@@ -291,7 +291,7 @@ Usage:
 import json
 import os
 
-VERSION = "5.0.1"
+VERSION = "6.0.0"
 import re
 import sys
 from dataclasses import dataclass, field
@@ -604,6 +604,12 @@ ERROR_TABLE = {
     "E525": "a check's ok arm names the result of a call that returns "
             "nothing, or leaves a returned value unnamed",
     "E530": "a function passed as a value that has effects or can fail",
+    "E560": "a Secret given to something that emits it: a builtin with "
+            "an effect, a generic function with an effect, or a 'fail' "
+            "reason",
+    "E561": "declassify without a reason written as text in the call, or "
+            "given something that is not a Secret",
+    "E562": "a Secret of a Secret",
     "E540": "a type variable that appears only in the return type",
     "E541": "a type variable named like a real type",
     "E542": "a function value of the wrong shape",
@@ -1012,6 +1018,21 @@ class Parser:
                 and self.toks[self.i + 2].text != ":"):
             self.next()
             return "Money of " + self.next().text
+        # a value that must not escape: Secret of Text, Secret of Int,
+        # Secret of List of Text (5.1/6.0, SPEC.md 3.1). Like Money,
+        # `Secret` alone stays a name, so a program's own record called
+        # Secret means what it did.
+        if (t.text == "Secret" and self.peek().text == "of"
+                and self.toks[self.i + 1].kind == "IDENT"
+                and self.toks[self.i + 2].text != ":"):
+            self.next()
+            inner = self.parse_type()
+            if inner.startswith("Secret of "):
+                raise VelarisError("E562",
+                    "a Secret of a Secret is the same secret; write "
+                    f"{inner}", t.line,
+                    fixes=[f"write {inner}"])
+            return "Secret of " + inner
         return t.text
 
     # expressions: or -> and -> not -> comparison -> add/sub -> mul/div -> atoms
@@ -1406,7 +1427,8 @@ def blame(fn_or_rec, err: VelarisError) -> VelarisError:
 #    Rule: a function may only cause effects it declares with `uses`.
 # ---------------------------------------------------------------------------
 
-FALLIBLE_BUILTINS = {"to_int", "read_file", "fetch", "post",
+FALLIBLE_BUILTINS = {"to_int", "read_file", "read_file_secret",
+                     "fetch", "post",
                      "pop", "slice", "set_at",
                      "add_or_fail", "sub_or_fail", "mul_or_fail",
                      "div_or_fail", "mod_or_fail",
@@ -1417,7 +1439,14 @@ FALLIBLE_BUILTINS = {"to_int", "read_file", "fetch", "post",
 
 PROGRAM_ARGS: list = []    # filled by the CLI: velaris prog.vel a b c
 
-ALL_EFFECTS = ("io", "env", "fs", "net", "clock", "rand", "ffi")
+# The eight. `declassify` joined the seven in 6.0: it is not a way to
+# reach the outside world, it is the one way a Secret becomes an
+# ordinary value (SPEC.md 3.1), and it is an effect for the same reason
+# the other seven are - so that a signature says a function does it, the
+# rule is transitive across the call graph, and an operator can refuse
+# to grant it.
+ALL_EFFECTS = ("io", "env", "fs", "net", "clock", "rand", "ffi",
+               "declassify")
 
 # The default budget, since 5.0: the console and nothing else. A run
 # given no budget used to get all seven effects, which made the one
@@ -1441,8 +1470,10 @@ EFFECT_USES: dict = {}     # effect -> how many builtin calls the budget let
 
 
 def expand_allow(spec: str) -> str:
-    """`all`, written on its own, as the seven effects; anything else
-    unchanged.
+    """`all`, written on its own, as every effect; anything else
+    unchanged. From 6.0 that is eight, `declassify` among them: `all`
+    means all, and an operator who writes it has waived every gate,
+    which is why it writes a line to stderr.
 
     `all` is an operator's shorthand on a command line (`--allow all`,
     `--max-allow all`), not part of the budget grammar of SPEC.md 7.1 -
@@ -2224,17 +2255,23 @@ INT_MIN, INT_MAX = -(2 ** 63), 2 ** 63 - 1
 TRACE = {"on": False, "depth": 0, "calls": 0, "limit": 4000}
 
 
-def trace_enter(name: str, params, args) -> None:
+REDACTED = "<secret>"      # what a trace and a broken promise print in
+                           # place of a value the type system calls secret
+
+
+def trace_enter(name: str, params, args, secret=()) -> None:
     if not TRACE["on"] or TRACE["calls"] >= TRACE["limit"]:
         return
     TRACE["calls"] += 1
-    shown = ", ".join(f"{p}={to_text(a)}" for (p, _), a in
-                      zip(params, args))
+    shown = ", ".join(
+        f"{p}=" + (REDACTED if p in secret else to_text(a))
+        for (p, _), a in zip(params, args))
     print("  " * TRACE["depth"] + f"-> {name}({shown})", file=sys.stderr)
     TRACE["depth"] += 1
 
 
-def trace_leave(name: str, value, failed: str | None = None) -> None:
+def trace_leave(name: str, value, failed: str | None = None,
+                secret: bool = False) -> None:
     if not TRACE["on"] or TRACE["calls"] > TRACE["limit"]:
         return
     TRACE["depth"] = max(0, TRACE["depth"] - 1)
@@ -2244,8 +2281,8 @@ def trace_leave(name: str, value, failed: str | None = None) -> None:
     elif value is None:
         print("  " * TRACE["depth"] + f"<- {name}", file=sys.stderr)
     else:
-        print("  " * TRACE["depth"] + f"<- {name} = {to_text(value)}",
-              file=sys.stderr)
+        print("  " * TRACE["depth"] + f"<- {name} = "
+              + (REDACTED if secret else to_text(value)), file=sys.stderr)
 
 
 def checked_int(value: int, op: str, line: int) -> int:
@@ -2322,7 +2359,8 @@ BUILTINS = {
     "json_has":   {"effects": set(),      "types": ["Text", "Text"], "ret": "Bool"},
     "json_of":    {"effects": set(),      "types": ["Any"],          "ret": "Text"},
     "args":       {"effects": {"io"},     "types": [],              "ret": "List of Text"},
-    "env":        {"effects": {"env"},    "types": ["Text", "Text"], "ret": "Text"},
+    "env":        {"effects": {"env"},    "types": ["Text", "Text"],
+                   "ret": "Secret of Text"},
     "exit_with":  {"effects": {"io"},     "types": ["Int"],         "ret": "Unit"},
     "read_line":  {"effects": {"io"},     "types": [],              "ret": "Text"},
     "post":       {"effects": {"net"},    "types": ["Text", "Text"], "ret": "Text"},
@@ -2363,6 +2401,14 @@ BUILTINS = {
     "text_of":    {"effects": set(), "types": ["Money of C"], "ret": "Text"},
     "parse_money": {"effects": set(), "types": ["Text", "Text"],
                     "ret": "Money of that currency"},
+    # Secret (6.0). read_file_secret reads a file the way read_file
+    # does and calls what it read a secret; declassify is the only way
+    # out of Secret, and its types are checked by their own rule in
+    # check_types because the result is the argument's inner type.
+    "read_file_secret": {"effects": {"fs"}, "types": ["Text"],
+                         "ret": "Secret of Text"},
+    "declassify": {"effects": {"declassify"},
+                   "types": ["Secret of T", "Text"], "ret": "T"},
 }
 
 KNOWN_TYPES = {"Int", "Text", "Bool", "Float", "Handle"}
@@ -2399,7 +2445,13 @@ MONEY_BUILTINS = frozenset({"money", "units_of", "with_units", "percent_of",
 # existed can have used its name, and a minor version must not change
 # what that program means. The older builtins keep the precedence they
 # always had.
-NEW_BUILTINS = MONEY_BUILTINS
+SECRET_BUILTINS = frozenset({"read_file_secret", "declassify"})
+
+# Builtins that hand back a Secret. The audit's secrets.sources lists
+# the ones a program reaches (velaris-spec 8.6).
+SECRET_SOURCES = ("env", "read_file_secret")
+
+NEW_BUILTINS = MONEY_BUILTINS | SECRET_BUILTINS
 
 
 def builtin_reached(name: str, table) -> str | None:
@@ -2425,7 +2477,9 @@ def is_money(t: str) -> bool:
 
 def currency_clash(a: str, b: str) -> bool:
     """Two types that differ only in the currency of an amount: Money of
-    INR and Money of USD, or lists or maps of them."""
+    INR and Money of USD, or lists, maps or secrets of them."""
+    if a.startswith(SECRET_PREFIX) and b.startswith(SECRET_PREFIX):
+        return currency_clash(secret_inner(a), secret_inner(b))
     if is_money(a) and is_money(b):
         return a != b
     if a.startswith("List of ") and b.startswith("List of "):
@@ -2453,6 +2507,8 @@ def _outside_money(t: str, tv: str) -> bool:
         return True
     if is_money(t):
         return False
+    if t.startswith(SECRET_PREFIX):
+        return _outside_money(secret_inner(t), tv)
     if t.startswith("List of "):
         return _outside_money(t[8:], tv)
     if t.startswith("Map of "):
@@ -2475,17 +2531,107 @@ def currency_generic(fn) -> bool:
         _outside_money(t, tv) for tv in fn.type_vars for t in types)
 
 
-def erase_money(t: str) -> str:
-    """The prover's view of a type: an amount is its minor units, an Int.
-    The type checker has already kept every currency apart."""
+def erase_wrappers(t: str) -> str:
+    """The prover's view of a type: an amount is its minor units, an
+    Int, and a secret is whatever it wraps. The type checker has already
+    kept every currency apart and kept every secret away from a sink, so
+    neither distinction means anything to the solver - a Secret of Int
+    proves exactly as an Int does."""
+    if t.startswith("Secret of "):
+        return erase_wrappers(t[len("Secret of "):])
     if is_money(t):
         return "Int"
     if t.startswith("List of "):
-        return "List of " + erase_money(t[8:])
+        return "List of " + erase_wrappers(t[8:])
     if t.startswith("Map of "):
         k, _, v = t[7:].partition(" to ")
-        return f"Map of {k} to {erase_money(v)}"
+        return f"Map of {k} to {erase_wrappers(v)}"
     return t
+
+
+# ---- Secret (6.0) -----------------------------------------------------------
+# A value the type system tracks so that it cannot reach anything that
+# emits it. `Secret of T` wraps any T; it is made by env() and
+# read_file_secret(), it survives every pure operation over it, and
+# declassify() - which needs the `declassify` effect and a written
+# reason - is the only way out. SPEC.md 3.1 states the rules; this is
+# the type-level half of them.
+
+SECRET_PREFIX = "Secret of "
+
+
+def is_secret(t: str) -> bool:
+    return t.startswith(SECRET_PREFIX)
+
+
+def secret_inner(t: str) -> str:
+    return t[len(SECRET_PREFIX):]
+
+
+def wrap_secret(t: str) -> str:
+    """A result derived from a secret is a secret - unless it already
+    holds one, because Secret of Secret of T is the same secret, and
+    unless it is Bool or Unit. Bool is the one-bit channel SPEC.md 3.1
+    leaves open on purpose: `if key == ""` must be writable, and a rule
+    that refused the Bool while allowing the branch would stop nothing."""
+    if t in ("Bool", "Unit", "") or carries_secret(t):
+        return t
+    return SECRET_PREFIX + t
+
+
+def strip_secret(t: str) -> str:
+    """The type underneath, with every Secret wrapper removed and
+    everything else - an amount's currency above all - left alone."""
+    if t.startswith(SECRET_PREFIX):
+        return strip_secret(secret_inner(t))
+    if t.startswith("List of "):
+        return "List of " + strip_secret(t[8:])
+    if t.startswith("Map of "):
+        k, _, v = t[7:].partition(" to ")
+        return f"Map of {k} to {strip_secret(v)}"
+    return t
+
+
+def carries_secret(t: str, records=None) -> bool:
+    """Does a value of this type hold a secret anywhere inside it?
+
+    A list of secrets, a map whose values are secrets and a record with
+    a secret field all answer yes, so a structure cannot be used to
+    smuggle one past the sink check. `records` maps a record name to
+    whether it carries one; without it a record name answers no, which
+    is only right where records cannot appear."""
+    if t.startswith(SECRET_PREFIX):
+        return True
+    if t.startswith("List of "):
+        return carries_secret(t[8:], records)
+    if t.startswith("Map of "):
+        return carries_secret(t[7:].partition(" to ")[2], records)
+    sig = fn_sig_parts(t)
+    if sig is not None:
+        # A function value is a name, not the values it would return:
+        # printing one prints nothing a caller did not already have,
+        # and it cannot be called without its result being checked
+        # where it is used. Its parameter and result types are not
+        # walked for that reason.
+        return False
+    return bool(records) and bool(records.get(t))
+
+
+def records_carrying(records) -> dict:
+    """Which record types hold a secret, directly or through another
+    record, a list or a map. A fixpoint, so a record that holds a list
+    of records that hold a secret is one too."""
+    carry = {r.name: False for r in records}
+    changed = True
+    while changed:
+        changed = False
+        for r in records:
+            if carry[r.name]:
+                continue
+            if any(carries_secret(ft, carry) for _, ft in r.fields):
+                carry[r.name] = True
+                changed = True
+    return carry
 
 
 @dataclass(frozen=True, order=True, slots=True)
@@ -2820,6 +2966,83 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
       except VelarisError as e:
         errors.append(blame(r, e))
 
+    # ---- Secret (6.0) ----------------------------------------------------
+    # Which records hold a secret, so that a structure cannot smuggle one
+    # past the sink check, and `carries` in terms of it.
+    rec_carries = records_carrying(records)
+
+    def carries(t: str) -> bool:
+        return carries_secret(t, rec_carries)
+
+    def sink_builtin(name: str) -> str | None:
+        """The name of the emitting builtin this call reaches, or None.
+        A builtin that declares an effect is one: it hands what it is
+        given to the console, a file, a host, Python or the operating
+        system. declassify is the exception - taking a Secret is what it
+        is for - and it says so in a signature and in the audit."""
+        b = builtin_reached(name, table)
+        if b is None or b == "declassify":
+            return None
+        return b if BUILTINS[b]["effects"] else None
+
+    def secret_enters(name: str, seen=None):
+        """Where the secret a function hands back first enters the
+        program, as 'env(), line 4' - following one call at a time
+        through the program's own functions. None when it cannot be
+        told, which is no worse than the name of the function itself."""
+        import dataclasses as _dc
+        seen = set() if seen is None else seen
+        f = table.get(name)
+        if f is None or name in seen:
+            return None
+        seen.add(name)
+        found = [None]
+
+        def walk(n):
+            if found[0] is not None:
+                return
+            if isinstance(n, (list, tuple)):
+                for x in n:
+                    walk(x)
+                return
+            if not _dc.is_dataclass(n):
+                return
+            if isinstance(n, Call):
+                b = builtin_reached(n.name, table)
+                if b in SECRET_SOURCES:
+                    found[0] = f"{b}(), line {n.line}"
+                    return
+                deeper = table.get(n.name)
+                if deeper is not None and carries(deeper.return_type or ""):
+                    got = secret_enters(n.name, seen)
+                    if got:
+                        found[0] = got
+                        return
+            for fl in _dc.fields(n):
+                walk(getattr(n, fl.name))
+
+        walk(f.body)
+        return found[0]
+
+    def leak(what: str, where: str, t: str, origin: str,
+             line: int) -> VelarisError:
+        return VelarisError("E560",
+            f"{what} is {t}, and {where} - a Secret cannot be printed, "
+            f"written, sent or passed to Python. It came from {origin}",
+            line,
+            fixes=["build what you emit out of values that are not "
+                   "secret",
+                   'or let it out on purpose: declassify(x, "why this '
+                   'is safe to emit") needs "uses declassify", is named '
+                   'in the audit with that reason, and an operator can '
+                   'refuse to grant it'])
+
+    SECRET_BOOL_FIX = [
+        "a comparison over a secret gives an ordinary Bool: write "
+        "`if key == \"\"` rather than holding a Secret of Bool",
+        'or declassify it first: declassify(b, "why this bit is safe to '
+        'act on")']
+
     def callee_sig(name: str, line: int = 1) -> tuple[list[str], str]:
         builtin = builtin_reached(name, table)
         if builtin is not None:
@@ -2835,6 +3058,9 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
         if is_money(t):                 # a currency, or a currency variable
             cur = t[len("Money of "):]
             return cur in CURRENCIES or cur in tvars
+        if is_secret(t):
+            inner = secret_inner(t)
+            return not is_secret(inner) and valid_type(inner, tvars)
         if t.startswith("List of "):
             return valid_type(t[len("List of "):], tvars)
         if t.startswith("Map of "):
@@ -2857,6 +3083,8 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
         if is_money(t):
             cur = t[len("Money of "):]
             return None if cur in CURRENCIES or cur in tvars else cur
+        if is_secret(t):
+            return currency_named(secret_inner(t), tvars)
         if t.startswith("List of "):
             return currency_named(t[8:], tvars)
         if t.startswith("Map of "):
@@ -2941,6 +3169,74 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
             env.setdefault(cname, ctype)            # values carried in
         declared_ret = fn.return_type or "Unit"
 
+        # where each secret-carrying name got its secret, so that E560
+        # can name the place rather than only the value. Best effort and
+        # never load-bearing: the refusal does not depend on it.
+        origins = {p: f"the parameter '{p}' of {nice_name(fn.name)}"
+                   for p, t in fn.params if carries(t)}
+        origins.update({c: f"'{c}', carried into this function value"
+                        for c, t in getattr(fn, "captures", [])
+                        if carries(t)})
+
+        def origin_of(node) -> str:
+            """Where the secret in this expression came from."""
+            if isinstance(node, Var):
+                return origins.get(node.name) or f"'{node.name}'"
+            if isinstance(node, Call):
+                b = builtin_reached(node.name, table)
+                if b in SECRET_SOURCES:
+                    return f"{b}(), line {node.line}"
+                called = table.get(node.name)
+                if called is not None and carries(called.return_type or ""):
+                    said = (f"{nice_name(node.name)}, which returns "
+                            f"{called.return_type} (line {node.line})")
+                    # a secret handed in is where this one came from;
+                    # otherwise look for where the callee got its own
+                    for a in node.args:
+                        try:
+                            if carries(infer(a, allow_fail=True)):
+                                return f"{origin_of(a)}, through {said}"
+                        except VelarisError:
+                            continue
+                    deeper = secret_enters(node.name)
+                    return f"{deeper}, through {said}" if deeper else said
+            if isinstance(node, FieldGet):
+                base = origin_of(node.obj)
+                return f"the field '{node.field}' of {base}"
+            if isinstance(node, TryExpr):
+                return origin_of(node.value)
+            kids = []
+            if isinstance(node, Call):
+                kids = list(node.args)
+            elif isinstance(node, BinOp):
+                kids = [node.left, node.right]
+            elif isinstance(node, (Not, Neg)):
+                kids = [node.value]
+            elif isinstance(node, ListLit):
+                kids = list(node.items)
+            elif isinstance(node, MapLit):
+                kids = [v for _, v in node.entries]
+            elif isinstance(node, RecordLit):
+                kids = [v for _, v in node.fields]
+            for k in kids:
+                try:
+                    if carries(infer(k, allow_fail=True)):
+                        return origin_of(k)
+                except VelarisError:
+                    continue
+            return "a secret value"
+
+        def refuse_secret_args(node, said: str, where: str) -> None:
+            """No argument of an emitting call may carry a secret."""
+            for i, a in enumerate(node.args, 1):
+                try:
+                    t = infer(a, allow_fail=True)
+                except VelarisError:
+                    continue
+                if carries(t):
+                    raise leak(f"argument {i} of '{said}'", where, t,
+                               origin_of(a), node.line)
+
         def infer(node, allow_fail: bool = False) -> str:
             if isinstance(node, TryExpr):
                 if not fn.can_fail:
@@ -2963,7 +3259,8 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
             if isinstance(node, FloatNum): return "Float"
             if isinstance(node, Neg):
                 t = infer(node.value)
-                if t not in ("Int", "Float") and not is_money(t):
+                bare = strip_secret(t)
+                if bare not in ("Int", "Float") and not is_money(bare):
                     raise VelarisError("E501",
                         f"'-' needs a number, but this is {t}", node.line,
                         fixes=["negate an Int or Float value"])
@@ -3029,11 +3326,11 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                                   fixes=[f"declare it first: let {node.name} = ..."])
             if isinstance(node, Not):
                 t = infer(node.value)
-                if t != "Bool":
+                if strip_secret(t) != "Bool":
                     raise VelarisError("E501",
                         f"'not' needs a yes/no value (Bool), but this is {t}",
                         node.line, fixes=["use it on a comparison like not (x > 0)"])
-                return "Bool"
+                return t
             if isinstance(node, RecordLit):
                 if node.name not in rec:
                     raise VelarisError("E508",
@@ -3189,6 +3486,23 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                         f"but got {len(node.args)}", node.line,
                         fixes=[f"pass exactly {n_want} argument(s)"])
                 t0 = infer(node.args[0])
+                # a container that is itself secret is read as what it
+                # holds, and everything taken out of it comes back secret
+                sec0 = is_secret(t0)
+                if sec0:
+                    t0 = secret_inner(t0)
+
+                def keep0(t: str) -> str:
+                    return (SECRET_PREFIX + t
+                            if sec0 and not carries(t) else t)
+
+                def keep_any(t: str) -> str:
+                    """for a result that is not one of the values held:
+                    a count, a list of keys"""
+                    return (SECRET_PREFIX + t
+                            if (sec0 or carries(t0)) and not carries(t)
+                            else t)
+
                 is_map = t0.startswith("Map of ")
                 if is_map:
                     key_t, _, val_t = t0[len("Map of "):].partition(" to ")
@@ -3223,10 +3537,10 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                                 f"'{node.name}' takes whole-number "
                                 f"positions", node.line,
                                 fixes=["pass an Int"])
-                    return t0
+                    return keep0(t0)
                 if node.name == "length":
                     if t0 == "Text" or t0.startswith("List of ") or is_map:
-                        return "Int"
+                        return keep_any("Int")
                     raise VelarisError("E501",
                         f"'length' works on Text, a list, or a map, "
                         f"but this is {t0}",
@@ -3236,7 +3550,7 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                         raise VelarisError("E501",
                             f"'keys' works on a map, but this is {t0}",
                             node.line, fixes=["pass a map"])
-                    return "List of " + key_t
+                    return keep_any("List of " + key_t)
                 if node.name in ("has", "put"):
                     if not is_map:
                         raise VelarisError("E501",
@@ -3257,7 +3571,7 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                             f"this map holds {val_t} values, cannot put "
                             f"{infer(node.args[2])}", node.line,
                             fixes=[f"put {'an' if val_t == 'Int' else 'a'} {val_t} value"])
-                    return t0
+                    return keep0(t0)
                 if node.name == "get_or":
                     if not is_map:
                         raise VelarisError("E501",
@@ -3278,7 +3592,7 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                             f"default is {infer(node.args[2])}", node.line,
                             fixes=[f"use {'an' if val_t == 'Int' else 'a'} "
                                    f"{val_t} default"])
-                    return val_t
+                    return keep0(val_t)
                 if node.name == "get" and is_map:
                     if not allow_fail:
                         raise VelarisError("E520",
@@ -3295,7 +3609,7 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                             f"this map has {key_t} keys, but this key is "
                             f"{infer(node.args[1])}", node.line,
                             fixes=[f"use {'an' if key_t == 'Int' else 'a'} {key_t} key"])
-                    return val_t
+                    return keep0(val_t)
                 if not t0.startswith("List of "):
                     raise VelarisError("E501",
                         f"'{node.name}' needs a list first, but this is {t0}"
@@ -3311,12 +3625,12 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                         raise VelarisError("E501",
                             f"this list holds {elem}, cannot push a {t1} into it",
                             node.line, fixes=[f"push {'an' if elem == 'Int' else 'a'} {elem} value"])
-                    return t0
+                    return keep0(t0)
                 if t1 != "Int":                      # get
                     raise VelarisError("E501",
                         f"'get' needs an Int position, but this is {t1}",
                         node.line, fixes=["positions are numbers, e.g. get(xs, 0)"])
-                return elem
+                return keep0(elem)
             if isinstance(node, Call) and node.name in env \
                     and env[node.name].startswith("fn("):
                 parts, ret = fn_sig_parts(env[node.name])
@@ -3347,6 +3661,40 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                            f"or pass it up (inside a fallible function): "
                            f"try {said}(...)"])
             if isinstance(node, Call) and \
+                    builtin_reached(node.name, table) == "declassify":
+                said = shown_name(node.name)
+                if len(node.args) != 2:
+                    raise VelarisError("E401",
+                        f"'{said}' expects 2 argument(s) but got "
+                        f"{len(node.args)}", node.line,
+                        fixes=['pass the secret and a reason: '
+                               'declassify(key, "the vendor needs it")'])
+                t0 = infer(node.args[0])
+                if not is_secret(t0):
+                    raise VelarisError("E561",
+                        f"'{said}' takes a Secret, but this is {t0}"
+                        + (" - the secret is inside it, so take that out "
+                           "first" if carries(t0) else ""), node.line,
+                        fixes=["declassify the Secret itself, not what "
+                               "holds it"])
+                # the reason is written in the call, so that the audit can
+                # report it without running the program (velaris-spec 8.6)
+                if not isinstance(node.args[1], Str):
+                    raise VelarisError("E561",
+                        f"the reason given to '{said}' must be written as "
+                        f"text in the call", node.line,
+                        fixes=['write it here: declassify(x, "the vendor '
+                               'authenticates with this key")',
+                               "a reason built while running cannot be "
+                               "read by the audit, so it would say that a "
+                               "secret leaves and not why"])
+                if not node.args[1].value.strip():
+                    raise VelarisError("E561",
+                        f"the reason given to '{said}' is empty", node.line,
+                        fixes=["say why this value is safe to let out; it "
+                               "is what an operator reads in the audit"])
+                return secret_inner(t0)
+            if isinstance(node, Call) and \
                     builtin_reached(node.name, table) in MONEY_BUILTINS:
                 return money_call(builtin_reached(node.name, table), node)
             if isinstance(node, Call) and (cg := table.get(node.name)) \
@@ -3376,6 +3724,8 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                         return True
                     if is_money(want) and is_money(got):
                         return unify(want[9:], got[9:])   # the currency
+                    if is_secret(want) and is_secret(got):
+                        return unify(secret_inner(want), secret_inner(got))
                     if want.startswith("List of ") and \
                             got.startswith("List of "):
                         return unify(want[8:], got[8:])
@@ -3395,6 +3745,8 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                 def subst(t: str) -> str:
                     if t in bind:
                         return bind[t]
+                    if is_secret(t):
+                        return SECRET_PREFIX + subst(secret_inner(t))
                     if is_money(t):
                         return "Money of " + subst(t[9:])
                     if t.startswith("List of "):
@@ -3411,6 +3763,21 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
 
                 for i, (a, want) in enumerate(zip(node.args, ptypes), 1):
                     got = infer(a)
+                    # A generic function's body was checked once, with its
+                    # type variables standing for nothing in particular -
+                    # so `print(x)` inside `fn show(x: T) uses io` is
+                    # allowed there, and binding T to a secret here would
+                    # print it. A generic function that declares an effect
+                    # therefore takes no secret. A pure one may: it can
+                    # reach no sink, and what it hands back is a secret
+                    # where the caller stands.
+                    if carries(got) and cg.effects and not is_secret(want):
+                        raise leak(f"argument {i} of '{node.name}'",
+                                   f"'{node.name}' is generic and declares "
+                                   f"'uses {', '.join(sorted(cg.effects))}'"
+                                   f", so what it does with {got} is not "
+                                   f"known here", got,
+                                   origin_of(a), node.line)
                     if not unify(want, got):
                         if currency_clash(subst(want), got):
                             raise clash_error(subst(want), got, node.line,
@@ -3437,17 +3804,31 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                                f"or pass it up (inside a fallible "
                                f"function): try {node.name}(...)"])
                 ptypes, ret = callee_sig(node.name, node.line)
+                # the sink check (6.0): a builtin that declares an effect
+                # hands what it is given to the console, a file, a host,
+                # Python or the operating system, so none of its
+                # arguments may carry a secret. There is no way around
+                # it: a program's own effectful function takes declared
+                # types, and a Secret is not the type it declared.
+                emits = sink_builtin(node.name)
+                if emits is not None:
+                    refuse_secret_args(
+                        node, shown_name(node.name),
+                        f"'{emits}' performs "
+                        f"{', '.join(sorted(BUILTINS[emits]['effects']))}")
                 if node.name == "format":          # text, then one value
                     if not node.args:              # per {} placeholder
                         raise VelarisError("E401",
                             "'format' needs the text first", node.line,
                             fixes=['write: format("hi {}", name)'])
-                    if infer(node.args[0]) != "Text":
+                    t_fmt = infer(node.args[0])
+                    if strip_secret(t_fmt) != "Text":
                         raise VelarisError("E501",
                             "'format' needs Text as its first argument",
                             node.line, fixes=['write: format("hi {}", name)'])
+                    secret_in = carries(t_fmt)
                     for a in node.args[1:]:
-                        infer(a)
+                        secret_in = carries(infer(a)) or secret_in
                     if isinstance(node.args[0], Str):   # literal: check now
                         holes = node.args[0].value.count("{}")
                         given = len(node.args) - 1
@@ -3457,12 +3838,13 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                                 f"but got {given} value(s)", node.line,
                                 fixes=[f"pass exactly {holes} value(s)",
                                        "each {} takes one value"])
-                    return "Text"
+                    return wrap_secret("Text") if secret_in else "Text"
                 if len(node.args) != len(ptypes):
                     raise VelarisError("E401",
                         f"'{node.name}' expects {len(ptypes)} argument(s) "
                         f"but got {len(node.args)}", node.line,
                         fixes=[f"pass exactly {len(ptypes)} argument(s)"])
+                secret_in = False
                 for i, (arg, want) in enumerate(zip(node.args, ptypes), 1):
                     got = infer(arg)
                     if got == "Unit":
@@ -3473,6 +3855,17 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                     if currency_clash(want, got):
                         raise clash_error(want, got, node.line,
                                           f"argument {i} of '{node.name}'")
+                    # a pure builtin over a secret keeps the secret: what
+                    # it hands back was computed from one. The comparison
+                    # is on the type underneath, so to_int(key) is the
+                    # to_int of a Text and gives a Secret of Int.
+                    if carries(got) and builtin_reached(node.name, table) \
+                            is not None:
+                        if want == "Any":
+                            secret_in = True
+                        elif strip_secret(got) == want:
+                            secret_in = True
+                            got = strip_secret(got)
                     if want != "Any" and got != want:
                         if (node.name in table and node.name in BUILTINS
                                 and builtin_reached(node.name, table)):
@@ -3489,9 +3882,26 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                             f"but this is {got}", node.line,
                             fixes=[f"pass {'an' if want == 'Int' else 'a'} {want} value instead",
                                    f"or change the parameter type to {got}"])
-                return ret
+                return wrap_secret(ret) if secret_in else ret
             if isinstance(node, BinOp):
                 l, r = infer(node.left), infer(node.right)
+                # An operator over a secret works on what is underneath
+                # and hands back a secret - except a comparison, which
+                # hands back an ordinary Bool. SPEC.md 3.1 states that
+                # choice and what it costs: `if key == ""` has to be
+                # writable, and refusing the Bool while allowing the
+                # branch would stop nothing. A comparison may also put a
+                # secret beside a plain value of the same type, which is
+                # the only place the two mix.
+                secret_in = carries(l) or carries(r)
+                if secret_in:
+                    l, r = strip_secret(l), strip_secret(r)
+
+                def kept(t: str) -> str:
+                    """A result computed from a secret is a secret."""
+                    return (SECRET_PREFIX + t
+                            if secret_in and not carries_secret(t) else t)
+
                 if "Unit" in (l, r):
                     raise VelarisError("E502",
                         "this expression uses a function that returns nothing",
@@ -3499,7 +3909,9 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                 op = node.op
                 if op in ("and", "or"):
                     if l == "Bool" and r == "Bool":
-                        return "Bool"
+                        # a Bool a program declared secret stays secret
+                        # here: only a comparison makes a plain one
+                        return kept("Bool")
                     raise VelarisError("E501",
                         f"'{op}' needs yes/no values (Bool) on both sides, "
                         f"but this is {l} {op} {r}", node.line,
@@ -3508,23 +3920,24 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                            "convert with to_float(x), or round(x) for an Int"]
                 if (is_money(l) or is_money(r)) and not (
                         op == "+" and "Text" in (l, r)):
-                    return money_op(op, l, r, node.line)
+                    got = money_op(op, l, r, node.line)
+                    return got if got == "Bool" else kept(got)
                 if op == "+":
                     if l == "Text" or r == "Text":
-                        return "Text"                  # text joining, e.g. "n: " + 5
+                        return kept("Text")            # text joining, e.g. "n: " + 5
                     if l == r and l in ("Int", "Float"):
-                        return l
+                        return kept(l)
                     raise VelarisError("E501", f"cannot add {l} and {r}",
                                        node.line, fixes=NUM_FIX)
                 if op == "%":
                     if l == "Int" and r == "Int":
-                        return "Int"
+                        return kept("Int")
                     raise VelarisError("E501",
                         f"'%' needs Int on both sides, but this is {l} % {r}",
                         node.line, fixes=["make both sides Int"])
                 if op in ("-", "*", "/"):
                     if l == r and l in ("Int", "Float"):
-                        return l
+                        return kept(l)
                     raise VelarisError("E501",
                         f"'{op}' needs matching number types, but this is "
                         f"{l} {op} {r}", node.line, fixes=NUM_FIX)
@@ -3577,6 +3990,8 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                                    f"{node.ann} value",
                                    "or fix the declared type"])
                     env[node.name] = t
+                    if carries(t):
+                        origins[node.name] = origin_of(node.value)
                     return
                 t = infer(node.value)
                 if t == "Unit":
@@ -3585,6 +4000,8 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                         f"returns no value", node.line,
                         fixes=["assign a function that returns a value"])
                 env[node.name] = t
+                if carries(t):
+                    origins[node.name] = origin_of(node.value)
             elif isinstance(node, Return):
                 if node.value is None:
                     if declared_ret != "Unit":
@@ -3619,6 +4036,11 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                         fixes=[f"add 'or fail' to the signature of "
                                f"'{fn.name}'"])
                 t = infer(node.value)
+                if carries(t):
+                    raise leak("the reason given to 'fail'",
+                               "a failure's reason is shown to whoever "
+                               "runs the program", t, origin_of(node.value),
+                               node.line)
                 if t != "Text":
                     raise VelarisError("E501",
                         f"'fail' needs a Text reason, but this is {t}",
@@ -3644,6 +4066,8 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                         fixes=["add a name after ok to hold the result"])
                 if node.ok_name is not None:
                     env[node.ok_name] = rt
+                    if carries(rt):
+                        origins[node.ok_name] = origin_of(node.subject)
                 for s in node.ok_body:
                     check_stmt(s)
                 env[node.fail_name] = "Text"
@@ -3654,7 +4078,8 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                 if c != "Bool":
                     raise VelarisError("E504",
                         f"'if' needs a yes/no condition (Bool), but this is {c}",
-                        node.line, fixes=["use a comparison like x > 0"])
+                        node.line, fixes=SECRET_BOOL_FIX if is_secret(c)
+                        else ["use a comparison like x > 0"])
                 for s in node.then + node.other:
                     check_stmt(s)
             elif isinstance(node, While):
@@ -3662,7 +4087,8 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                 if c != "Bool":
                     raise VelarisError("E504",
                         f"'while' needs a yes/no condition (Bool), but this is {c}",
-                        node.line, fixes=["use a comparison like i < 10"])
+                        node.line, fixes=SECRET_BOOL_FIX if is_secret(c)
+                        else ["use a comparison like i < 10"])
                 for inv_expr, iline in node.invariants:
                     if infer(inv_expr) != "Bool":
                         raise VelarisError("E505",
@@ -3686,6 +4112,8 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                         node.line,
                         fixes=[f"assign {'an' if have == 'Int' else 'a'} {have} value",
                                f"or make a new variable: let {node.name}2 = ..."])
+                if carries(t):
+                    origins[node.name] = origin_of(node.value)
 
         # ---- Money (4.3): the rules an amount's type carries ----------
         UNITS_FIX = ['money(1250, "INR") is an amount of 1250 minor units',
@@ -3843,6 +4271,17 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
             "'main' cannot be 'or fail' - there is no one above it to "
             "handle the failure", m.line,
             fixes=["handle failures inside main with check blocks"])))
+    # what the tracer and a broken promise must not print (6.0): the
+    # names whose type holds a secret, and whether the result does.
+    # Nothing refuses a program because of this - it is redaction, and
+    # the refusals above are what keeps a secret in.
+    for fn in funcs:
+        fn.secret_params = {p for p, t in fn.params
+                            if carries_secret(t, rec_carries)}
+        fn.secret_params |= {c for c, t in getattr(fn, "captures", [])
+                             if carries_secret(t, rec_carries)}
+        fn.secret_result = carries_secret(fn.return_type or "", rec_carries)
+
     for fn in funcs:
         if getattr(fn, "is_lambda", False) and getattr(fn, "free_names", []):
             continue      # checked at its creation site, where the names
@@ -4276,7 +4715,7 @@ def check_proofs(funcs: list[Function], records: list,
     table = {f.name: f for f in funcs}
     # an amount is its minor units here: the type checker has already
     # kept every currency apart, so what is left is Int arithmetic
-    rec_fields = {r.name: [(f, erase_money(t)) for f, t in r.fields]
+    rec_fields = {r.name: [(f, erase_wrappers(t)) for f, t in r.fields]
                   for r in records}
 
     def provable_rec(name: str, seen=frozenset()) -> bool:
@@ -4692,7 +5131,7 @@ def check_proofs(funcs: list[Function], records: list,
         if (pfn.effects or pfn.can_fail
                 or (pfn.type_vars and not currency_generic(pfn))
                 or len(pfn.params) != 1
-                or erase_money(pfn.params[0][1]) != "Int"
+                or erase_wrappers(pfn.params[0][1]) != "Int"
                 or pfn.return_type != "Bool"):
             raise Unprovable()
 
@@ -4730,7 +5169,7 @@ def check_proofs(funcs: list[Function], records: list,
         fnB = table.get(node.name)
 
         def summarizable(t):
-            t = erase_money(t)
+            t = erase_wrappers(t)
             return t in ("Int", "Bool", "Float", "Text") or (
                 map_parts(t) is not None) or (
                 t in rec_fields and provable_rec(t))
@@ -4760,7 +5199,7 @@ def check_proofs(funcs: list[Function], records: list,
             rv = mk_rec(f"__{fnB.name}_result_{counter[0]}",
                         fnB.return_type)
         else:
-            rv = fresh(erase_money(fnB.return_type), fnB.name)
+            rv = fresh(erase_wrappers(fnB.return_type), fnB.name)
         for ens_expr, _ in fnB.ensures:
             e2 = bind_params(fnB, args_z3)
             e2["result"] = rv
@@ -5629,7 +6068,8 @@ def check_proofs(funcs: list[Function], records: list,
         env = {}
         list_facts = []
         for pname, ptype in fn.params:
-            ptype = erase_money(ptype)     # an amount: its minor units
+            ptype = erase_wrappers(ptype)   # an amount is its minor units;
+                                            # a secret is what it wraps
             if ptype in ("Int", "Bool", "Float", "Text"):
                 env[pname] = mk(pname, ptype)
             elif ptype == "List of Int":
@@ -7052,13 +7492,17 @@ def run_builtin(name: str, args: list, line: int):
                 line, fixes=["positions go from 0 to length - 1",
                              "check with length(...) before using get"])
         return xs[i]
-    if name == "read_file":
+    if name in ("read_file", "read_file_secret"):
         real = allow_path("read", str(args[0]), name, line)
         count_op("fs", name, line)
         try:
             return open(real, encoding="utf-8").read()
         except OSError:
             raise FailSignal(f"cannot read file '{args[0]}'")
+    if name == "declassify":
+        # the effect was spent before this ran; a Secret is a compile-time
+        # distinction, so at this point the value is simply itself
+        return args[0]
     if name == "write_file":
         real = allow_path("write", str(args[0]), name, line)
         count_op("fs", name, line)
@@ -7218,9 +7662,11 @@ def build_runtime(funcs: list[Function], native: dict | None = None):
             if TRACE["on"]:                # still visible when tracing
                 fnn = table.get(name)
                 trace_enter(name + " (native)",
-                            fnn.params if fnn else [], args)
+                            fnn.params if fnn else [], args,
+                            getattr(fnn, "secret_params", frozenset()))
                 out = native[name](*args)
-                trace_leave(name + " (native)", out)
+                trace_leave(name + " (native)", out,
+                            secret=getattr(fnn, "secret_result", False))
                 return out
             return native[name](*args)
         fn = table.get(name)
@@ -7266,12 +7712,22 @@ def build_runtime(funcs: list[Function], native: dict | None = None):
         # every single call for nothing
         entry = dict(env) if (fn.requires or fn.ensures) else env
 
+        # a promise may talk about a secret - `requires length(key) > 0`
+        # is exactly the kind of thing to promise - so the message a
+        # broken one prints redacts the values whose type is secret (6.0)
+        hush = getattr(fn, "secret_params", frozenset())
+        hush_result = getattr(fn, "secret_result", False)
+
         def vals(expr, extra=None):
             scope = dict(entry)
             if extra is not None:
                 scope["result"] = extra[0]
             names = sorted(n for n in expr_vars(expr) if n in scope)
-            return ", ".join(f"{n} = {scope[n]}" for n in names)
+            return ", ".join(
+                f"{n} = " + (REDACTED if (n in hush or
+                                          (n == "result" and hush_result))
+                             else f"{scope[n]}")
+                for n in names)
 
         for expr, cline in fn.requires:
             if not eval_(expr, dict(entry)):
@@ -7282,7 +7738,7 @@ def build_runtime(funcs: list[Function], native: dict | None = None):
                            "or loosen the promise if it is too strict"])
 
         retval = None
-        trace_enter(name, fn.params, args)
+        trace_enter(name, fn.params, args, hush)
         depth[0] += 1
         try:
             for stmt in fn.body:
@@ -7297,7 +7753,7 @@ def build_runtime(funcs: list[Function], native: dict | None = None):
             raise blame(fn, e)
         finally:
             depth[0] -= 1
-        trace_leave(name, retval)
+        trace_leave(name, retval, secret=hush_result)
 
         for expr, cline in fn.ensures:
             check_env = dict(entry)
@@ -9726,14 +10182,11 @@ def main() -> int:
         print("WHAT IT CAN TOUCH")
         if not outside:
             print("  nothing. This program cannot reach the console, the")
-            print("  disk, the network, the clock, randomness or Python.")
+            print("  disk, the network, the clock, randomness or Python,")
+            print("  and it cannot let a secret out.")
         else:
-            words = {"io": "the console", "fs": "files",
-                     "net": "the network", "clock": "the time",
-                     "rand": "randomness", "ffi": "Python, and so "
-                                                  "anything Python can do"}
             for e in outside:
-                print(f"  {e:<6} {words.get(e, e)}")
+                print(f"  {e:<10} {_EFFECT_WORDS.get(e, e)}")
             print()
             print("  reached by:")
             for f in reaching:
@@ -9778,6 +10231,29 @@ def main() -> int:
             print("  (a loop counts as ending only when a counter moves")
             print("  one step toward an unchanging limit; --strict makes")
             print("  this E612)")
+            print()
+
+        secrets = _secrets_named(target, None)
+        if secrets and (secrets["sources"] or secrets["declassifies"]):
+            print("WHAT IT KEEPS SECRET")
+            if secrets["sources"]:
+                print("  these hand it values the compiler will not let "
+                      "it print,")
+                print("  write, send or pass to Python:")
+                for s in secrets["sources"]:
+                    print(f"    {s}()")
+            if not secrets["declassifies"]:
+                print("  it never declassifies: no secret leaves this "
+                      "program.")
+            else:
+                print("  it declassifies, which is how a secret becomes "
+                      "an ordinary")
+                print("  value anything may emit:")
+                for d in secrets["declassifications"]:
+                    print(f"    {d['function']}, line {d['line']}: "
+                          f"{d['reason']}")
+                print("  refuse the 'declassify' grant and none of these "
+                      "happen.")
             print()
 
         if coverage:
@@ -10230,7 +10706,8 @@ class AuditResult:
     __slots__ = ("schema", "velaris_version", "ok", "problems", "effects",
                  "functions", "proven_share", "safe_command", "warnings",
                  "ffi_modules", "loops_unshown", "contract_coverage",
-                 "fs_paths", "net_hosts", "ffi_any", "counts", "prover")
+                 "fs_paths", "net_hosts", "ffi_any", "counts", "prover",
+                 "secrets")
 
     def __init__(self, **kw):
         for k in self.__slots__:
@@ -10368,7 +10845,8 @@ def _fs_net_named(path: str, source: str | None) -> tuple:
         if not _dc.is_dataclass(node):
             return
         if isinstance(node, Call):
-            kind = {"read_file": "read", "file_exists": "read",
+            kind = {"read_file": "read", "read_file_secret": "read",
+                    "file_exists": "read",
                     "write_file": "write"}.get(node.name)
             if kind and node.args:
                 if isinstance(node.args[0], Str):
@@ -10390,6 +10868,56 @@ def _fs_net_named(path: str, source: str | None) -> tuple:
     for fn in funcs:
         visit(fn.body)
     return paths, hosts
+
+
+def _secrets_named(path: str, source: str | None) -> dict | None:
+    """velaris.audit/1's `secrets` (6.0): which builtins handed this
+    program a Secret, whether it lets one out, and why.
+
+    `sources` are the builtins the program as loaded reaches that return
+    a Secret. `declassifies` says whether any call to declassify is in
+    the text; `declassifications` names each, with the reason written in
+    the call and the function it is in - which is why the reason has to
+    be a literal (E561). A consumer that wants to know whether a program
+    can ever let a secret out reads `declassifies` and nothing else.
+
+    None when the program cannot be loaded: then nothing was determined.
+    """
+    try:
+        funcs, _ = load_program(path, source)
+    except Exception:
+        return None
+    import dataclasses as _dc
+    table = {f.name: f for f in funcs}
+    sources: set = set()
+    out: list = []
+
+    def visit(node, where: str, line: int):
+        if isinstance(node, (list, tuple)):
+            for x in node:
+                visit(x, where, line)
+            return
+        if not _dc.is_dataclass(node):
+            return
+        if isinstance(node, Call):
+            reached = builtin_reached(node.name, table)
+            if reached in SECRET_SOURCES:
+                sources.add(reached)
+            elif reached == "declassify" and len(node.args) == 2 \
+                    and isinstance(node.args[1], Str):
+                out.append({"reason": node.args[1].value,
+                            "function": where, "line": node.line})
+        for f in _dc.fields(node):
+            visit(getattr(node, f.name), where, line)
+
+    for fn in funcs:
+        shown = ("an inline function value" if fn.name.startswith("fn#")
+                 else fn.name)
+        visit(fn.body, shown, fn.line)
+    out.sort(key=lambda d: (d["function"], d["line"], d["reason"]))
+    return {"sources": sorted(sources),
+            "declassifies": bool(out),
+            "declassifications": out}
 
 
 def _host_entry(url: str) -> str | None:
@@ -10516,6 +11044,7 @@ def audit(source: str, *, path: str | None = None) -> AuditResult:
         modules_named = sorted(named)
         paths_named, hosts_named = _fs_net_named(where, source if path
                                                  else None)
+        secrets = _secrets_named(where, source if path else None)
         # counts (4.2): the most fs and net operations one call to any of
         # the audited file's functions can perform, by velaris-spec 9.4's
         # fixed rules - 0 for an effect none of them declares, None where
@@ -10590,6 +11119,7 @@ def audit(source: str, *, path: str | None = None) -> AuditResult:
                        "any": hosts_named["any"]},
             ffi_any=ffi_any,
             counts=counts,
+            secrets=secrets,
             prover=bool(compiled and report.get("proofs")),
             warnings=warnings)
     finally:
@@ -11645,7 +12175,9 @@ ERRORS_PAGE = "https://gowrishankar-infra.github.io/velaris-lang/errors.html"
 _EFFECT_WORDS = {"io": "the console", "env": "environment variables",
                  "fs": "files", "net": "the network", "clock": "the time",
                  "rand": "randomness",
-                 "ffi": "Python, and so anything Python can do"}
+                 "ffi": "Python, and so anything Python can do",
+                 "declassify": "turning a Secret into an ordinary value, "
+                               "which anything may then emit"}
 
 # The findings that are not errors, as (rule id, level, meaning). The
 # E-codes come from ERROR_TABLE and are all errors: each one stops a
@@ -12409,10 +12941,11 @@ CAPABILITIES_FILE = "velaris.capabilities"
 CAPABILITIES_CHECK_SCHEMA = "velaris.capabilities-check/1"
 REVIEW_SCHEMA = "velaris.review/1"
 COUNTED_EFFECTS = ("fs", "net")
-_OPERATIONS = (("fs", ("read_file", "write_file", "file_exists")),
+_OPERATIONS = (("fs", ("read_file", "read_file_secret", "write_file",
+                       "file_exists")),
                ("net", ("fetch", "post", "fetch_status", "request")))
 _BOUND_LIMIT = 2 ** 53          # a bound past this is recorded as none
-_PLAIN_EFFECTS = ("io", "env", "clock", "rand")
+_PLAIN_EFFECTS = ("io", "env", "clock", "rand", "declassify")
 
 
 # ---- grants as a baseline writes them (velaris-spec 9.2, 9.4) --------------
@@ -12657,7 +13190,8 @@ def _literals_named(funcs: list) -> dict:
     (_text_constants)."""
     lits: dict = {"read": {}, "write": {}, "read_any": [], "write_any": [],
                   "hosts": {}, "net_any": [], "modules": {}, "ffi_any": []}
-    fs_kind = {"read_file": "read", "file_exists": "read",
+    fs_kind = {"read_file": "read", "read_file_secret": "read",
+               "file_exists": "read",
                "write_file": "write"}
     url_at = {"fetch": 0, "post": 0, "fetch_status": 0, "request": 1}
     consts_of: dict = {}
@@ -14172,7 +14706,7 @@ def _conf_audit(case: dict, ctx: dict) -> str:
     if doc["effects"] != sorted(set(doc["effects"])) or not set(
             doc["effects"]) <= set(ALL_EFFECTS):
         wrong.append(f"effects {doc['effects']} is not a sorted subset of "
-                     f"the seven")
+                     f"{list(ALL_EFFECTS)}")
     try:
         Budget.parse(doc["safe_command"].split("--allow ", 1)[1])
     except (ValueError, IndexError) as e:
@@ -14187,9 +14721,12 @@ def _conf_audit(case: dict, ctx: dict) -> str:
         wrong += [f"no {c} among the problems {sorted(codes)}"
                   for c in want["problems_include"] if c not in codes]
     else:
+        # `secrets` was added to velaris.audit/1 in 6.0 and is compared
+        # only where a case names it, so the cases written before it say
+        # nothing about a field that did not exist (velaris-spec 8.6)
         for key in ("effects", "ffi_modules", "ffi_any", "fs_paths",
-                    "net_hosts", "safe_command"):
-            if doc.get(key) != want[key]:
+                    "net_hosts", "safe_command", "secrets"):
+            if key in want and doc.get(key) != want[key]:
                 wrong.append(f"{key} is {doc.get(key)!r}, not {want[key]!r}")
         fns = [{"name": f["name"], "effects": f["effects"],
                 "can_fail": f["can_fail"]} for f in doc["functions"]]

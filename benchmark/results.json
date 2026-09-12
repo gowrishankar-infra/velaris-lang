@@ -9,7 +9,7 @@
   "python_memory_cap": "job object",
   "quick": false,
   "timeout_s": 5,
-  "velaris": "5.0.0",
+  "velaris": "6.0.0",
   "velaris_memory_cap": "enforced"
  },
  "programs": [
@@ -5816,28 +5816,23 @@
       "beyond_needs": [
        "env"
       ],
-      "check": [],
+      "check": [
+       {
+        "code": "E503",
+        "line": 3,
+        "message": "'config' promises to return Text but this returns Secret of Text"
+       }
+      ],
       "loops_unshown": 0,
       "loops_unshown_in": [],
       "proven_functions": []
      },
      "during": {
-      "exit": 1,
-      "ok": false,
-      "out_of_memory": false,
-      "problems": [
-       {
-        "code": "E310",
-        "message": "'env' needs the 'env' effect, which this run does not allow (it allows: io)"
-       }
-      ],
-      "ran": true,
-      "refused_effect": "env",
-      "stdout": "",
-      "timed_out": false
+      "ran": false,
+      "reason": "did not compile"
      },
-     "evidence": "audit: env; run: E310 refused env",
-     "observed": false,
+     "evidence": "check: E503 line 3; audit: env; run: not attempted, did not compile",
+     "observed": null,
      "verdict": "caught-before-run"
     }
    }

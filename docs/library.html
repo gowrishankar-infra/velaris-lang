@@ -105,7 +105,7 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 </style></head><body>
 <nav><div class="in"><a class="brand" href="index.html">
 <span class="dot"></span>Velaris</a><a href="index.html" class="">Home</a><a href="tutorial.html" class="">Tutorial</a><a href="spec.html" class="">Reference</a><a href="library.html" class="here">Library</a><a href="errors.html" class="">Errors</a><a href="floats.html" class="">Floats</a><a href="playground.html" class="">Playground</a>
-<span class="ver">v5.0.0</span></div></nav>
+<span class="ver">v6.0.0</span></div></nav>
 <main class=""><h1>Standard library</h1>
 <p class="lead">Every function below is written in Velaris and parsed onto this page by the real compiler &mdash; contracts included. A violated <code>requires</code> is a compile error at your call site.</p>
 <div class="fnrow">
@@ -175,10 +175,13 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 <div class="sig">fn db.close(conn: Handle) uses ffi</div>
 </div>
 <div class="fnrow">
-<div class="sig">fn env_tools.setting(name: Text, fallback: Text) -&gt; Text uses env</div>
+<div class="sig">fn env_tools.setting(name: Text, fallback: Text) -&gt; Secret of Text uses env</div>
 </div>
 <div class="fnrow">
-<div class="sig">fn env_tools.number_setting(name: Text, fallback: Int) -&gt; Int uses env</div>
+<div class="sig">fn env_tools.public_setting(name: Text, fallback: Text) -&gt; Text uses declassify, env</div>
+</div>
+<div class="fnrow">
+<div class="sig">fn env_tools.number_setting(name: Text, fallback: Int) -&gt; Int uses declassify, env</div>
 </div>
 <div class="fnrow">
 <div class="sig">fn env_tools.succeed() uses io</div>
@@ -352,9 +355,10 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 <tr><td><code>chars</code></td><td>pure</td><td>Text</td><td>List of Text</td></tr>
 <tr><td><code>code_at</code></td><td>pure</td><td>Text, Int</td><td>Int</td></tr>
 <tr><td><code>contains</code></td><td>pure</td><td>Text, Text</td><td>Bool</td></tr>
+<tr><td><code>declassify</code></td><td>declassify</td><td>Secret of T, Text</td><td>T</td></tr>
 <tr><td><code>div_or_fail</code> <span class="ecode">or fail</span></td><td>pure</td><td>Int, Int</td><td>Int</td></tr>
 <tr><td><code>divide_or_fail</code> <span class="ecode">or fail</span></td><td>pure</td><td>Money of C, Int, Text</td><td>Money of C</td></tr>
-<tr><td><code>env</code></td><td>env</td><td>Text, Text</td><td>Text</td></tr>
+<tr><td><code>env</code></td><td>env</td><td>Text, Text</td><td>Secret of Text</td></tr>
 <tr><td><code>exit_with</code></td><td>io</td><td>Int</td><td>Unit</td></tr>
 <tr><td><code>fetch</code> <span class="ecode">or fail</span></td><td>net</td><td>Text</td><td>Text</td></tr>
 <tr><td><code>fetch_status</code> <span class="ecode">or fail</span></td><td>net</td><td>Text</td><td>Int</td></tr>
@@ -394,6 +398,7 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 <tr><td><code>py_new</code> <span class="ecode">or fail</span></td><td>ffi</td><td>Text, Text, Text</td><td>Handle</td></tr>
 <tr><td><code>random</code></td><td>rand</td><td>Int</td><td>Int</td></tr>
 <tr><td><code>read_file</code> <span class="ecode">or fail</span></td><td>fs</td><td>Text</td><td>Text</td></tr>
+<tr><td><code>read_file_secret</code> <span class="ecode">or fail</span></td><td>fs</td><td>Text</td><td>Secret of Text</td></tr>
 <tr><td><code>read_line</code></td><td>io</td><td></td><td>Text</td></tr>
 <tr><td><code>request</code> <span class="ecode">or fail</span></td><td>net</td><td>Text, Text, Text, Text</td><td>Text</td></tr>
 <tr><td><code>round</code></td><td>pure</td><td>Float</td><td>Int</td></tr>

@@ -105,7 +105,7 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 </style></head><body>
 <nav><div class="in"><a class="brand" href="index.html">
 <span class="dot"></span>Velaris</a><a href="index.html" class="">Home</a><a href="tutorial.html" class="">Tutorial</a><a href="spec.html" class="here">Reference</a><a href="library.html" class="">Library</a><a href="errors.html" class="">Errors</a><a href="floats.html" class="">Floats</a><a href="playground.html" class="">Playground</a>
-<span class="ver">v5.0.0</span></div></nav>
+<span class="ver">v6.0.0</span></div></nav>
 <main class="wide"><h1>The Velaris language reference</h1>
 <br>
 <p>This is the specification: what Velaris means, precisely. It is not a</p>
@@ -114,7 +114,7 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 <p>this language can find out exactly what it promises — and what it</p>
 <p>does not.</p>
 <br>
-<p>Version 2.30. Where this document and the implementation disagree,</p>
+<p>Version 2.31. Where this document and the implementation disagree,</p>
 <p>that is a bug in one of them; please report it.</p>
 <br>
 <h2>1. Programs</h2>
@@ -157,6 +157,7 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 <br>
 <p>    Int  Float  Bool  Text  Handle</p>
 <p>    Money of CUR             (an amount in a currency, §4.3)</p>
+<p>    Secret of T              (a value that must not escape, §3.1)</p>
 <p>    List of T</p>
 <p>    Map of K to V            (K is Text or Int)</p>
 <p>    fn(T, ...) -&gt; R          (a function value; pure only)</p>
@@ -171,6 +172,109 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 <p>Generic functions are written <code>for any T</code> and are instantiated at each</p>
 <p>call site by unification with the argument types. There are no</p>
 <p>constraints or bounds.</p>
+<br>
+<h3>3.1 Secret of T</h3>
+<br>
+<p>Effects say that a program printed something. They do not say whether</p>
+<p>what it printed was the secret. <code>Secret of T</code> is the other half: a</p>
+<p>value the compiler tracks so that it cannot reach anything that emits</p>
+<p>it.</p>
+<br>
+<p><b>Where one comes from.</b> Two builtins, and nothing else:</p>
+<br>
+<p>| Builtin | Returns |</p>
+<p>|---|---|</p>
+<p>| <code>env(name, fallback)</code> | <code>Secret of Text</code> |</p>
+<p>| <code>read_file_secret(path)</code> | <code>Secret of Text</code>, and can fail |</p>
+<br>
+<p>A program cannot make a Secret out of a value it already holds. Nothing</p>
+<p>else is secret by default, and a secret that arrives some other way -</p>
+<p>through <code>read_line</code>, through <code>args</code>, through <code>ffi</code> - is an ordinary</p>
+<p><code>Text</code> and is outside this entirely.</p>
+<br>
+<p><b>Where one cannot go.</b> A builtin that declares an effect emits what</p>
+<p>it is given: to the console, a file, a host, Python or the operating</p>
+<p>system. None of them takes an argument that carries a Secret, and a</p>
+<p>program that gives one is refused with <b>E560</b>, which names the value,</p>
+<p>what would have emitted it, and where the secret came from. That covers</p>
+<p><code>print</code>, <code>log</code>, <code>ask</code>, <code>exit_with</code>, <code>read_file</code>, <code>read_file_secret</code>,</p>
+<p><code>write_file</code>, <code>file_exists</code>, <code>fetch</code>, <code>post</code>, <code>fetch_status</code>,</p>
+<p><code>request</code>, <code>env</code> itself, <code>now</code>, <code>random</code> and the whole <code>py_*</code> family.</p>
+<p>The reason given to <code>fail</code> is emitted too, and is refused the same way.</p>
+<p>A program&#x27;s own effectful function needs no rule of its own: it</p>
+<p>declares the types it takes, and a Secret is not one of them unless the</p>
+<p>signature says so.</p>
+<br>
+<p>One rule is about generic functions. A generic body is checked once,</p>
+<p>with its type variables standing for nothing in particular, so</p>
+<p><code>print(x)</code> inside <code>fn show(x: T) uses io</code> is allowed there. Binding <code>T</code></p>
+<p>to a secret at a call site would print it, so **a generic function that</p>
+<p>declares any effect takes no argument carrying a Secret** (E560). A</p>
+<p>pure generic function may take one: it can reach no sink, and what it</p>
+<p>hands back is a secret where the caller stands.</p>
+<br>
+<p><b>What carries one.</b> A value carries a secret when it is one, or holds</p>
+<p>one anywhere inside: <code>List of Secret of Text</code>, `Map of Text to Secret</p>
+<p>of Text`, a record with a secret field, a record with a field of such a</p>
+<p>record. The whole structure is refused at a sink, not only the field -</p>
+<p>so a structure is not a way around the rule. A map&#x27;s keys are <code>Text</code> or</p>
+<p><code>Int</code>, so a secret is never a key. A function value is a name, not what</p>
+<p>it would return, and carries nothing.</p>
+<br>
+<p><b>What keeps one.</b> Pure computation over a secret gives a secret:</p>
+<p><code>length(k)</code> is a <code>Secret of Int</code>, <code>&quot;Bearer &quot; + k</code> is a `Secret of</p>
+<p>Text<code>, and </code>upper(k)<code>, </code>to_text(k)<code>, </code>format(&quot;{}&quot;, k)<code> and </code>json_of(k)`</p>
+<p>all give a <code>Secret of Text</code>. The rule is one line: **a pure operation</p>
+<p>on a value that carries a secret gives a Secret of its result type,</p>
+<p>unless that result is <code>Bool</code>.** There is no <code>Secret of Secret of T</code></p>
+<p>(E562).</p>
+<br>
+<p><b>The Bool, stated as a choice.</b> A comparison is the exception:</p>
+<p><code>k == &quot;&quot;</code>, <code>length(k) &lt; 10</code> and <code>k &gt; other</code> all give an ordinary</p>
+<p><code>Bool</code>, which may be printed. A comparison may also put a secret beside</p>
+<p>a plain value of the same type, and that is the only place the two mix.</p>
+<br>
+<p>That is a one-bit channel per comparison, and enough comparisons</p>
+<p>recover the whole secret: a loop that compares <code>length(k)</code> against</p>
+<p>0, 1, 2, ... tells you the length exactly, and the program may print</p>
+<p>what it learns. It is allowed anyway, for a reason worth stating. An</p>
+<p><code>if</code> condition must be a <code>Bool</code>, so a comparison that gave a `Secret of</p>
+<p>Bool` could never be branched on, and a program could not check whether</p>
+<p>its own API key was empty. And a rule that refused <code>print(k == &quot;&quot;)</code></p>
+<p>while allowing <code>if k == &quot;&quot; { print(&quot;empty&quot;) }</code> would stop nothing and</p>
+<p>cost everything. <b>Velaris bounds explicit flow, not implicit flow.</b></p>
+<p>What it guarantees is that the secret&#x27;s *value* never reaches a sink.</p>
+<p>What a program can work out about the secret through its own control</p>
+<p>flow, and then say, is not bounded, and no part of this document</p>
+<p>claims otherwise.</p>
+<br>
+<p>A <code>Secret of Bool</code> that a program *declares* is a different thing: it</p>
+<p>is kept, <code>and</code> and <code>or</code> over it keep it, and it is not a condition</p>
+<p>(E504). Only a comparison makes a plain one.</p>
+<br>
+<p><b>The way out.</b> <code>declassify(value, reason)</code> takes a <code>Secret of T</code> and</p>
+<p>gives back the <code>T</code>. It is the only way, and it says so three times:</p>
+<br>
+<li>the function doing it needs <code>uses declassify</code>, checked across the</li>
+<p>  whole call graph like any other effect (§7, E300);</p>
+<li><code>reason</code> must be written as text in the call, not built while</li>
+<p>  running, so that <code>velaris audit</code> can report it without running the</p>
+<p>  program (E561 - and E561 again for an empty reason, or for something</p>
+<p>  that is not a Secret);</p>
+<li>the operator&#x27;s budget must grant <code>declassify</code>, or the call is refused</li>
+<p>  at the moment it happens (E310, §7.1), like any other effect.</p>
+<br>
+<p>So a program that can let a secret out says so in its type; the audit</p>
+<p>names every place it does and the reason given (velaris-spec §8.6, the</p>
+<p><code>secrets</code> field); and an operator can run the program without letting</p>
+<p>it.</p>
+<br>
+<p><b>What a Secret is while running.</b> Nothing. It is a compile-time</p>
+<p>distinction with no runtime representation, so it costs nothing, and</p>
+<p><code>declassify</code> evaluates to the value itself. Two places print values a</p>
+<p>program did not ask them to print, and both write <code>&lt;secret&gt;</code> instead:</p>
+<p><code>velaris trace</code>, and the message of a broken <code>requires</code> or <code>ensures</code></p>
+<p>(E600, E601).</p>
 <br>
 <h2>4. Numbers</h2>
 <br>
@@ -303,10 +407,14 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 <br>
 <p>The effects are <code>io</code> (the console: <code>print</code>, <code>read_line</code>, <code>args</code>),</p>
 <p><code>env</code> (environment variables, through <code>env()</code>), <code>fs</code> (files), <code>net</code></p>
-<p>(network), <code>clock</code> (the time), <code>rand</code> (randomness) and <code>ffi</code> (calling</p>
-<p>the host language, §12). <code>env</code> became its own effect in 3.0; before</p>
-<p>that it was part of <code>io</code>, which meant an io-only budget could read</p>
-<p>every secret in the environment.</p>
+<p>(network), <code>clock</code> (the time), <code>rand</code> (randomness), <code>ffi</code> (calling the</p>
+<p>host language, §12) and <code>declassify</code> (turning a <code>Secret</code> into an</p>
+<p>ordinary value, §3.1). <code>env</code> became its own effect in 3.0; before that</p>
+<p>it was part of <code>io</code>, which meant an io-only budget could read every</p>
+<p>secret in the environment. <code>declassify</code> became the eighth in 6.0: it</p>
+<p>reaches nothing outside the program, but it is the one way a value the</p>
+<p>type system protects stops being protected, and an operator has the</p>
+<p>same reason to refuse it as to refuse <code>net</code>.</p>
 <br>
 <p>The rule is transitive and checked at compile time: a function may</p>
 <p>only perform effects it declares, and calling a function requires</p>
@@ -332,15 +440,17 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 <p><code>allow</code>, and the ceilings of both doors. Before 5.0 the first three</p>
 <p>granted all seven effects. <code>--deny</code> narrows whatever <code>--allow</code> gave,</p>
 <p>so a denial alone narrows <code>io</code>; <code>--allow all</code> is a command-line</p>
-<p>shorthand for the seven effects, written by the operator and never</p>
-<p>read from a caller&#x27;s budget, and it writes one line to standard error</p>
-<p>when it is used.</p>
+<p>shorthand for every effect - the seven, and <code>declassify</code> from 6.0 -</p>
+<p>written by the operator and never read from a caller&#x27;s budget, and it</p>
+<p>writes one line to standard error when it is used. <code>all</code> means all: an</p>
+<p>operator who writes it has waived every gate, which is why writing it</p>
+<p>is recorded.</p>
 <br>
 <p>A grant names an effect, and may narrow it:</p>
 <br>
 <p>| Grant | Permits |</p>
 <p>|---|---|</p>
-<p>| <code>io</code>, <code>env</code>, <code>clock</code>, <code>rand</code> | that effect |</p>
+<p>| <code>io</code>, <code>env</code>, <code>clock</code>, <code>rand</code>, <code>declassify</code> | that effect |</p>
 <p>| <code>fs</code> | any path, read and write |</p>
 <p>| <code>fs:read</code>, <code>fs:write</code> | one direction, any path |</p>
 <p>| <code>fs:read:P</code>, <code>fs:write:P</code> | one direction, for paths that resolve under <code>P</code> |</p>
@@ -389,7 +499,8 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 <p>Ignoring a fallible call is a compile error (E520). <code>main</code> cannot</p>
 <p>fail.</p>
 <br>
-<p>Fallible builtins: <code>to_int</code>, <code>read_file</code>, <code>fetch</code>, <code>post</code>,</p>
+<p>Fallible builtins: <code>to_int</code>, <code>read_file</code>, <code>read_file_secret</code>, <code>fetch</code>,</p>
+<p><code>post</code>,</p>
 <p><code>fetch_status</code>, <code>get</code> on a <b>map</b>, <code>divide_or_fail</code>, <code>parse_money</code>, the</p>
 <p><code>py_*</code> family, and the <code>json_*</code> readers. <code>get</code> on a <b>list</b> is not fallible: list bounds are the</p>
 <p>prover&#x27;s domain (§9.4), and <code>get_or(m, k, default)</code> gives a total map</p>
@@ -663,8 +774,9 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 <p>source itself and published with the documentation.</p>
 <br>
 <p>Codes are grouped: E0xx lexing, E1xx parsing, E2xx names, E3xx</p>
-<p>effects, E4xx arity and runtime arithmetic, E5xx types, E6xx runtime</p>
-<p>contract violations, E7xx proof results.</p>
+<p>effects, E4xx arity and runtime arithmetic, E5xx types — E56x among</p>
+<p>them, for a Secret that must not escape (§3.1) — E6xx runtime contract</p>
+<p>violations, E7xx proof results.</p>
 <br>
 <h2>15. Versioning and stability</h2>
 <br>

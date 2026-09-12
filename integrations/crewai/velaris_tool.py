@@ -55,7 +55,9 @@ class VelarisAuditTool(BaseTool):
     name: str = "velaris_audit"
     description: str = (
         "Audit a Velaris program before running it: which effects it "
-        "can perform (io, fs, net, clock, rand, ffi), what each function "
+        "can perform (io, env, fs, net, clock, rand, ffi, declassify), "
+        "whether it holds a secret and whether it ever lets one out, "
+        "what each function "
         "promises and whether that was proven before running, what can "
         "fail, and the command to run it safely. Returns JSON in the "
         "velaris.audit/1 format.")

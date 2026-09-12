@@ -213,6 +213,28 @@ fn main() uses io {
     print(broken(1))
 }
 '''),
+    ("printing a value that must not escape", "E560", False, '''
+fn main() uses io, env {
+    let key = env("API_KEY", "")
+    print("the key is " + key)
+}
+'''),
+    ("letting a secret out without saying why", "E561", False, '''
+fn main() uses io, env, declassify {
+    let key = env("API_KEY", "")
+    let why = "made up while running"
+    print(declassify(key, why))
+}
+'''),
+    ("a Secret of a Secret", "E562", False, '''
+fn hold(k: Secret of Secret of Text) -> Int {
+    return 1
+}
+
+fn main() uses io {
+    print(hold(1))
+}
+'''),
 ]
 
 # refused only by `velaris check --strict`; the same programs run normally

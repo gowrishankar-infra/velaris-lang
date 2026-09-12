@@ -13,7 +13,8 @@ nothing else."
 Two tools (plus a third that returns the language reference):
 
 - `VelarisAuditTool` — reports what a program can touch (io, fs, net,
-  clock, rand, ffi), what each function promises, and whether those
+  clock, rand, ffi, declassify), whether it holds a secret and whether
+  it ever lets one out, what each function promises, and whether those
   promises were proven before running. Returns versioned JSON.
 - `VelarisRunTool(allow=["io"])` — runs the program with an effect
   budget the crew's author sets. Effects outside it are refused while

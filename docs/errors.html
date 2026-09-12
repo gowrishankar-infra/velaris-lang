@@ -105,7 +105,7 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 </style></head><body>
 <nav><div class="in"><a class="brand" href="index.html">
 <span class="dot"></span>Velaris</a><a href="index.html" class="">Home</a><a href="tutorial.html" class="">Tutorial</a><a href="spec.html" class="">Reference</a><a href="library.html" class="">Library</a><a href="errors.html" class="here">Errors</a><a href="floats.html" class="">Floats</a><a href="playground.html" class="">Playground</a>
-<span class="ver">v5.0.0</span></div></nav>
+<span class="ver">v6.0.0</span></div></nav>
 <main class=""><h1>Error reference</h1>
 <p class="lead">Every error Velaris can give, from the error table in the compiler source, which the test suite holds against every code the compiler can raise, so this page cannot go stale. In the message templates, braces are filled with your program&rsquo;s names and values; every error also arrives with numbered fixes, and as JSON with <code>--json</code>.</p><table><tr><th>Code</th><th>What it means</th><th>Message template</th></tr>
 <tr id="E000"><td class="ecode">E000</td><td>a character the lexer cannot read, or a run that stopped without a Velaris error to report</td><td>unexpected character {source[pos]!r}</td></tr>
@@ -158,6 +158,9 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 <tr id="E551"><td class="ecode">E551</td><td>a currency that is not in velaris.CURRENCIES, or one not written as text in the call</td><td>the currency must be written in the call, as text</td></tr>
 <tr id="E552"><td class="ecode">E552</td><td>a rounding mode other than &quot;half_up&quot;, &quot;half_even&quot; or &quot;down&quot;, or one not written as text in the call</td><td>the rounding mode must be written in the call:</td></tr>
 <tr id="E553"><td class="ecode">E553</td><td>an amount divided with &#x27;/&#x27; or &#x27;%&#x27;, which would round without saying how</td><td>&#x27;{op}&#x27; on an amount would round without saying how</td></tr>
+<tr id="E560"><td class="ecode">E560</td><td>a Secret given to something that emits it: a builtin with an effect, a generic function with an effect, or a &#x27;fail&#x27; reason</td><td>{what} is {t}, and {where} - a Secret cannot be printed, written, sent or passed to Python. It came from {origin}</td></tr>
+<tr id="E561"><td class="ecode">E561</td><td>declassify without a reason written as text in the call, or given something that is not a Secret</td><td>the reason given to &#x27;{said}&#x27; must be written as text in the call</td></tr>
+<tr id="E562"><td class="ecode">E562</td><td>a Secret of a Secret</td><td>a Secret of a Secret is the same secret; write {inner}</td></tr>
 <tr id="E600"><td class="ecode">E600</td><td>a &#x27;requires&#x27; broke while running</td><td>broken promise: {nice_name(name)} requires {expr_str(expr)} ({vals(expr)})</td></tr>
 <tr id="E601"><td class="ecode">E601</td><td>an &#x27;ensures&#x27; broke while running</td><td>broken promise: {nice_name(name)} ensures {expr_str(expr)} ({vals(expr, (retval,))})</td></tr>
 <tr id="E602"><td class="ecode">E602</td><td>a position outside a list or text while running</td><td>position {i} is outside the text (it has {len(t)} character(s))</td></tr>
@@ -186,6 +189,7 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 <tr id="uses-clock"><td class="ecode">uses-clock</td><td>note</td><td>a function that may perform clock: the time</td></tr>
 <tr id="uses-rand"><td class="ecode">uses-rand</td><td>note</td><td>a function that may perform rand: randomness</td></tr>
 <tr id="uses-ffi"><td class="ecode">uses-ffi</td><td>note</td><td>a function that may perform ffi: Python, and so anything Python can do</td></tr>
+<tr id="uses-declassify"><td class="ecode">uses-declassify</td><td>note</td><td>a function that may perform declassify: turning a Secret into an ordinary value, which anything may then emit</td></tr>
 <tr id="capability-widened"><td class="ecode">capability-widened</td><td>error</td><td>code that needs a grant velaris.capabilities does not give: an effect, a Python module, a path outside the recorded ones, a host, a scoped grant made unscoped, or more fs or net operations in a run than recorded (capabilities check)</td></tr>
 <tr id="capability-effect-gained"><td class="ecode">capability-effect-gained</td><td>error</td><td>a function velaris.capabilities records now declares an effect it did not declare there (capabilities check)</td></tr>
 <tr id="capability-narrowed"><td class="ecode">capability-narrowed</td><td>note</td><td>velaris.capabilities gives more than the code needs now; capabilities init --force records the narrower surface</td></tr>

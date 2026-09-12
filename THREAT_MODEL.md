@@ -48,11 +48,12 @@ on.
 
 | Threat | Mechanism | Tested by |
 |---|---|---|
-| A program that reads or writes files, reaches the network, asks the clock, draws randomness, or calls Python when the operator did not allow it | The effect budget: `--allow io` - and, from 5.0, no `--allow` at all - refuses `fs`, `net`, `env`, `clock`, `rand` and `ffi` at the call, whatever the source declares, and the refusal cannot be caught. The refusal names the effect, what the run does allow, and the flag that would grant it | `check_sandbox.py` - 38 escape attempts refused, each with the code it must carry (from 4.1), 17 honest programs still run, four of them added in 5.0 for the default budget; `velaris conformance` holds the 37 of them that need no Python host and no default to velaris-spec's corpus, which any implementation can run |
+| A program that reads or writes files, reaches the network, asks the clock, draws randomness, or calls Python when the operator did not allow it | The effect budget: `--allow io` - and, from 5.0, no `--allow` at all - refuses `fs`, `net`, `env`, `clock`, `rand` and `ffi` at the call, whatever the source declares, and the refusal cannot be caught. The refusal names the effect, what the run does allow, and the flag that would grant it | `check_sandbox.py` - 39 escape attempts refused, each with the code it must carry (from 4.1), 19 honest programs still run, four of them added in 5.0 for the default budget and two in 6.0 for `declassify`; `velaris conformance` holds the 40 of them that need no Python host and no default to velaris-spec's corpus, which any implementation can run |
 | A program that reaches a Python module outside the ones the operator named | The module allow-list: `--allow io,ffi:math` refuses `ffi:os` with E311, through `py`, `py_json`, `py_new`, a submodule path, and the bounded child process. From 3.3 the whole dotted path a call names is checked, not only its module: the attribute chain is walked step by step and any object owned by a module outside the grants is refused, naming the module actually reached, so `py("json", "codecs.encode", ...)` under `ffi:json` is E311 for `codecs`. An object whose owning module cannot be determined is refused rather than allowed | `check_sandbox.py` - the module list, a submodule path, codecs through json, os.system through os, importlib to another module, a builtins type reached through a value, a `__globals__`/`__class__` traversal, and a foreign object exposed through a handle, all refused; a deep attribute inside the granted module (`json.decoder.JSONDecoder`) and a two-module grant still run |
 | A program that reads or writes a file outside the directory the operator named, or writes when only reading was granted | Scoped fs grants (3.0): `fs:read:./data`, `fs:write:./out`. Every path is resolved with `realpath` before comparison, so `..` and symlinks cannot leave a prefix; E313 names the path and cannot be caught | `check_sandbox.py` - a read outside the prefix, a write under a read-only grant, a `..` escape, a symlink escape (where the system will make a link), and an existence check a write grant allows (4.1); `check_library.py` - the same through `velaris.run` and through the HTTP door's ceiling |
 | A program that reaches a host, or a port, the operator did not name | Scoped net grants (3.0): `net:api.example.com:443`, `net:*.example.com` (one label). The URL's host and port are checked before any connection; E314 cannot be caught. A redirect to an ungranted host fails the request as a catchable failure naming the target | `check_sandbox.py` - a host not in the list, a port not in the list, a wildcard that must not match its parent domain, a redirect to an ungranted host; `check_fallible.py` - the redirect failure formats and is caught |
 | A program that reads the environment under a budget meant for the console | `env` is its own effect (3.0): `env()` needs `uses env`, and `--allow io` refuses it with E310. A program written for 2.x that calls `env()` under `uses io` alone is refused at compile time with "env() now needs 'uses env'" | `check_sandbox.py` - `env()` with only io granted; `check_library.py` - the same, and the exact message |
+| A program granted `env` or `fs` printing, writing, sending or handing to Python the secret it read | `Secret of T` (6.0, SPEC.md 3.1): `env()` and `read_file_secret()` return one, every builtin that declares an effect refuses an argument carrying one (E560, naming the value and where the secret came from), and a list, map or record holding one carries it. `declassify(value, reason)` is the only way out: it needs `uses declassify` in the signature, a reason written in the call, and the `declassify` grant at run time, and `velaris audit`'s `secrets` section reports every one with its reason - so "does this program ever let a secret out" is answered without running it. This bounds *explicit* flow only; the limits are under **What it explicitly does NOT defend against** below, and are not small | `check_secret.py` - 58 checks: every emitting builtin refused, a record, a list, a map and a nested record refused whole, a secret through two helpers, through a generic function with effects, through a `fail` reason and through a signature that does not say Secret; `declassify` refused without the effect, without the grant and without a written reason; the audit's `secrets` section for each shape; `velaris trace` and a broken promise printing `<secret>`; and honest programs that still run. `check_sandbox.py` - `declassify` refused by the budget (E310) and allowed with the grant; `check_refusals.py` - E560, E561 and E562 each for the right reason |
 | A program that does more file or network operations than the operator expected | Counts (3.0): `fs:read:./data@50`, `net:api.example.com@100` - at most that many operations of that effect in the run; E315 cannot be caught. A budget with no count is a budget on what, not on how much | `check_sandbox.py`, `check_library.py` - the count reached on fs and on net; from 4.1, `@0`, and a count spent by an operation that then failed |
 | A program that never ends, or eats memory | `velaris.run(timeout=, max_memory_mb=)` runs the program in a child process killed on breach and reports E610 or E611. On the MCP server and the HTTP door the operator sets both as ceilings, `--max-timeout` and `--max-memory-mb`, 30 s and 512 MB when not given: a run that names neither gets them, and a caller asking for more is refused like an over-wide budget (4.0). Before 4.0 a caller could send any timeout and any memory cap and have it | `check_library.py` - a program that never ends is stopped in 2 s on every platform; a program that doubles a text is stopped at 150 MB, asserted wherever the mechanism holds: Linux (`RLIMIT_AS`) and Windows (a job object, 3.1), best-effort on macOS - see below; on both doors a request for more time or memory than the ceiling is refused, less runs, and a run naming no timeout stops at the operator's. `check_pool.py` asserts both limits again on a pool |
 | A promise that is false - a contract the code does not keep, a division by a value that can be zero, a list read that can go past the end | The prover: `requires`/`ensures`/`invariant` are checked by Z3 before running (E700, E701, E703, E705, E706) with an exact counterexample; a premise it cannot translate abandons the proof to a runtime check rather than proving with a gap | `check_refusals.py` - 21 wrong programs each refused with the specific code; `fuzz_native.py` - random programs run natively and interpreted must agree exactly, so a proven-and-compiled function cannot behave differently from an interpreted one |
@@ -86,6 +87,42 @@ nothing. That was true until 5.0. It is not true now. The default is
 library, `Pool` and both doors, and `--allow all` is the one way to ask
 for what a run used to get, which writes a line to stderr when it is
 used. The old text is not deleted anywhere it appeared; it is dated.
+
+**Moved, not removed: secrets.** Until 6.0 this section had nothing
+about the *values* a program handles, and the residual-risks table
+below said only "do not grant `env` to code you have not read." From
+6.0 a value read by `env()` or `read_file_secret()` is a
+`Secret of Text` the compiler will not let reach anything that emits
+it, and that moves to **What it defends against** above. What stays
+here is everything that rule does not cover, and it is more than one
+line:
+
+- **Only values the type system can see.** A secret that arrives any
+  other way is an ordinary `Text` with no protection at all: read
+  through `read_line`, passed in through `args()`, fetched from a
+  vault over `net`, returned by a granted `ffi` module, or hard-coded
+  in the source. `Secret` marks two builtins' results; it does not
+  discover secrets. A program that reads a password from standard
+  input can print it, and nothing here stops that.
+- **Implicit flow, deliberately.** A comparison over a secret gives an
+  ordinary `Bool` that may be printed, and a program can learn the
+  secret a bit at a time through its own control flow and then say
+  what it learned - `length(key)` compared against 0, 1, 2, ... tells
+  you the length exactly. SPEC.md 3.1 states the choice and the reason
+  for it: an `if` condition must be a `Bool`, so refusing the Bool
+  while allowing the branch would stop nothing and make the type
+  unusable. Velaris bounds *explicit* flow - the secret's value
+  reaching a sink - and nothing else. It is not a non-interference
+  guarantee and must not be described as one.
+- **Where a declassified value goes.** `declassify` returns an
+  ordinary value. After it, the type system has nothing more to say:
+  the audit records that it happened and why, and whether the reason
+  was true is a person's judgement.
+- **What a granted `ffi` module reads for itself.** A Secret is a
+  compile-time distinction with no runtime representation, so Python
+  code inside a granted module reads the environment directly if it
+  wants to. `ffi:os` is the environment, whatever the Velaris types
+  say.
 
 What follows is what is still not defended.
 
@@ -230,7 +267,8 @@ What follows is what is still not defended.
 | Risk | Recommendation |
 |---|---|
 | A granted module does harm | Grant no `ffi` unless the task needs it, then name the modules (`ffi:math,json`) and treat the grant as trust in those modules. Never grant `ffi:os`, `ffi:subprocess`, `ffi:shutil` or plain `ffi` to code you have not read. |
-| Secrets in the environment | Do not grant `env` to code you have not read; since 3.0 an `io`-only budget cannot read it. Run agent-written programs with a clean environment regardless. |
+| Secrets in the environment | Do not grant `env` to code you have not read; since 3.0 an `io`-only budget cannot read it. From 6.0 what `env()` returns is a `Secret of Text` the compiler will not let the program print, write, send or hand to Python - so read the audit's `secrets` section: `declassifies: false` means no secret leaves by any explicit path, and a `true` names each reason. Withhold the `declassify` grant from code you have not read. Run agent-written programs with a clean environment regardless: the rule covers the values the type system can see, and a secret that arrives through `read_line`, `args()` or a granted `ffi` module is an ordinary `Text`. |
+| A secret a program works out one bit at a time | Not defended, and stated as a choice (SPEC.md 3.1). A comparison over a secret is an ordinary `Bool`, so a program can discover a secret through its own control flow and print what it discovered. If that matters, do not grant `env` at all, and put the secret where the program cannot reach it. |
 | Data leaves through `net` | Grant hosts, not `net`: `net:api.example.com:443@100`. A host list bounds where, not what; an egress proxy or a firewall rule outside Velaris still belongs under it when the stakes warrant. |
 | A program does damage within `fs` | Grant directions and directories, not `fs`: `fs:read:./data,fs:write:./out`. Run in a directory that holds nothing else regardless. |
 | Runaway time or memory | Always set both `timeout` and `max_memory_mb`. The MCP server and the HTTP door hold every run to the operator's `--max-timeout` and `--max-memory-mb`, 30 s and 512 MB unless raised (4.0; before 4.0 a caller could ask them for more and get it). The cap holds on Linux and on Windows; on macOS add an OS-level limit or run on Linux. |
@@ -243,7 +281,7 @@ What follows is what is still not defended.
 | The MCP server's tools are changed after install | Run `velaris mcp-verify` against the signed manifest of the release you installed, after every install or upgrade and in the pipeline that builds the client's environment. |
 | Nobody reads the invocation log | Send it to a file (`--log-file`) that something keeps and watches; `outcome` values `unauthorized`, `ceiling` and `refused` are the ones that mean someone tried more than they were given. |
 | The model wrote something other than Velaris | Check the file extension and run `velaris check` first; refuse to run anything the checker refuses. |
-| A compiler defect | Pin a version, verify the signature of what you install, run the suites (`python run_tests.py`, `check_sandbox.py`, `check_library.py`, `check_refusals.py`, `check_fallible.py`, `check_termination.py`, `check_pool.py`, `check_ratchet.py`, `check_money.py`, `fuzz_native.py`) and `velaris conformance` on the machine that will run untrusted code, and report anything that lies through the private channel in SECURITY.md. |
+| A compiler defect | Pin a version, verify the signature of what you install, run the suites (`python run_tests.py`, `check_sandbox.py`, `check_library.py`, `check_refusals.py`, `check_fallible.py`, `check_termination.py`, `check_pool.py`, `check_ratchet.py`, `check_money.py`, `check_secret.py`, `check_platform.py`, `fuzz_native.py`) and `velaris conformance` on the machine that will run untrusted code, and report anything that lies through the private channel in SECURITY.md. |
 | A single maintainer | Real, and stated in [SUPPORT.md](SUPPORT.md). Fixes to soundness and sandbox reports are promised within a week; nothing else is promised. |
 
 ## What "not a security boundary" means here

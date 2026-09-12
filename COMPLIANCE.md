@@ -21,6 +21,7 @@ Telemetry. NIST AI RMF functions: Govern, Map, Measure, Manage.
 | Guarantee | Mechanism | Framework item | Tested by | What it does not cover |
 |---|---|---|---|---|
 | A program cannot perform an effect the operator did not allow | The effect budget: `--allow`/`--deny`, or `allow=` in `velaris.run`; a refusal (E310) stops the program and cannot be caught. Since 3.0 `env` is its own effect, so an `io`-only budget cannot read the environment. Since 5.0 `io` is what an operator who writes no budget gets, on the command line, in `velaris.run`, in `velaris.Pool` and on both doors; before 5.0 the first three granted all seven effects | LLM06 Excessive Agency - partially addresses (bounds *what* an agent's code may touch; not which tools the agent is given, nor what it does through a granted effect). LLM05 Improper Output Handling - partially addresses (model output that is Velaris code is executed only within the budget). LLM02 Sensitive Information Disclosure - partially addresses (environment secrets, only) . NIST Manage | `check_sandbox.py` | `io` still includes `args()` and `read_line()`; code not written in Velaris |
+| A program cannot print, write, send or hand to Python a secret it read | `Secret of T` (6.0): `env()` and `read_file_secret()` return one, every builtin that declares an effect refuses an argument carrying one (E560), and a list, map or record holding one carries it. `declassify(value, reason)` is the only way out - an effect of its own, with the reason written in the call and reported by `velaris audit` under `secrets`, so an operator can refuse the grant and a consumer can ask whether a program ever lets a secret out without running it | LLM02 Sensitive Information Disclosure - partially addresses (values `env()` and `read_file_secret()` produced, explicit flow only). NIST Manage | `check_secret.py`, `check_sandbox.py`, `check_refusals.py` | a secret that arrives through `read_line`, `args()`, the network or a granted `ffi` module is an ordinary `Text`; a comparison over a secret is an ordinary `Bool`, so a program can learn one a bit at a time and print what it learned; and nothing checks that a declassification's stated reason is true |
 | A program cannot reach a path, host, port or count the operator did not name | Scoped grants (3.0): `fs:read:./data`, `fs:write:./out`, `net:host:port`, `net:*.domain`, `@N`; paths compared after `realpath`; E313/E314/E315 cannot be caught; a redirect to an ungranted host is a catchable failure | LLM06 - partially addresses (where and how often, within an effect). LLM10 Unbounded Consumption - partially addresses (operation counts). NIST Manage | `check_sandbox.py`, `check_library.py`, `check_fallible.py` (the redirect) | Rate and size of operations; what a granted host or directory does; hard links inside a granted directory; the file system changing under the program |
 | A program cannot reach a Python module the operator did not name | The `ffi:` allow-list (`--allow io,ffi:math`), enforced for `py`, `py_json`, `py_new` and submodule paths, and in the bounded child. From 3.3 the whole dotted path a call reaches is checked, not only the module it names: an object owned by a module outside the grants is refused (E311), and an owner that cannot be determined is refused | LLM06 - partially addresses. LLM03 Supply Chain - partially addresses (narrows which third-party code the program may invoke; says nothing about the provenance of that code). NIST Manage | `check_sandbox.py` | Anything a granted module can do once granted; plain `ffi` grants everything |
 | A program that never ends, or grows without bound, is stopped | `timeout=` and `max_memory_mb=` run the program in a killable child - RLIMIT_AS on POSIX, a Windows job object since 3.1; E610/E611 report which limit fired; on the MCP server and the HTTP door both are ceilings the operator sets (`--max-timeout`, `--max-memory-mb`; 30 s and 512 MB when not given), which a caller may lower and is refused for exceeding (4.0; before 4.0 a caller could ask for more), and the pooled workers carry them | LLM10 Unbounded Consumption - partially addresses (time and memory; not request volume, CPU below the limit, or cost) . NIST Manage | `check_library.py`, `check_pool.py` (the cap assertion runs wherever the mechanism holds - `velaris.memory_cap_is_enforced()`) | The memory cap is best-effort on macOS; use below the limits; network volume |
@@ -43,10 +44,17 @@ Telemetry. NIST AI RMF functions: Govern, Map, Measure, Manage.
 LLM01 Prompt Injection, LLM04 Data and Model Poisoning, LLM07 System
 Prompt Leakage and LLM08 Vector and Embedding Weaknesses are outside
 what Velaris does. The other OWASP MCP Top 10 items (MCP04, MCP05,
-MCP06, MCP09, MCP10) are not mapped here. LLM02 is addressed only for the environment: since
-3.0 a program needs the `env` effect to read it, and an `io`-only
-budget refuses it; secrets a program is handed on stdin, in a file it
-may read, or from a granted host are its to print. See THREAT_MODEL.md.
+MCP06, MCP09, MCP10) are not mapped here. LLM02 is addressed in two
+ways, and neither is complete. Since 3.0 a program needs the `env`
+effect to read the environment, and an `io`-only budget refuses it;
+since 6.0 what it reads back is a `Secret of Text` the compiler will
+not let it print, write, send or hand to Python, with `declassify` as
+the only way out and the audit naming each one. Both cover the values
+the type system can see: a secret a program is handed on stdin, in its
+arguments, in a file it reads with `read_file`, or from a granted host
+is an ordinary `Text` and is its to print. Implicit flow is not covered
+either — a comparison over a secret is an ordinary `Bool`. See
+THREAT_MODEL.md.
 
 ## Reading this table
 

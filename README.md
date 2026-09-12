@@ -144,6 +144,63 @@ A sandbox answers a different question. It can stop this rule reading a
 file or opening a socket; it cannot tell you whether the arithmetic
 holds.
 
+## A key it cannot print
+
+Effects say a program printed something. They do not say whether what
+it printed was the secret. `Secret of T` (6.0) is the other half: the
+compiler tracks the value, and refuses any program that hands it to
+anything that emits.
+
+```
+fn key() -> Secret of Text uses env {
+    return env("API_KEY", "")          // env() gives a Secret of Text
+}
+
+fn authorization(k: Secret of Text) -> Secret of Text {
+    return "Bearer " + k               // still a Secret of Text
+}
+```
+
+[`examples/secret.vel`](examples/secret.vel) reads an API key, builds
+the request that would carry it, and prints a summary of that request.
+[`examples/secret_bad.vel`](examples/secret_bad.vel) is the same
+program with one more line:
+
+```
+$ velaris examples/secret_bad.vel --allow env,io
+error[E560] argument 1 of 'print' is Secret of Text, and 'print' performs io - a Secret cannot be printed, written, sent or passed to Python. It came from env(), line 28, through 'key', which returns Secret of Text (line 63)
+  --> examples/secret_bad.vel, line 70
+```
+
+Nothing ran, nothing was logged, and no reviewer had to notice the
+line. A list of secrets, a map of them, or a record with one secret
+field carries it too, so the whole structure is refused at a sink — a
+`Request` record holding the key cannot be printed either.
+
+`declassify(value, "why")` is the only way out. It needs
+`uses declassify` in the signature, a reason written in the call, and
+the `declassify` grant at run time — and it is what the audit reports,
+so a consumer can ask whether a program ever lets a secret out without
+running it:
+
+```
+$ velaris audit examples/secret.vel --json | jq .secrets
+{
+  "sources": ["env"],
+  "declassifies": false,
+  "declassifications": []
+}
+```
+
+What this does **not** do: a comparison over a secret gives an ordinary
+`Bool`, on purpose, so `if key == ""` is writable — which means a
+program can learn a secret a bit at a time through its own control flow
+and print what it learned. Velaris bounds explicit flow, not implicit
+flow, and it only sees values `env()` and `read_file_secret()` produced:
+a password read with `read_line` is an ordinary `Text`.
+[SPEC.md §3.1](SPEC.md) states the choice and
+[THREAT_MODEL.md](THREAT_MODEL.md) states the limits.
+
 ## Related work
 
 [TACIT](https://github.com/lampepfl/tacit) ("Securing Agents With
@@ -158,17 +215,23 @@ provenance and permitted readers, checking a policy at each tool call;
 its host hands it. Velaris is a small language a model learns from a
 3,700-word card, in which functions declare their effects, the runtime
 enforces the operator's budget at each operation, and contracts are
-checked by the Z3 theorem prover; it does not track data flow, which
-CaMeL and TACIT both do. Until 5.0 its command line also granted every
-effect when no budget was given, where a WASI module given nothing
-reaches nothing; from 5.0 a run with no budget gets `io` alone.
+checked by the Z3 theorem prover. From 6.0 it also tracks one kind of
+data: `Secret of T`, which `env()` and `read_file_secret()` produce and
+which cannot reach anything that emits, with `declassify` as the only
+way out and an effect of its own. That is narrower than what CaMeL and
+TACIT do — they tag every value with its provenance and permitted
+readers; Velaris marks two builtins' results, bounds explicit flow
+only, and lets a comparison over a secret give an ordinary `Bool`.
+Until 5.0 its command line also granted every effect when no budget was
+given, where a WASI module given nothing reaches nothing; from 5.0 a
+run with no budget gets `io` alone.
 The capability
 format is published separately, under CC0, as
 [velaris-spec](https://github.com/gowrishankar-infra/velaris-spec),
 whose [PRIOR_ART.md](https://github.com/gowrishankar-infra/velaris-spec/blob/main/PRIOR_ART.md)
 sets out these differences and the older work in full. From 4.1 it
 holds a conformance corpus an implementation in any language can run -
-444 JSON cases at three levels, declaration, enforcement and the
+455 JSON cases at three levels, declaration, enforcement and the
 ratchet, none needing a prover - written from this repository's suites
 and held to them by a drift test; `velaris conformance` runs it against
 this implementation, and CI does so on every leg.
@@ -180,6 +243,7 @@ this implementation, and CI does so on every leg.
 | **Effects are visible** | `uses io, net, fs, ffi` — a function without `uses net` can never touch the network, transitively, and one without `uses ffi` can never call out to Python. Hidden behavior does not compile. |
 | **Promises are proven** | `requires` / `ensures` / loop `invariant`, verified by Z3 with modular call summaries — including records, maps, nested lists, quantified list properties, failure paths, and floats in **genuine IEEE-754** (the prover refutes `x + 0.1 + 0.1 == x + 0.2` with the exact double that breaks it). |
 | **Failure is unignorable** | `-> Int or fail` in the signature; callers must `check` or `try`. Forgetting the error path is a compile error — builtins included. |
+| **Secrets cannot be printed** | `Secret of T` — what `env()` and `read_file_secret()` return. Nothing that emits will take one, a structure holding one carries it, and `declassify(value, "why")` is the only way out: an effect of its own, with its reason named in the audit. Explicit flow only; [SPEC.md §3.1](SPEC.md) says what that excludes. |
 | **Fast where it's safe** | Pure functions over numbers, list reads, and text — including text built inside them — JIT to native code via LLVM (~10,000× on hot arithmetic, ~45× on text building), differential-tested against the interpreter. Native reads are bounds-guarded and text is built in a runtime-owned buffer, so results always match interpreted. |
 
 Why floats are proven in IEEE-754 rather than as real numbers, and what
@@ -350,12 +414,13 @@ velaris examples/stress.vel --allow clock,env,ffi:datetime,math,sqlite3,io,net:r
                                 # 33 checks across the whole language
 velaris examples/edges.vel --allow ffi:datetime,io
                                 # 20 boundary, property and round-trip checks
-python check_refusals.py        # 21 wrong programs, each refused correctly
-python check_sandbox.py         # 38 escape attempts, each refused with its code
+python check_refusals.py        # 24 wrong programs, each refused correctly
+python check_sandbox.py         # 39 escape attempts, each refused with its code
+python check_secret.py          # a Secret reaches nothing that emits it
 python check_pool.py            # a pool must leak nothing between programs
 python check_platform.py        # the reference platform refuses what it says it does
 python check_ratchet.py         # every widening fails, nothing else does
-velaris conformance             # velaris-spec's 444-case corpus, L1 to L3
+velaris conformance             # velaris-spec's 455-case corpus, L1 to L3
 ```
 
 One command that exercises the language, the standard library, the

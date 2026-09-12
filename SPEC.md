@@ -6,7 +6,7 @@ programming. It exists so that anyone deciding whether to depend on
 this language can find out exactly what it promises — and what it
 does not.
 
-Version 2.30. Where this document and the implementation disagree,
+Version 2.31. Where this document and the implementation disagree,
 that is a bug in one of them; please report it.
 
 ## 1. Programs
@@ -49,6 +49,7 @@ a typed `let` (E506, E507).
 
     Int  Float  Bool  Text  Handle
     Money of CUR             (an amount in a currency, §4.3)
+    Secret of T              (a value that must not escape, §3.1)
     List of T
     Map of K to V            (K is Text or Int)
     fn(T, ...) -> R          (a function value; pure only)
@@ -63,6 +64,109 @@ subtyping. A value has exactly one type, known at compile time.
 Generic functions are written `for any T` and are instantiated at each
 call site by unification with the argument types. There are no
 constraints or bounds.
+
+### 3.1 Secret of T
+
+Effects say that a program printed something. They do not say whether
+what it printed was the secret. `Secret of T` is the other half: a
+value the compiler tracks so that it cannot reach anything that emits
+it.
+
+**Where one comes from.** Two builtins, and nothing else:
+
+| Builtin | Returns |
+|---|---|
+| `env(name, fallback)` | `Secret of Text` |
+| `read_file_secret(path)` | `Secret of Text`, and can fail |
+
+A program cannot make a Secret out of a value it already holds. Nothing
+else is secret by default, and a secret that arrives some other way -
+through `read_line`, through `args`, through `ffi` - is an ordinary
+`Text` and is outside this entirely.
+
+**Where one cannot go.** A builtin that declares an effect emits what
+it is given: to the console, a file, a host, Python or the operating
+system. None of them takes an argument that carries a Secret, and a
+program that gives one is refused with **E560**, which names the value,
+what would have emitted it, and where the secret came from. That covers
+`print`, `log`, `ask`, `exit_with`, `read_file`, `read_file_secret`,
+`write_file`, `file_exists`, `fetch`, `post`, `fetch_status`,
+`request`, `env` itself, `now`, `random` and the whole `py_*` family.
+The reason given to `fail` is emitted too, and is refused the same way.
+A program's own effectful function needs no rule of its own: it
+declares the types it takes, and a Secret is not one of them unless the
+signature says so.
+
+One rule is about generic functions. A generic body is checked once,
+with its type variables standing for nothing in particular, so
+`print(x)` inside `fn show(x: T) uses io` is allowed there. Binding `T`
+to a secret at a call site would print it, so **a generic function that
+declares any effect takes no argument carrying a Secret** (E560). A
+pure generic function may take one: it can reach no sink, and what it
+hands back is a secret where the caller stands.
+
+**What carries one.** A value carries a secret when it is one, or holds
+one anywhere inside: `List of Secret of Text`, `Map of Text to Secret
+of Text`, a record with a secret field, a record with a field of such a
+record. The whole structure is refused at a sink, not only the field -
+so a structure is not a way around the rule. A map's keys are `Text` or
+`Int`, so a secret is never a key. A function value is a name, not what
+it would return, and carries nothing.
+
+**What keeps one.** Pure computation over a secret gives a secret:
+`length(k)` is a `Secret of Int`, `"Bearer " + k` is a `Secret of
+Text`, and `upper(k)`, `to_text(k)`, `format("{}", k)` and `json_of(k)`
+all give a `Secret of Text`. The rule is one line: **a pure operation
+on a value that carries a secret gives a Secret of its result type,
+unless that result is `Bool`.** There is no `Secret of Secret of T`
+(E562).
+
+**The Bool, stated as a choice.** A comparison is the exception:
+`k == ""`, `length(k) < 10` and `k > other` all give an ordinary
+`Bool`, which may be printed. A comparison may also put a secret beside
+a plain value of the same type, and that is the only place the two mix.
+
+That is a one-bit channel per comparison, and enough comparisons
+recover the whole secret: a loop that compares `length(k)` against
+0, 1, 2, ... tells you the length exactly, and the program may print
+what it learns. It is allowed anyway, for a reason worth stating. An
+`if` condition must be a `Bool`, so a comparison that gave a `Secret of
+Bool` could never be branched on, and a program could not check whether
+its own API key was empty. And a rule that refused `print(k == "")`
+while allowing `if k == "" { print("empty") }` would stop nothing and
+cost everything. **Velaris bounds explicit flow, not implicit flow.**
+What it guarantees is that the secret's *value* never reaches a sink.
+What a program can work out about the secret through its own control
+flow, and then say, is not bounded, and no part of this document
+claims otherwise.
+
+A `Secret of Bool` that a program *declares* is a different thing: it
+is kept, `and` and `or` over it keep it, and it is not a condition
+(E504). Only a comparison makes a plain one.
+
+**The way out.** `declassify(value, reason)` takes a `Secret of T` and
+gives back the `T`. It is the only way, and it says so three times:
+
+- the function doing it needs `uses declassify`, checked across the
+  whole call graph like any other effect (§7, E300);
+- `reason` must be written as text in the call, not built while
+  running, so that `velaris audit` can report it without running the
+  program (E561 - and E561 again for an empty reason, or for something
+  that is not a Secret);
+- the operator's budget must grant `declassify`, or the call is refused
+  at the moment it happens (E310, §7.1), like any other effect.
+
+So a program that can let a secret out says so in its type; the audit
+names every place it does and the reason given (velaris-spec §8.6, the
+`secrets` field); and an operator can run the program without letting
+it.
+
+**What a Secret is while running.** Nothing. It is a compile-time
+distinction with no runtime representation, so it costs nothing, and
+`declassify` evaluates to the value itself. Two places print values a
+program did not ask them to print, and both write `<secret>` instead:
+`velaris trace`, and the message of a broken `requires` or `ensures`
+(E600, E601).
 
 ## 4. Numbers
 
@@ -195,10 +299,14 @@ A function declares what it may do:
 
 The effects are `io` (the console: `print`, `read_line`, `args`),
 `env` (environment variables, through `env()`), `fs` (files), `net`
-(network), `clock` (the time), `rand` (randomness) and `ffi` (calling
-the host language, §12). `env` became its own effect in 3.0; before
-that it was part of `io`, which meant an io-only budget could read
-every secret in the environment.
+(network), `clock` (the time), `rand` (randomness), `ffi` (calling the
+host language, §12) and `declassify` (turning a `Secret` into an
+ordinary value, §3.1). `env` became its own effect in 3.0; before that
+it was part of `io`, which meant an io-only budget could read every
+secret in the environment. `declassify` became the eighth in 6.0: it
+reaches nothing outside the program, but it is the one way a value the
+type system protects stops being protected, and an operator has the
+same reason to refuse it as to refuse `net`.
 
 The rule is transitive and checked at compile time: a function may
 only perform effects it declares, and calling a function requires
@@ -224,15 +332,17 @@ else. That is the default in 5.0 for `velaris file.vel`,
 `allow`, and the ceilings of both doors. Before 5.0 the first three
 granted all seven effects. `--deny` narrows whatever `--allow` gave,
 so a denial alone narrows `io`; `--allow all` is a command-line
-shorthand for the seven effects, written by the operator and never
-read from a caller's budget, and it writes one line to standard error
-when it is used.
+shorthand for every effect - the seven, and `declassify` from 6.0 -
+written by the operator and never read from a caller's budget, and it
+writes one line to standard error when it is used. `all` means all: an
+operator who writes it has waived every gate, which is why writing it
+is recorded.
 
 A grant names an effect, and may narrow it:
 
 | Grant | Permits |
 |---|---|
-| `io`, `env`, `clock`, `rand` | that effect |
+| `io`, `env`, `clock`, `rand`, `declassify` | that effect |
 | `fs` | any path, read and write |
 | `fs:read`, `fs:write` | one direction, any path |
 | `fs:read:P`, `fs:write:P` | one direction, for paths that resolve under `P` |
@@ -281,7 +391,8 @@ possibility, in one of two ways:
 Ignoring a fallible call is a compile error (E520). `main` cannot
 fail.
 
-Fallible builtins: `to_int`, `read_file`, `fetch`, `post`,
+Fallible builtins: `to_int`, `read_file`, `read_file_secret`, `fetch`,
+`post`,
 `fetch_status`, `get` on a **map**, `divide_or_fail`, `parse_money`, the
 `py_*` family, and the `json_*` readers. `get` on a **list** is not fallible: list bounds are the
 prover's domain (§9.4), and `get_or(m, k, default)` gives a total map
@@ -555,8 +666,9 @@ structured data. The complete list is generated from the compiler
 source itself and published with the documentation.
 
 Codes are grouped: E0xx lexing, E1xx parsing, E2xx names, E3xx
-effects, E4xx arity and runtime arithmetic, E5xx types, E6xx runtime
-contract violations, E7xx proof results.
+effects, E4xx arity and runtime arithmetic, E5xx types — E56x among
+them, for a Secret that must not escape (§3.1) — E6xx runtime contract
+violations, E7xx proof results.
 
 ## 15. Versioning and stability
 

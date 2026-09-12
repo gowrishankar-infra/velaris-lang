@@ -29,6 +29,8 @@ EXPECT = {
     "ledger.vel": "RUNS",
     "settlement.vel": "RUNS",
     "discount.vel": "RUNS",
+    "secret.vel": "RUNS",
+    "secret_bad.vel": "REJECTED",
     "rec_proof.vel": "RUNS",
     "native_float.vel": "RUNS",
     "qlist_proof.vel": "RUNS",
@@ -119,7 +121,9 @@ ALLOW = {
     "ledger.vel": "fs:read:ledger.txt,fs:write:ledger.txt,io",
     "report_fixes.vel": "ffi:math,io",
     "sandbox.vel": "ffi:builtins,fs:read,io,net",
-    "stdlib_tools.vel": "env,ffi:_sqlite3,builtins,sqlite3,io",
+    "secret.vel": "env,io",
+    "secret_bad.vel": "env,io",
+    "stdlib_tools.vel": "declassify,env,ffi:_sqlite3,builtins,sqlite3,io",
     "wordcount.vel": "fs:read,io",
     # the ones that reach the network are not run by this suite with a
     # net grant: fetcher, linkcheck, net and stress are RUNS only where

@@ -1,5 +1,247 @@
 # Velaris changelog
 
+## 6.0 - Secrets that cannot be printed
+
+A major version, and a breaking one. Effects tell you a program
+printed something. They do not tell you whether what it printed was
+the secret. `Secret of T` is the data half of that: a value the type
+system tracks so that it cannot reach a sink.
+
+E530 has enforced the harder half since 2.x - a function value passed
+to a library must be pure, so a closure handed to a library cannot
+perform effects. This is the other half, and it is the one capability
+the peer-reviewed design this project sits beside
+([TACIT](https://github.com/lampepfl/tacit), ACM CAIS '26) had and
+Velaris did not. velaris-spec's PRIOR_ART.md said so in writing; it
+now says what is true instead, and what TACIT still has that this does
+not.
+
+### The type
+
+`Secret of T` wraps any T. Two builtins make one, and nothing else
+does:
+
+- `env(name, fallback)` returns `Secret of Text`. **This is the
+  breaking change.**
+- `read_file_secret(path)` is new: `read_file`'s companion, the same
+  `fs` effect and the same failure, returning `Secret of Text`.
+
+A program cannot make a Secret out of a value it already holds, and
+nothing else is secret by default. A secret that arrives another way -
+`read_line`, `args()`, a granted `ffi` module - is an ordinary `Text`,
+and THREAT_MODEL.md says so plainly rather than leaving it implied.
+
+**Where one cannot go.** Every builtin that declares an effect emits
+what it is given, so none of them takes an argument that carries a
+Secret. That is one rule covering `print`, `log`, `ask`, `exit_with`,
+`read_file`, `read_file_secret`, `write_file`, `file_exists`, `fetch`,
+`post`, `fetch_status`, `request`, `env` itself, `now`, `random` and
+the whole `py_*` family - and the reason given to `fail`, which is
+shown to whoever runs the program. The refusal is **E560**, and it
+names the value, what would have emitted it, and where the secret came
+from, following the trail through the program's own functions:
+
+```
+error[E560] argument 1 of 'print' is Secret of Text, and 'print' performs io -
+a Secret cannot be printed, written, sent or passed to Python. It came from
+env(), line 28, through 'key', which returns Secret of Text (line 63)
+```
+
+A program's own effectful function needs no rule: it declares the
+types it takes, and a Secret is not one of them unless it says so. One
+case does need a rule. A generic body is checked once with its type
+variables standing for nothing in particular, so `print(x)` inside
+`fn show(x: T) uses io` is allowed there; binding `T` to a secret at a
+call site would print it. So a generic function that declares any
+effect takes no argument carrying a Secret (E560). A pure generic
+function may take one: it can reach no sink.
+
+**A structure is not a way around it.** `List of Secret of Text`, a
+map whose values are secrets, a record with a secret field, a record
+holding such a record - each carries the secret, and the *whole
+structure* is refused at a sink, not only the field. A map's keys are
+`Text` or `Int`, so a secret is never a key. This is not the coarse
+approximation it might have been: which record types carry a secret is
+a fixpoint over the record definitions, computed once per program.
+
+**What keeps one.** Pure computation over a secret gives a secret:
+`length(k)` is a `Secret of Int`, `"Bearer " + k` a `Secret of Text`,
+and `to_text`, `format`, `json_of`, `upper` and the rest all keep it.
+One line states it: a pure operation on a value that carries a secret
+gives a Secret of its result type, unless that result is `Bool`. There
+is no `Secret of Secret of T` (E562).
+
+### The Bool, stated as a choice
+
+A comparison is the exception. `k == ""`, `length(k) < 10` and
+`k > other` give an ordinary `Bool` that may be printed, and a
+comparison is the one place a secret and a plain value of the same
+type may stand together.
+
+That is a one-bit channel per comparison, and enough comparisons
+recover the secret: a loop comparing `length(k)` against 0, 1, 2, ...
+tells you the length exactly, and the program may print what it
+learned. It is allowed anyway, and the reason is worth writing down.
+An `if` condition must be a `Bool`, so a comparison that gave a
+`Secret of Bool` could never be branched on, and a program could not
+check whether its own API key was empty. And a rule that refused
+`print(k == "")` while allowing `if k == "" { print("empty") }` would
+stop nothing and cost everything.
+
+**Velaris bounds explicit flow, not implicit flow.** What it
+guarantees is that the secret's value never reaches a sink. What a
+program can work out about a secret through its own control flow, and
+then say, is not bounded. SPEC.md 3.1 states this, THREAT_MODEL.md
+states it again among what is not defended, and neither calls it
+non-interference, because it is not.
+
+A `Secret of Bool` a program *declares* is different: it is kept, `and`
+and `or` over it keep it, and it is not a condition (E504). Only a
+comparison makes a plain one.
+
+### declassify, and the eighth effect
+
+`declassify(value, reason)` takes a `Secret of T` and gives back the
+`T`. It is the only way out, and it says so three times:
+
+- the function doing it needs `uses declassify`, checked across the
+  whole call graph like any other effect (E300);
+- `reason` must be written as text in the call, not built while
+  running, so `velaris audit` can report it without running the program
+  (E561 - and E561 for an empty reason, or for something that is not a
+  Secret);
+- the operator's budget must grant `declassify`, or the call is refused
+  where it happens (E310), like any other effect.
+
+So `declassify` is the eighth effect, and it behaves as the seven do
+everywhere: in a signature, in `velaris.audit/1`'s `effects`, in
+`safe_command`, in `velaris.capabilities`, in a SARIF note, in
+`--deny`. `--allow all` grants it. `all` means all - an operator who
+writes it has waived every gate, and it already writes a line to
+standard error saying so.
+
+Unlike the seven it reaches nothing outside the program. It is an
+effect because it is the one operation that removes the type system's
+mark, and an operator has the same reason to refuse it as to refuse
+`net`.
+
+### What the audit says
+
+`velaris.audit/1` gains a `secrets` object - an added field within
+version 1, so a consumer that does not know it ignores it:
+
+```json
+"secrets": {
+  "sources": ["env"],
+  "declassifies": false,
+  "declassifications": []
+}
+```
+
+`sources` names the builtins the program reaches that hand it a
+Secret. `declassifies` answers, without running the program, the
+question a consumer actually has: *does this ever let a secret out.*
+`declassifications` names each one - the reason written in the call,
+the function it is in, and the line. The field is `null` only when the
+program could not be loaded; a program refused *for* leaking a secret
+still reports the source that made it, which is what a reader wants at
+that moment. `velaris audit` prints the same under WHAT IT KEEPS
+SECRET.
+
+What it does not claim is written beside it: the reasons are unchecked
+text, the rule bounds explicit flow only, and it covers only values
+those two builtins produced.
+
+### Two places that print values behind a program's back
+
+A Secret has no runtime representation - it is a compile-time
+distinction, so it costs nothing and `declassify` evaluates to the
+value itself. Two things print values the program did not ask them to,
+and both now write `<secret>` instead: `velaris trace`, and the message
+of a broken `requires` or `ensures` (E600, E601), which prints the
+values of every name the promise mentions. `requires length(key) > 0`
+is exactly the kind of promise to make about a secret, and until now it
+would have printed the key when it broke.
+
+### What a 5.x user has to change
+
+**Anything that treats what `env()` returns as a `Text`.** Three
+shapes, and the compiler points at each:
+
+1. `print(env("API_KEY", ""))` and every other emission - E560.
+   Compare instead (`if key == ""`), or `declassify` it with a reason
+   if it genuinely is not a secret.
+2. `fn config(n: Text) -> Text uses env { return env(n, "") }` - E503.
+   Write `-> Secret of Text`, and let the type travel with the value.
+3. `let plain: Text = env("K", "")`, or passing it to a `Text`
+   parameter - E501.
+
+A program that only *compares* what it read - `if length(env("PATH",
+"")) > 0` - is unaffected: comparisons give ordinary Bools.
+`examples/stress.vel` needed no change for exactly that reason.
+
+**`stdlib/env_tools.vel` changed with it.** `setting` now returns
+`Secret of Text`. `number_setting` keeps returning `Int` and now
+declares `uses env, declassify`, declassifying with the reason "a
+numeric setting is a number, not a secret" - which is the honest thing
+for it to say, and which now appears in the audit of every program
+that uses it. `public_setting(name, fallback) -> Text` is new, for a
+setting a program says is not a secret at all.
+
+**A repository with a committed `velaris.capabilities`** will see
+`declassify` reported as a widening the first time a program needs it,
+and someone has to edit the baseline. That is the ratchet working.
+
+### The demonstration
+
+[`examples/secret.vel`](examples/secret.vel) reads an API key from the
+environment, builds the request that would carry it, and prints a
+summary of that request. `velaris audit examples/secret.vel --json`
+says `"declassifies": false`, which is the whole claim: the key reaches
+nothing that emits it.
+
+[`examples/secret_bad.vel`](examples/secret_bad.vel) is the same file
+with one more line in `main`. It does not compile, and the refusal
+names where the secret came from. Nothing ran, nothing was logged, and
+no reviewer had to notice the line. The two of them next to
+`discount.vel` and `discount_bad.vel` are the clearest statement of
+what this language does.
+
+### Codes, tests and the record
+
+Three new codes: **E560** (a Secret given to something that emits it),
+**E561** (a `declassify` without a reason written in the call, or given
+something that is not a Secret), **E562** (a Secret of a Secret). None
+is reused; STABILITY.md rule 3 holds.
+
+`check_secret.py` is new: 58 checks over every emitting builtin, every
+shape of structure, every laundering route, both halves of the Bool
+decision, all three ways `declassify` is refused, the audit's `secrets`
+section for each shape, the tracer and the broken promise, and honest
+programs that must still run. `check_refusals.py` gains E560, E561 and
+E562. `check_sandbox.py` gains the `declassify` grant refused and
+allowed. `check_fallible.py` gains `read_file_secret`. velaris-spec's
+corpus grows from 444 cases to 455: eight L1 cases for the new audit
+field and the refusals around it, three L2 cases for the grant, and one
+L2 case reworded because the program it held no longer compiles.
+
+velaris-spec goes to 0.7.0: `declassify` joins section 3.1, and section
+8.6 defines `secrets`. PRIOR_ART.md's TACIT entry, which said Velaris
+had no information-flow control, now says what it has and what TACIT
+still has that this does not; CaMeL's entry is corrected the same way.
+
+The benchmark was rerun in full. **No verdict moved**: 42 caught before
+running, 12 during, 2 missed, 0 false positives, unchanged. One row's
+evidence changed - `11c c_secret_from_env`, whose "config" helper reads
+a secret from the environment and prints it, was already
+caught-before-run because the audit showed an effect beyond the
+program's stated needs; it is now refused by the compiler instead
+(E503 on the helper's signature), so nothing is attempted at all.
+
+The GitHub Action's branding icon is `shield` where it was
+`check-circle`. A check-circle reads as "a check passed", which is the
+framing 5.0 moved away from.
+
 ## 5.0.1 - check_library.py runs on Linux and macOS again
 
 A test-suite fix. Nothing a user runs changes: the compiler, the

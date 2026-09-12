@@ -205,3 +205,32 @@ left alone. `--allow all` is the explicit way to ask for what a run
 used to get, and writes one line to standard error when it is used.
 The refusal a program now meets names the effect, what the run does
 allow, and the flag that would grant it.
+
+**6.0 (major), 2026-09-12.** `env()` returns `Secret of Text` where it
+returned `Text`, and a `Secret` cannot be printed, written, sent or
+passed to Python (E560). Three shapes of program stop compiling:
+one that emits what `env()` returned; one whose signature says it
+returns a `Text` and returns what `env()` gave it (E503); and one that
+puts it in a `Text` variable, field or parameter (E501). `declassify`
+is an eighth effect, so `--allow all` now grants eight, a `uses` clause
+may name it, and `velaris.audit/1`'s `effects` may hold it - a change
+to a list STABILITY.md's *budget grammar* clause covers.
+`stdlib/env_tools.vel` changed with the language: `setting` returns
+`Secret of Text`, `number_setting` declares `uses env, declassify`, and
+`public_setting` is new. **The reason**: an effect says a program
+printed something; it does not say whether what it printed was the
+secret, and a language whose whole claim is about running code you
+have not read had nothing at all to say about that. It was the one
+capability the peer-reviewed design beside this one had and this did
+not, and prior art said so in writing.
+
+This one was written as 5.1 first. It is 6.0 because rule 1 says a
+break ships in a major version - including a security fix that refuses
+something that used to work - and because this file already records two
+releases that got that wrong. A version number costs nothing.
+
+A 5.x user has to change: every use of `env()`'s result as a `Text`,
+which the compiler points at one by one; and a repository with a
+committed `velaris.capabilities` has to record `declassify` the first
+time one of its programs needs it, in review, which is the ratchet
+working rather than a break.

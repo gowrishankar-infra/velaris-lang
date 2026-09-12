@@ -264,13 +264,15 @@ Field meanings, all stable within `velaris.audit/1`:
 | `ffi_any` | true when a py* call names its module with a value built while running, which `ffi_modules` cannot list (added in 4.0) |
 | `counts` | `{"fs": n, "net": n}`: the most file and network operations one call to any of the file's functions can perform, by velaris-spec 9.4's fixed rules - `0` for an effect none of them declares, `null` where the text fixes no bound; the whole field `null` when the file does not compile (added in 4.2) |
 | `prover` | true when a prover checked the promises; false without one, when no status is `proven` and a `proven_share` of 0 says nothing about what could be proven - and false when the file does not compile (added in 4.2) |
+| `secrets` | `{"sources": [...], "declassifies": bool, "declassifications": [{"reason", "function", "line"}]}` - which builtins handed the program a `Secret` (`env`, `read_file_secret`), whether it ever declassifies one, and with what reason. `declassifies: false` with `ok: true` is the answer to "does this program ever let a secret out"; `null` when the file could not be loaded, and not null merely because `ok` is false (added in 6.0) |
 
 A new field may be added within version 1; a field will not change
 meaning or disappear without the schema name changing. `effects` and
-each function's `effects` hold only the seven effect names, even in the
-audit of a program that does not compile because it names another in
-a `uses` clause (from 4.1; until then that name was listed, and made
-`safe_command` a budget that does not parse).
+each function's `effects` hold only real effect names - the seven, and
+`declassify` from 6.0 - even in the audit of a program that does not
+compile because it names another in a `uses` clause (from 4.1; until
+then that name was listed, and made `safe_command` a budget that does
+not parse).
 
 ## Setting it up in your assistant
 

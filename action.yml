@@ -6,7 +6,7 @@ description: "Report what a repository's Velaris programs may touch and what the
 # (2.36.4) - and changing it changes the listing's URL slug. A new release has to
 # be published to the Marketplace before either reaches the listing.
 branding:
-  icon: "check-circle"
+  icon: "shield"
   color: "green"
 
 inputs:

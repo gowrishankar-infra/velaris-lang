@@ -185,7 +185,9 @@ TOOLS = [
     {
         "name": "velaris_audit",
         "description": (
-            "What a program can touch (io, fs, net, clock, rand, ffi), "
+            "What a program can touch (io, env, fs, net, clock, rand, "
+            "ffi, declassify), whether it holds a secret and whether it "
+            "ever lets one out, "
             "what each function promises, how much of that is proven "
             "rather than checked while running, what can fail, and the "
             "command to run it safely. Use this before running code you "
@@ -217,7 +219,8 @@ TOOLS = [
                 "allow": {
                     "type": "array", "items": {"type": "string"},
                     "description": ("effects to permit: io, env, fs, net, "
-                                    "clock, rand, ffi. Default ['io']. "
+                                    "clock, rand, ffi, declassify. "
+                                    "Default ['io']. "
                                     "Scoped grants: fs:read:./data, "
                                     "fs:write:./out, net:api.example.com"
                                     ":443, net:*.example.com, ffi:math,"

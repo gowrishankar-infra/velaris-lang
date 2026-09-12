@@ -13,8 +13,8 @@
 import "db.vel" as db
 import "env_tools.vel" as sys
 
-fn main() uses io, env, ffi {
-    print(format("running as {}", sys.setting("USER", "someone")))
+fn main() uses io, env, ffi, declassify {
+    print(format("running as {}", sys.public_setting("USER", "someone")))
     check db.open(":memory:") {
         ok conn {
             check db.run(conn, "create table notes (body text)") {

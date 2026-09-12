@@ -93,8 +93,8 @@ These are the mistakes that actually happen. Read them twice.
    effects. Effects: `io` (console: print, read_line, args), `env`
    (environment variables - its own effect since 3.0, so `env()`
    needs `uses env`, not `uses io`), `fs` (files), `net` (network),
-   `clock`, `rand`, `ffi` (calling Python). Declare all that apply:
-   `uses io, fs`.
+   `clock`, `rand`, `ffi` (calling Python), `declassify` (letting a
+   `Secret` out, rule 17). Declare all that apply: `uses io, fs`.
 
 2. **Failure cannot be ignored.** These can fail: `to_int`,
    `read_file`, `fetch`, `post`, `fetch_status`, `request`, `get` on a
@@ -171,6 +171,49 @@ These are the mistakes that actually happen. Read them twice.
     is no Money-valued total, an empty list having no currency. Write
     the currency in the call, one of: AED AUD BHD BRL CAD CHF CNY EUR
     GBP HKD INR JOD JPY KRW KWD MXN OMR SAR SGD USD ZAR (else E551).
+
+17. **`env()` gives a `Secret of Text`, and a Secret cannot be
+    printed.** This is the one a model gets wrong: you write
+    `print(env("API_KEY", ""))`, or `fn config(n: Text) -> Text uses
+    env { return env(n, "") }`, and neither compiles. `Secret of T`
+    wraps any T; `env()` and `read_file_secret()` are the only two
+    builtins that make one.
+
+    - **Nothing with an effect takes one.** `print`, `log`, `ask`,
+      `exit_with`, `write_file`, `read_file`, `fetch`, `post`,
+      `request`, `env` itself, and every `py_*` refuse a Secret
+      argument with **E560**. So does the reason given to `fail`.
+    - **It spreads through pure work and through structures.**
+      `"Bearer " + key` is a `Secret of Text`; `length(key)` is a
+      `Secret of Int`; `to_text`, `format`, `json_of`, `upper` all
+      keep it. A list of them, a map of them, or a record with one
+      secret field carries it, and the whole structure is refused at a
+      sink - not just the field.
+    - **A comparison gives an ordinary Bool.** `if key == ""`,
+      `length(key) < 10`, `key == other` - these are plain `Bool` and
+      may be printed. That is how you write anything useful about a
+      secret without letting it out.
+    - **Say Secret in the signature.** A function that hands one back
+      must write `-> Secret of Text`, or it is E503. Pass one along as
+      `fn f(k: Secret of Text) -> Secret of Text`.
+    - **`declassify(value, "why")` is the only way out**, needs
+      `uses declassify`, and the reason must be written as text in the
+      call (E561) - it goes into the audit. Use it when the value
+      genuinely is not a secret (a region, a log level), not to get
+      past the compiler.
+
+    What to write instead of `print(env("API_KEY", ""))`:
+
+    ```
+    fn main() uses io, env {
+        let key = env("API_KEY", "")
+        if key == "" {
+            print("API_KEY is not set")
+        } else {
+            print("API_KEY is set")
+        }
+    }
+    ```
 
 ## Recursion, loops, and depth
 
@@ -280,7 +323,8 @@ import "dates.vel" as dates   a Date record, and its parts (below)
 import "csv.vel" as csv       comma-separated rows         (below)
 import "log.vel" as log       lines on stderr; die STOPS the program,
                               exit 1 - not a catchable failure  (below)
-import "env_tools.vel" as sys setting number_setting succeed give_up
+import "env_tools.vel" as sys setting public_setting number_setting
+                              succeed give_up
 import "money.vel" as money   split(amount, ways) -> List of Money of C
                               requires ways > 0; PROVEN: as many parts
                               as asked, adding up to the amount exactly,
@@ -341,8 +385,10 @@ log  (uses io)
   die(message: Text)                          logs and STOPS, exit 1
 
 env_tools  (uses io)
-  setting(name: Text, fallback: Text) -> Text
+  setting(name, fallback) -> Secret of Text   (uses env)
+  public_setting(name, fallback) -> Text      (uses env, declassify)
   number_setting(name: Text, fallback: Int) -> Int
+                                              (uses env, declassify)
   succeed()                                   exits 0
   give_up(why: Text)                          prints and exits 1
 ```
@@ -353,8 +399,11 @@ env_tools  (uses io)
 ```
 print(x) uses io              ask(prompt) uses io
 log(x) uses io                env(name, fallback) uses env
-args() uses io                exit_with(code) uses io
-read_line() uses io
+args() uses io                  -> Secret of Text (rule 17)
+read_line() uses io           exit_with(code) uses io
+declassify(secret, "why") uses declassify - the only way out of a
+  Secret; the reason must be written in the call, and is what
+  velaris audit reports
 
 length(x)     get(list, i)    push(list, v)    get(map, k) CAN FAIL
 pop(list) CAN FAIL            slice(list, from, to) CAN FAIL
@@ -380,6 +429,10 @@ upper(t) lower(t) split(t, sep) contains(t, s) chars(t) code_at(t, i)
 format(template, ...)
 
 read_file(p) CAN FAIL uses fs
+read_file_secret(p) CAN FAIL uses fs   -> Secret of Text (rule 17)
+read_file_secret(p) CAN FAIL uses fs  -> Secret of Text (rule 17)
+declassify(secret, "why") uses declassify - the reason must be
+  written here, not built; it is what velaris audit reports
 write_file(p, body) uses fs - does NOT fail catchably; an
   unwritable path or full disk stops the program with E608
 file_exists(p) uses fs

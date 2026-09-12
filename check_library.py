@@ -305,15 +305,29 @@ def _hosts(*hosts, any_host=False) -> dict:
     return {"hosts": sorted(hosts), "any": any_host}
 
 
+def _secrets(sources=(), declassifications=()) -> dict:
+    """velaris.audit/1's secrets (6.0, velaris-spec 8.6)."""
+    return {"sources": sorted(sources),
+            "declassifies": bool(declassifications),
+            "declassifications": list(declassifications)}
+
+
 def surface(effects, functions, safe_command, ffi_modules=(),
-            ffi_any=False, fs_paths=None, net_hosts=None) -> dict:
+            ffi_any=False, fs_paths=None, net_hosts=None,
+            secrets=None) -> dict:
     """What velaris.audit/1 must say of a program that compiles: the
-    fields that do not depend on a prover (velaris-spec 8.2)."""
-    return {"ok": True, "effects": sorted(effects), "functions": functions,
-            "ffi_modules": sorted(ffi_modules), "ffi_any": ffi_any,
-            "fs_paths": fs_paths or _paths(),
-            "net_hosts": net_hosts or _hosts(),
-            "safe_command": safe_command}
+    fields that do not depend on a prover (velaris-spec 8.2).
+
+    `secrets` is compared only where a case names it, so the cases
+    written before 6.0 say nothing about a field that did not exist."""
+    out = {"ok": True, "effects": sorted(effects), "functions": functions,
+           "ffi_modules": sorted(ffi_modules), "ffi_any": ffi_any,
+           "fs_paths": fs_paths or _paths(),
+           "net_hosts": net_hosts or _hosts(),
+           "safe_command": safe_command}
+    if secrets is not None:
+        out["secrets"] = secrets
+    return out
 
 
 def refused(*codes) -> dict:
@@ -422,6 +436,104 @@ fn main() uses io {
 }
 '''},
          expect=refused("E310")),
+    # 6.0: the secrets section (velaris-spec 8.6). A consumer asks one
+    # question of it - does this program ever let a secret out - and gets
+    # an answer without running the program.
+    dict(id="secret-kept", description="a program that reads the "
+         "environment holds a Secret: the audit names env as its source "
+         "and says it never declassifies",
+         files={"main.vel": '''fn main() uses io, env {
+    let key = env("API_KEY", "")
+    if key == "" {
+        print("not set")
+    }
+}
+'''},
+         expect=surface(["env", "io"],
+                        _fns(("main", ["env", "io"], False)),
+                        "velaris <file> --allow env,io",
+                        secrets=_secrets(sources=["env"]))),
+    dict(id="secret-declassified", description="a program that "
+         "declassifies says so, with the reason written in the call and "
+         "the function it is in; declassify is an effect, so a budget "
+         "can refuse it",
+         files={"main.vel": '''fn main() uses io, env, declassify {
+    let region = env("REGION", "unset")
+    print(declassify(region, "a region is not a secret"))
+}
+'''},
+         expect=surface(["declassify", "env", "io"],
+                        _fns(("main", ["declassify", "env", "io"], False)),
+                        "velaris <file> --allow declassify,env,io",
+                        secrets=_secrets(
+                            sources=["env"],
+                            declassifications=[
+                                {"reason": "a region is not a secret",
+                                 "function": "main", "line": 3}]))),
+    dict(id="secret-from-a-file", description="read_file_secret is the "
+         "other source, and its path is read for the fs grant the way "
+         "read_file's is",
+         files={"main.vel": '''fn main() uses io, fs {
+    check read_file_secret("etc/token") {
+        ok body {
+            print(length(body) == 0)
+        }
+        fail why {
+            print(why)
+        }
+    }
+}
+'''},
+         expect=surface(["fs", "io"], _fns(("main", ["fs", "io"], False)),
+                        "velaris <file> --allow fs:read:etc/token,io",
+                        fs_paths=_paths(read=["etc/token"]),
+                        secrets=_secrets(sources=["read_file_secret"]))),
+    dict(id="no-secret-at-all", description="a program that touches no "
+         "secret says so: no source, and no declassification",
+         files={"main.vel": '''fn main() uses io {
+    print("hello")
+}
+'''},
+         expect=surface(["io"], _fns(("main", ["io"], False)),
+                        "velaris <file> --allow io",
+                        secrets=_secrets())),
+    dict(id="secret-printed", description="a Secret given to something "
+         "that emits it is refused before running (E560)",
+         files={"main.vel": '''fn main() uses io, env {
+    print(env("API_KEY", ""))
+}
+'''},
+         expect=refused("E560")),
+    dict(id="secret-returned-as-plain", description="a signature that does "
+         "not say Secret cannot return one (E503)",
+         files={"main.vel": '''fn load() -> Text uses env {
+    return env("API_KEY", "")
+}
+
+fn main() uses io, env {
+    print(load())
+}
+'''},
+         expect=refused("E503")),
+    dict(id="declassify-reason-not-literal", description="declassify needs "
+         "its reason written in the call, because the audit reads it "
+         "without running the program (E561)",
+         files={"main.vel": '''fn main() uses io, env, declassify {
+    let key = env("API_KEY", "")
+    let why = "built while running"
+    print(declassify(key, why))
+}
+'''},
+         expect=refused("E561")),
+    dict(id="declassify-effect-undeclared", description="declassify "
+         "without 'uses declassify' is refused like any other effect "
+         "(E300)",
+         files={"main.vel": '''fn main() uses io, env {
+    let key = env("API_KEY", "")
+    print(declassify(key, "why"))
+}
+'''},
+         expect=refused("E300")),
     dict(id="declared-not-used", description="an effect declared and never "
          "performed is still in effects: a declaration is an upper bound; "
          "net with no host named is plain net",
@@ -1971,8 +2083,18 @@ def main() -> int:
            not d.get("ok") and d["problems"][0]["code"] == "E300",
            str(d)[:120])
 
+        # 6.0: env() hands back a Secret of Text, which cannot be
+        # printed. A comparison over one gives an ordinary Bool, which
+        # is exactly what this asks - is the token reachable or not -
+        # so the test says the same thing without the program being
+        # able to say it.
         env_prog = ('fn main() uses io, env {\n'
-                    '    print(env("VELARIS_TOKEN", "absent"))\n}\n')
+                    '    let token = env("VELARIS_TOKEN", "absent")\n'
+                    '    if token == "absent" {\n'
+                    '        print("absent")\n'
+                    '    } else {\n'
+                    '        print("READ IT")\n'
+                    '    }\n}\n')
         d = post("/run", {"source": env_prog, "allow": ["io", "env"]})
         ok("a program granted env cannot read VELARIS_TOKEN: the door took "
            "it out of the environment its workers inherit",
@@ -2444,8 +2566,8 @@ def main() -> int:
     print("the effect surface velaris.audit/1 reports (4.1)")
     print("-" * 62)
     # Each entry of AUDITS is a case in velaris-spec tests/L1. Besides the
-    # fields a case names, every document must hold only the seven in
-    # effects, and a safe_command whose grants parse.
+    # fields a case names, every document must hold only real effect
+    # names in effects, and a safe_command whose grants parse.
     import tempfile as _tf
     audit_validator = None
     # velaris-spec beside this checkout, or inside it where CI puts it
@@ -2479,8 +2601,8 @@ def main() -> int:
                       if c not in codes]
         else:
             for key in ("effects", "ffi_modules", "ffi_any", "fs_paths",
-                        "net_hosts", "safe_command"):
-                if doc.get(key) != want[key]:
+                        "net_hosts", "safe_command", "secrets"):
+                if key in want and doc.get(key) != want[key]:
                     diffs.append(f"{key} is {doc.get(key)!r}")
             fns = [{"name": f["name"], "effects": f["effects"],
                     "can_fail": f["can_fail"]} for f in doc["functions"]]
@@ -2489,7 +2611,7 @@ def main() -> int:
         if doc["effects"] != sorted(set(doc["effects"])) or not set(
                 doc["effects"]) <= set(velaris.ALL_EFFECTS):
             diffs.append(f"effects {doc['effects']} is not a sorted subset "
-                         f"of the seven")
+                         f"of {list(velaris.ALL_EFFECTS)}")
         try:
             velaris.Budget.parse(doc["safe_command"].split("--allow ", 1)[1])
         except ValueError as e:

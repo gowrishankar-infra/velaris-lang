@@ -1,18 +1,34 @@
 // The environment a program runs in. Reading it is the `env` effect
-// (since 3.0), so an io-only budget cannot reach a secret through it.
+// (since 3.0), so an io-only budget cannot reach a secret through it,
+// and from 6.0 what comes back is a `Secret of Text`: the compiler
+// will not let it be printed, written, sent or passed to Python.
 //
 // import "env_tools.vel" as sys
 
-fn setting(name: Text, fallback: Text) -> Text uses env {
+fn setting(name: Text, fallback: Text) -> Secret of Text uses env {
     return env(name, fallback)
 }
 
-fn number_setting(name: Text, fallback: Int) -> Int uses env {
-    let raw = env(name, "")
-    if length(raw) == 0 {
+// A setting the program says is not a secret - a user name, a region, a
+// log level. Saying so is what `declassify` is for: the reason below is
+// what `velaris audit` reports, and an operator who does not want any
+// setting made public refuses the `declassify` grant.
+fn public_setting(name: Text, fallback: Text) -> Text
+uses env, declassify
+{
+    let raw = setting(name, fallback)
+    return declassify(raw, "this setting is read to be shown, not kept")
+}
+
+fn number_setting(name: Text, fallback: Int) -> Int
+uses env, declassify
+{
+    let raw = setting(name, "")
+    if raw == "" {
         return fallback
     }
-    check to_int(raw) {
+    let shown = declassify(raw, "a numeric setting is a number, not a secret")
+    check to_int(shown) {
         ok n {
             return n
         }
