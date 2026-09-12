@@ -74,9 +74,10 @@ fn main() uses io {
 }
 ```
 
-Types: `Int` `Float` `Bool` `Text` `Handle`, `List of T`,
-`Map of K to V` (K is `Text` or `Int`), `fn(T) -> R`, record names.
-Generic: `fn first(xs: List of T) -> T for any T`.
+Types: `Int` `Float` `Bool` `Text` `Handle` `Money of INR`,
+`List of T`, `Map of K to V` (K is `Text` or `Int`), `fn(T) -> R`,
+record names. Generic: `fn first(xs: List of T) -> T for any T`, and in
+a currency: `fn fee(m: Money of C) -> Money of C for any C`.
 
 ## Rules a model gets wrong
 
@@ -148,6 +149,23 @@ These are the mistakes that actually happen. Read them twice.
 
 15. **Declaring an unused effect is legal but viral** - every caller
     must then declare it too. Declare only what a function does.
+
+16. **Money is not a number and never a Float.** `money(1250, "INR")`
+    is 12.50 rupees: whole minor units, with the currency in the type.
+    Three rules, each a compile error to break: **no Float** touches an
+    amount (E501); **no two currencies** meet (E550 - and there is no
+    conversion builtin, because a rate and a rounding policy belong in
+    your program); **rounding is always named** - `/` and `%` on an
+    amount are refused (E553), so write
+    `percent_of(amount, 25, 1000, "half_up")` or
+    `divide_or_fail(amount, 3, "half_even")`, mode written in the call
+    (`"half_up"`, `"half_even"`, `"down"`; there is no default). An
+    amount adds to an amount and multiplies by an `Int`; amount times
+    amount is a type error. `units_of(m)` is its minor units and
+    `units_of(xs)` what a list of them adds up to (0 when empty); there
+    is no Money-valued total, an empty list having no currency. Write
+    the currency in the call, one of: AED AUD BHD BRL CAD CHF CNY EUR
+    GBP HKD INR JOD JPY KRW KWD MXN OMR SAR SGD USD ZAR (else E551).
 
 ## Recursion, loops, and depth
 
@@ -251,17 +269,19 @@ Other modules, imported under a name. **Full signatures**, since
 guessing them is the commonest source of wasted attempts:
 
 ```
-import "http.vel" as http     get status ok send get_with post_json
-                              call -> Answer record (status, body, raw)
-                              code_of/body_of read it; header_of CAN FAIL
-import "db.vel" as db         open run rows_json count close commit
-import "dates.vel" as dates   make parse text_of before same next_day
-                              days_in today  (Date is a record)
-import "csv.vel" as csv       fields line_of column column_int rows_of
-import "log.vel" as log       info warn error event die
-                              (die logs and STOPS the program, exit 1 -
-                              it is not a catchable failure)
+import "http.vel" as http     the network, as calls        (below)
+import "db.vel" as db         sqlite through ffi           (below)
+import "dates.vel" as dates   a Date record, and its parts (below)
+import "csv.vel" as csv       comma-separated rows         (below)
+import "log.vel" as log       lines on stderr; die STOPS the program,
+                              exit 1 - not a catchable failure  (below)
 import "env_tools.vel" as sys setting number_setting succeed give_up
+import "money.vel" as money   split(amount, ways) -> List of Money of C
+                              requires ways > 0; PROVEN: as many parts
+                              as asked, adding up to the amount exactly,
+                              none negative when the amount is not.
+                              not_negative / not_positive are its
+                              predicates, for your own all_of
 import "time.vel" as time     today clock_text seconds year_of month_of
                               (time needs 'uses ffi' and its functions
                               CAN FAIL - handle or pass up)
@@ -340,6 +360,15 @@ div_or_fail(a, b) CAN FAIL    mod_or_fail CAN FAIL
 use the _or_fail forms when the divisor comes from input)
 put(map, k, v)  get_or(map, k, default)  has(map, k)  keys(map)
 all_of(xs, p)   any_of(xs, p)
+
+money(units, "INR")    an amount: whole minor units in that currency
+units_of(m)            its minor units; units_of(list) their sum, 0 if
+                       empty          with_units(m, n) n units, m's currency
+percent_of(m, numerator, denominator, "half_up")   the mode is required
+divide_or_fail(m, by, "half_even") CAN FAIL        ("half_up",
+                       "half_even", "down"; / and % on an amount are E553)
+text_of(m) -> "INR 12.50"      parse_money(t, "INR") CAN FAIL
+(a builtin above added in 4.3 gives way to your own function of that name)
 
 to_int(t) CAN FAIL   to_text(x)   to_float(x)   round(f)
 upper(t) lower(t) split(t, sep) contains(t, s) chars(t) code_at(t, i)
@@ -466,7 +495,7 @@ them as structured data for a fix loop.
 | E600/E601 | a promise broke while running | fix the code or the promise |
 | E700 | a promise is provably false | the counterexample is in the message |
 | E701 | a call can break the callee's `requires` | check the value first |
-| E703/E704 | a loop invariant does not hold | weaken it or fix the loop |
+| E703/E704 | a loop invariant does not hold, before or while running | weaken it or fix the loop |
 | E705 | a list read can go out of range | add a `requires` about the length |
 | E706 | a divisor can be zero | add `requires n != 0` or guard it |
 | E400 | no `main` | add fn main() |
@@ -480,8 +509,11 @@ them as structured data for a fix loop.
 | E609 | recursion 2000 deep | move toward the base case, or use a loop |
 | E612 | a loop's end could not be shown (only under `check --strict`) | make one counter move one step toward a limit the body does not change |
 | E542 | function value of the wrong shape | match the parameter's fn type |
+| E550 | two currencies met | convert on purpose, or keep one currency |
+| E551 | a currency that is not known, or not written in the call | write a listed code: `money(1250, "INR")` |
+| E552 | a rounding mode missing or not written in the call | pass `"half_up"`, `"half_even"` or `"down"` |
+| E553 | `/` or `%` on an amount | `divide_or_fail(m, n, "half_even")`, `percent_of`, or `money.split` |
 | E602 | a list read went out of range while running | fix the index |
-| E704 | a loop invariant broke while running | fix the loop or invariant |
 
 ## A complete program to imitate
 

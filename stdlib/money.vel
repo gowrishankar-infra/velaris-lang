@@ -1,0 +1,55 @@
+// Money, divided without losing a minor unit.
+//
+// import "money.vel" as money
+// let shares = money.split(payout, 3)
+//
+// The amount type, its arithmetic, units_of, percent_of and
+// divide_or_fail are built in (SPEC.md 4.4). split is here, in Velaris,
+// so that its promises are proven with your program instead of taken on
+// trust: the parts add up to the amount, exactly, and none has a sign
+// the amount does not have.
+
+fn not_negative(m: Money of C) -> Bool for any C {
+    return units_of(m) >= 0
+}
+
+fn not_positive(m: Money of C) -> Bool for any C {
+    return units_of(m) <= 0
+}
+
+// ways parts that add up to amount exactly. The parts differ by at most
+// one minor unit, and the larger ones come first: split(1000 paise, 3)
+// is 334, 333, 333. A negative amount splits into the negated parts of
+// the positive one, so a charge and its refund cancel party by party.
+fn split(amount: Money of C, ways: Int) -> List of Money of C for any C
+    requires ways > 0
+    ensures length(result) == ways
+    ensures units_of(result) == units_of(amount)
+    ensures units_of(amount) < 0 or all_of(result, not_negative)
+    ensures units_of(amount) > 0 or all_of(result, not_positive)
+{
+    let parts: List of Money of C = []
+    let left = amount
+    let i = 0
+    while i < ways - 1
+        invariant units_of(parts) + units_of(left) == units_of(amount)
+        invariant units_of(amount) < 0 or units_of(left) >= 0
+        invariant units_of(amount) > 0 or units_of(left) <= 0
+        invariant units_of(amount) < 0 or all_of(parts, not_negative)
+        invariant units_of(amount) > 0 or all_of(parts, not_positive)
+    {
+        // this part is what is left over the parts still to make,
+        // rounded away from zero, so the extra units go to the first
+        let units = units_of(left)
+        let rest = ways - i
+        let share = units / rest
+        if units > 0 and units % rest != 0 {
+            share = share + 1
+        }
+        let part = with_units(left, share)
+        parts = push(parts, part)
+        left = left - part
+        i = i + 1
+    }
+    return push(parts, left)
+}

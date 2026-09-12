@@ -412,6 +412,15 @@ error, not a silent wrap — and the same error whether your code is
 interpreted or running as machine code. Floats are IEEE-754 doubles,
 proven as such.
 
+**Money is neither.** `money(1250, "INR")` is 12.50 rupees held as 1250
+paise: an exact whole number of minor units, with the currency in its
+type, so INR meeting USD is a compile error and no `Float` goes near it.
+Dividing an amount says how it rounds — `percent_of(claim, 25, 1000,
+"half_up")` — or it does not compile, and `money.split(payout, 3)`
+gives parts that **provably** add up to the payout. See
+[`examples/settlement.vel`](examples/settlement.vel) and
+[SPEC.md §4.3](SPEC.md).
+
 ## Remembered proofs
 
 Proofs are cached in `.velaris/` and keyed by the function's text *and*
@@ -455,7 +464,7 @@ permissions:
 
 steps:
   - uses: actions/checkout@v5
-  - uses: gowrishankar-infra/velaris-lang@v4.2.1
+  - uses: gowrishankar-infra/velaris-lang@v4.3.0
     with:
       files: "src/*.vel"     # optional; default is every .vel file
       format: "true"         # optional; also check formatting

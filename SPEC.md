@@ -48,6 +48,7 @@ a typed `let` (E506, E507).
 ## 3. Types
 
     Int  Float  Bool  Text  Handle
+    Money of CUR             (an amount in a currency, §4.4)
     List of T
     Map of K to V            (K is Text or Int)
     fn(T, ...) -> R          (a function value; pure only)
@@ -88,7 +89,76 @@ does not raise an error, because it is what the hardware defines.
 `Int` and `Float` never mix implicitly. `to_float(x)` widens;
 `round(x)` narrows.
 
-### 4.3 Text
+### 4.3 Money
+
+`Money of CUR` is an exact amount: a whole number of **minor units** —
+paise, cents, fils — in the currency `CUR`, which is part of the type.
+The units are an `Int`, with the same 64-bit range and the same error
+past it (E407). No `Float` is part of any of it, and there is no
+conversion between currencies: a rate and a rounding policy are a
+program's decisions, not a language's.
+
+    money(1250, "INR")        12.50 rupees, as 1250 paise
+    units_of(m)               its minor units, as an Int
+    with_units(m, n)          n minor units, in m's currency
+
+`money` and `parse_money` take the currency as text **written in the
+call**, and it must be one the implementation knows (`CURRENCIES` in
+`velaris.py`, §4.4); anything else is E551. A function may be generic in
+a currency: `fn f(m: Money of C) -> Money of C for any C`.
+
+**Arithmetic.** Two amounts in the same currency add, subtract and
+compare. An amount multiplies by an `Int`. Everything else is refused
+before the program runs: two currencies mixed (E550), an amount times an
+amount, an amount and a number, an amount and a `Float` (E501), and `/`
+or `%` on an amount (E553), because both would round without saying how.
+
+**Rounding is named or it does not happen.** Where a result may not come
+out even, the mode is a required argument, written in the call as
+`"half_up"` (a half goes away from zero), `"half_even"` (to the even
+neighbour) or `"down"` (toward zero). Anything else is E552.
+
+    percent_of(amount, numerator, denominator, "half_up")
+    divide_or_fail(amount, by, "half_even")          // can fail
+
+`percent_of` multiplies before it divides and is exact in between,
+however large that product; only its result must fit in 64 bits. A
+denominator of zero is an error while running (E403), and one the prover
+shows can be zero is E706. `divide_or_fail` fails, catchably, on zero
+and on a result too large to hold.
+
+`units_of` also takes a **list** of amounts and gives what they add up
+to, as an `Int`, and 0 for an empty list. There is no `Money`-valued
+total of a list, because an empty list has no currency to give one.
+
+`text_of(m)` writes the code, then the amount with exactly as many
+digits after the point as the currency has minor units: `INR 12.50`,
+`JPY 1250`, `KWD 1.250`, `INR -0.05`. `to_text`, `print` and `format`
+write an amount the same way; `json_of` writes it as its currency and
+its units, never as a number with a point. `parse_money(text, "INR")`
+reads back what `text_of` wrote, and the same without the code or with
+fewer digits after the point; it fails on anything else, including a
+text with more digits than the currency has.
+
+Dividing an amount into parts that still add up to it is
+`money.split(amount, n)` from `stdlib/money.vel`, which is written in
+Velaris so that its promises are proven with the program that imports
+it (§9.2): `length(result) == n`, `units_of(result) == units_of(amount)`,
+and no part with a sign the amount does not have.
+
+### 4.4 Which currencies
+
+An implementation carries a table of currency codes and how many digits
+each has after the point: `CURRENCIES` in `velaris.py`, which today
+holds 21 of them — 2 digits for INR, USD, EUR and most others, 0 for JPY
+and KRW, 3 for KWD, BHD, JOD and OMR. **It is not exhaustive.** A
+currency outside it is refused (E551) rather than assumed to have two
+digits, because an assumed minor unit prints and parses amounts wrongly.
+Adding one is a line in that table with the count ISO 4217 gives it, and
+a case in `check_money.py`. A program cannot add its own: two programs
+that disagreed about a currency would write the same amount two ways.
+
+### 4.5 Text
 
 `Text` is a sequence of Unicode code points. `length` counts code
 points, not bytes, and `code_at(t, i)` returns the code point at a
@@ -202,8 +272,8 @@ Ignoring a fallible call is a compile error (E520). `main` cannot
 fail.
 
 Fallible builtins: `to_int`, `read_file`, `fetch`, `post`,
-`fetch_status`, `get` on a **map**, the `py_*` family, and the `json_*`
-readers. `get` on a **list** is not fallible: list bounds are the
+`fetch_status`, `get` on a **map**, `divide_or_fail`, `parse_money`, the
+`py_*` family, and the `json_*` readers. `get` on a **list** is not fallible: list bounds are the
 prover's domain (§9.4), and `get_or(m, k, default)` gives a total map
 lookup.
 
@@ -253,6 +323,18 @@ that returns; division and remainder, including that the divisor is
 never zero; `Float` in genuine IEEE-754 rather than as real numbers;
 `length` and `contains` on text, `upper`/`lower` as length-preserving,
 and `split` as producing at least one piece.
+
+Amounts (§4.3) prove as the whole numbers they are: an amount is its
+minor units to the prover, so `ensures result >= money(0, "INR")` is
+settled the way `result >= 0` is, and `percent_of` is the exact rounding
+the interpreter performs, translated for a denominator shown positive.
+What a list of amounts adds up to is an unknown the prover is told three
+true things about — that nothing adds up to zero, and that items all
+`>= 0` (all `<= 0`) add up to something `>= 0` (`<= 0`) — so a promise
+that needs more about a sum than those, such as one that needs induction
+over the list, is left to runtime rather than claimed. `text_of`,
+`parse_money` and `divide_or_fail` are not modelled at all: a function
+that uses one keeps its promises as runtime checks.
 
 Not proven, and checked at runtime instead: the contents of text
 beyond the above; anything involving values that come back from the
@@ -321,6 +403,21 @@ shadow an import name (E514).
 
 Imports are resolved relative to the importing file, with the bundled
 standard library searched last. Import cycles are rejected.
+
+### 10.1 Your names and the builtins
+
+A builtin added in **4.3 or later** gives way to a function of the same
+name that the program defines: `money`, `units_of`, `with_units`,
+`percent_of`, `divide_or_fail`, `text_of` and `parse_money` are the
+program's own wherever it declares one. A program written before a
+builtin existed therefore keeps meaning exactly what it meant, which is
+what lets a minor version add one at all. Inside a library imported
+**with a name**, such a call always reaches the builtin: the library's
+own functions carry its prefix, and it was not written against the
+program importing it.
+
+The builtins that existed before 4.3 keep the precedence they have
+always had: a function named like one of those is never reached.
 
 ## 11. Compilation and execution
 

@@ -526,7 +526,10 @@ def main() -> int:                        # noqa: C901 - a suite, not logic
     CONSTANTS = {"KEYWORDS", "TOKEN_SPEC", "ESCAPES", "FALLIBLE_BUILTINS",
                  "BUILTINS", "KNOWN_TYPES", "FLIP", "BUILTIN_EFFECTS",
                  "UNARY_BEFORE", "UNARY_KEYWORDS", "MUTABLE_GLOBALS",
-                 "_PCT_DECODE", "ERROR_TABLE", "_EFFECT_WORDS"}
+                 "_PCT_DECODE", "ERROR_TABLE", "_EFFECT_WORDS",
+                 # the currency table: written once here, never by a
+                 # program, so two runs cannot disagree about a currency
+                 "CURRENCIES"}
     makers = {"dict", "list", "set", "defaultdict", "deque", "Counter",
               "OrderedDict"}
     found = set()

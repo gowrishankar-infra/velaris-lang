@@ -45,6 +45,8 @@ CALLS = {
     "mul_or_fail": "mul_or_fail(4000000000, 4000000000)",
     "div_or_fail": "div_or_fail(10, 0)",
     "mod_or_fail": "mod_or_fail(10, 0)",
+    "divide_or_fail": 'divide_or_fail(money(10, "INR"), 0, "half_up")',
+    "parse_money": 'parse_money("not an amount", "INR")',
     "py":          'py("nosuchmodule", "f", xs_t)',
     "py_int":      'py_int("nosuchmodule", "f", xs_t)',
     "py_float":    'py_float("nosuchmodule", "f", xs_t)',

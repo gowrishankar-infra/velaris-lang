@@ -278,7 +278,7 @@ Usage:
 import json
 import os
 
-VERSION = "4.2.1"
+VERSION = "4.3.0"
 import re
 import sys
 from dataclasses import dataclass, field
@@ -348,6 +348,8 @@ def fmt_fn_type(param_types: list, ret: str | None) -> str:
 def type_mentions(t: str, tv: str) -> bool:
     if t == tv:
         return True
+    if t.startswith("Money of "):           # a currency variable
+        return t[len("Money of "):] == tv
     if t.startswith("List of "):
         return type_mentions(t[len("List of "):], tv)
     if t.startswith("Map of "):
@@ -593,6 +595,14 @@ ERROR_TABLE = {
     "E541": "a type variable named like a real type",
     "E542": "a function value of the wrong shape",
     "E543": "a generic function passed as a value",
+    "E550": "amounts in two different currencies added, compared, or one "
+            "given where the other is needed",
+    "E551": "a currency that is not in velaris.CURRENCIES, or one not "
+            "written as text in the call",
+    "E552": "a rounding mode other than \"half_up\", \"half_even\" or "
+            "\"down\", or one not written as text in the call",
+    "E553": "an amount divided with '/' or '%', which would round "
+            "without saying how",
     "E600": "a 'requires' broke while running",
     "E601": "an 'ensures' broke while running",
     "E602": "a position outside a list or text while running",
@@ -980,6 +990,15 @@ class Parser:
                 raise VelarisError("E100", "expected 'of' after 'List'", of.line,
                                   fixes=["write list types like: List of Int"])
             return "List of " + self.parse_type()   # nesting allowed
+        # an amount: Money of INR, or Money of C in a function generic in
+        # its currency (4.3). 'Money' alone stays a name, so a program's
+        # own record called Money means what it did - including one
+        # followed by a field called 'of'.
+        if (t.text == "Money" and self.peek().text == "of"
+                and self.toks[self.i + 1].kind == "IDENT"
+                and self.toks[self.i + 2].text != ":"):
+            self.next()
+            return "Money of " + self.next().text
         return t.text
 
     # expressions: or -> and -> not -> comparison -> add/sub -> mul/div -> atoms
@@ -1327,7 +1346,40 @@ def load_program(entry: str, entry_source: str | None = None,
             records.append(r)
 
     load(entry, None)
+    _bind_new_builtins(funcs)
     return funcs, records
+
+
+def _bind_new_builtins(funcs: list) -> None:
+    """A builtin added from 4.3 on gives way to a program's own function
+    of the same name (SPEC.md 10.1). Inside a library imported with a
+    name, though, a call can only mean the builtin: the library's own
+    functions carry its prefix, and it was not written against the
+    program that imports it. When the program's plain names hide such a
+    builtin, the library's calls to it are bound to it here, as '@name'.
+    Programs with no such clash are left exactly as parsed."""
+    hidden = NEW_BUILTINS & {f.name for f in funcs if "." not in f.name}
+    if not hidden:
+        return
+    import dataclasses as _dc
+
+    def walk(node):
+        if isinstance(node, (list, tuple)):
+            for x in node:
+                walk(x)
+            return
+        if not _dc.is_dataclass(node):
+            return
+        if isinstance(node, Call) and node.name in hidden:
+            node.name = "@" + node.name
+        for fl in _dc.fields(node):
+            walk(getattr(node, fl.name))
+
+    for f in funcs:
+        if "." in f.name:
+            walk(f.body)
+            walk(f.requires)
+            walk(f.ensures)
 
 
 def blame(fn_or_rec, err: VelarisError) -> VelarisError:
@@ -1347,7 +1399,8 @@ FALLIBLE_BUILTINS = {"to_int", "read_file", "fetch", "post",
                      "div_or_fail", "mod_or_fail",
                      "fetch_status", "request", "py", "py_int", "py_float",
                      "py_json", "json_get", "json_int", "json_float",
-                     "json_len", "py_new", "py_do", "py_field"}   # + get on maps
+                     "json_len", "py_new", "py_do", "py_field",
+                     "divide_or_fail", "parse_money"}   # + get on maps
 
 PROGRAM_ARGS: list = []    # filled by the CLI: velaris prog.vel a b c
 
@@ -2090,6 +2143,13 @@ def checked_int(value: int, op: str, line: int) -> int:
             fixes=["keep the numbers smaller",
                    "or work in smaller units, like cents instead of "
                    "rupees"])
+    if value.__class__ is MoneyValue and \
+            not INT_MIN <= value.units <= INT_MAX:
+        raise VelarisError("E407",
+            f"this '{op}' made an amount too big to hold (an amount is "
+            f"{INT_MIN} to {INT_MAX} minor units)", line,
+            fixes=["an amount is held exactly, in 64 bits of minor "
+                   "units; one this large is almost certainly a bug"])
     return value
 
 def _z3_installed() -> bool:
@@ -2169,9 +2229,255 @@ BUILTINS = {
     "sub_or_fail": {"effects": set(),     "types": ["Int", "Int"],  "ret": "Int"},
     "mul_or_fail": {"effects": set(),     "types": ["Int", "Int"],  "ret": "Int"},
     "get":        {"effects": set(),      "types": ["Any", "Any"],  "ret": "Any"},
+    # Money (4.3), all pure. Their types are checked by their own rules
+    # in check_types, because an amount's currency is part of its type;
+    # these rows are what the docs and the editor show.
+    "money":      {"effects": set(), "types": ["Int", "Text"],
+                   "ret": "Money of that currency"},
+    "units_of":   {"effects": set(), "types": ["Money of C, or List of Money of C"],
+                   "ret": "Int"},
+    "with_units": {"effects": set(), "types": ["Money of C", "Int"],
+                   "ret": "Money of C"},
+    "percent_of": {"effects": set(),
+                   "types": ["Money of C", "Int", "Int", "Text"],
+                   "ret": "Money of C"},
+    "divide_or_fail": {"effects": set(),
+                       "types": ["Money of C", "Int", "Text"],
+                       "ret": "Money of C"},
+    "text_of":    {"effects": set(), "types": ["Money of C"], "ret": "Text"},
+    "parse_money": {"effects": set(), "types": ["Text", "Text"],
+                    "ret": "Money of that currency"},
 }
 
 KNOWN_TYPES = {"Int", "Text", "Bool", "Float", "Handle"}
+
+# ---- Money (4.3) ------------------------------------------------------------
+# An amount is a whole number of minor units - paise, cents - and a
+# currency. It is an Int underneath, so it is exact and it proves the way
+# an Int proves; its currency is part of its type, so an amount in INR
+# never meets one in USD; and no Float is part of anything it does
+# (SPEC.md 4.3, and 4.4 for the currency table).
+
+# ISO 4217 code -> digits after the point. Not every currency: the ones
+# a program here has needed. Adding one is a line here, with the minor
+# unit ISO 4217 gives it, and a case in check_money.py. A program cannot
+# add its own, because two programs that disagreed about how many digits
+# a currency has would print the same amount two ways.
+CURRENCIES = {
+    "AED": 2, "AUD": 2, "BHD": 3, "BRL": 2, "CAD": 2, "CHF": 2,
+    "CNY": 2, "EUR": 2, "GBP": 2, "HKD": 2, "INR": 2, "JOD": 3,
+    "JPY": 0, "KRW": 0, "KWD": 3, "MXN": 2, "OMR": 3, "SAR": 2,
+    "SGD": 2, "USD": 2, "ZAR": 2,
+}
+
+# how a division that does not come out even is rounded; always named in
+# the call, never assumed. half_up takes a half away from zero, half_even
+# to the even neighbour, down toward zero.
+ROUNDING = ("half_up", "half_even", "down")
+
+MONEY_BUILTINS = frozenset({"money", "units_of", "with_units", "percent_of",
+                            "divide_or_fail", "text_of", "parse_money"})
+
+# Builtins added from 4.3 on give way to a function of the same name that
+# a program defines (SPEC.md 10.1). A program written before a builtin
+# existed can have used its name, and a minor version must not change
+# what that program means. The older builtins keep the precedence they
+# always had.
+NEW_BUILTINS = MONEY_BUILTINS
+
+
+def builtin_reached(name: str, table) -> str | None:
+    """The builtin a call to `name` reaches in this program, or None when
+    it reaches a function of the program's own. `table` is the program's
+    functions by name. A call written '@name' was bound to the builtin
+    when the program was loaded (_bind_new_builtins)."""
+    if name[:1] == "@":
+        return name[1:]
+    if name in NEW_BUILTINS and table and name in table:
+        return None
+    return name if name in BUILTINS else None
+
+
+def shown_name(name: str) -> str:
+    """A call's name as the program wrote it."""
+    return name[1:] if name[:1] == "@" else name
+
+
+def is_money(t: str) -> bool:
+    return t.startswith("Money of ")
+
+
+def currency_clash(a: str, b: str) -> bool:
+    """Two types that differ only in the currency of an amount: Money of
+    INR and Money of USD, or lists or maps of them."""
+    if is_money(a) and is_money(b):
+        return a != b
+    if a.startswith("List of ") and b.startswith("List of "):
+        return currency_clash(a[8:], b[8:])
+    if a.startswith("Map of ") and b.startswith("Map of "):
+        ak, _, av = a[7:].partition(" to ")
+        bk, _, bv = b[7:].partition(" to ")
+        return ak == bk and currency_clash(av, bv)
+    return False
+
+
+def clash_error(want: str, got: str, line: int, what: str = "") -> VelarisError:
+    return VelarisError("E550",
+        (what or "this") + f" is {got}, where {want} is needed - amounts "
+        f"in two currencies do not mix", line,
+        fixes=["convert on purpose: a rate and a rounding mode are a "
+               "program's decision, so there is no conversion builtin",
+               "or keep both sides in one currency"])
+
+
+def _outside_money(t: str, tv: str) -> bool:
+    """Does type t mention type variable tv anywhere other than as the
+    currency of an amount?"""
+    if t == tv:
+        return True
+    if is_money(t):
+        return False
+    if t.startswith("List of "):
+        return _outside_money(t[8:], tv)
+    if t.startswith("Map of "):
+        k, _, v = t[7:].partition(" to ")
+        return _outside_money(k, tv) or _outside_money(v, tv)
+    sig = fn_sig_parts(t)
+    if sig is not None:
+        parts, ret = sig
+        return any(_outside_money(p, tv) for p in parts) or \
+            _outside_money(ret, tv)
+    return False
+
+
+def currency_generic(fn) -> bool:
+    """True when every type variable of fn stands only for the currency
+    of an amount. Such a function means the same to the prover whatever
+    the currency, since an amount is its minor units there."""
+    types = [t for _, t in fn.params] + [fn.return_type or "Unit"]
+    return bool(fn.type_vars) and not any(
+        _outside_money(t, tv) for tv in fn.type_vars for t in types)
+
+
+def erase_money(t: str) -> str:
+    """The prover's view of a type: an amount is its minor units, an Int.
+    The type checker has already kept every currency apart."""
+    if is_money(t):
+        return "Int"
+    if t.startswith("List of "):
+        return "List of " + erase_money(t[8:])
+    if t.startswith("Map of "):
+        k, _, v = t[7:].partition(" to ")
+        return f"Map of {k} to {erase_money(v)}"
+    return t
+
+
+@dataclass(frozen=True, order=True, slots=True)
+class MoneyValue:
+    """An amount while running: minor units and a currency. Ordering and
+    equality compare units within one currency, which is the only kind
+    of comparison the type checker lets through."""
+    units: int
+    currency: str
+
+    def _same(self, other) -> None:
+        if other.currency != self.currency:   # kept out before running;
+            raise VelarisError("E550",        # this is the second lock
+                f"an amount in {self.currency} met one in "
+                f"{other.currency}", 0)
+
+    def __add__(self, other):
+        if other.__class__ is not MoneyValue:
+            return NotImplemented
+        self._same(other)
+        return MoneyValue(self.units + other.units, self.currency)
+
+    def __sub__(self, other):
+        if other.__class__ is not MoneyValue:
+            return NotImplemented
+        self._same(other)
+        return MoneyValue(self.units - other.units, self.currency)
+
+    def __mul__(self, other):
+        if other.__class__ is not int:
+            return NotImplemented
+        return MoneyValue(self.units * other, self.currency)
+
+    __rmul__ = __mul__
+
+    def __neg__(self):
+        return MoneyValue(-self.units, self.currency)
+
+    def __str__(self) -> str:
+        return money_text(self)
+
+
+def money_text(m: "MoneyValue") -> str:
+    """INR 12.50, JPY 1250, KWD 1.250, INR -0.05: the code, then the
+    amount with exactly as many digits after the point as the currency
+    has minor units."""
+    digits = CURRENCIES.get(m.currency, 0)
+    sign = "-" if m.units < 0 else ""
+    whole = abs(m.units)
+    if digits == 0:
+        return f"{m.currency} {sign}{whole}"
+    major, minor = divmod(whole, 10 ** digits)
+    return f"{m.currency} {sign}{major}.{minor:0{digits}d}"
+
+
+_MONEY_TEXT = re.compile(r"(?:([A-Z]{3}) *)?(-)?([0-9]+)(?:\.([0-9]+))?")
+
+
+def parse_money_text(text: str, currency: str) -> "MoneyValue":
+    """The amount a text names, in `currency`, or a FailSignal saying
+    why it names none. Takes what money_text writes, and the same
+    without the code or with fewer digits after the point: 12.50, 12.5,
+    12, -3.05, INR 12.50. Refuses more digits than the currency has
+    (that would round), separators, signs other than a leading minus,
+    and an amount too big for 64 bits."""
+    t = str(text).strip(" \t\r\n")
+    m = _MONEY_TEXT.fullmatch(t)
+    if not m:
+        raise FailSignal(f"'{text}' is not an amount like 12.50")
+    code, minus, whole, frac = m.groups()
+    if code is not None and code != currency:
+        raise FailSignal(f"'{text}' is in {code}, not {currency}")
+    digits = CURRENCIES[currency]
+    if frac is not None and digits == 0:
+        raise FailSignal(f"'{text}' has digits after the point, and "
+                         f"{currency} has no minor unit")
+    if frac is not None and len(frac) > digits:
+        raise FailSignal(f"'{text}' has {len(frac)} digits after the "
+                         f"point, and {currency} has {digits}")
+    whole = whole.lstrip("0") or "0"
+    if len(whole) > 19:                        # before int(): 10**4300
+        raise FailSignal(f"'{text}' is too big to hold")   # digits of
+    units = int(whole) * 10 ** digits + int((frac or "").ljust(digits, "0")
+                                            or "0")      # input is not
+    if minus:                                             # a number
+        units = -units
+    if not INT_MIN <= units <= INT_MAX:
+        raise FailSignal(f"'{text}' is too big to hold")
+    return MoneyValue(units, currency)
+
+
+def round_ratio(p: int, q: int, mode: str) -> int:
+    """p / q, exactly, rounded to a whole number by `mode`. q != 0.
+    The prover's formulas for percent_of are this, in Z3's integers."""
+    if q < 0:
+        p, q = -p, -q
+    f, r = divmod(p, q)              # floor, and 0 <= r < q
+    if r == 0:
+        return f
+    if mode == "down":               # toward zero
+        return f if p >= 0 else f + 1
+    if 2 * r > q:
+        return f + 1
+    if 2 * r < q:
+        return f
+    if mode == "half_up":            # a half goes away from zero
+        return f + 1 if p >= 0 else f
+    return f if f % 2 == 0 else f + 1    # half_even
 
 def local_names_of(fn: Function) -> set[str]:
     out = {p for p, _ in fn.params}
@@ -2197,8 +2503,9 @@ def check_effects(funcs: list[Function], errors: list) -> None:
     table = {f.name: f for f in funcs}
 
     def effects_of_callee(name: str, line: int) -> set[str]:
-        if name in BUILTINS:
-            return BUILTINS[name]["effects"]
+        builtin = builtin_reached(name, table)
+        if builtin is not None:
+            return BUILTINS[builtin]["effects"]
         if name in table:
             return table[name].effects
         raise unknown_function(name, line, table)
@@ -2398,8 +2705,9 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
         errors.append(blame(r, e))
 
     def callee_sig(name: str, line: int = 1) -> tuple[list[str], str]:
-        if name in BUILTINS:
-            return BUILTINS[name]["types"], BUILTINS[name]["ret"]
+        builtin = builtin_reached(name, table)
+        if builtin is not None:
+            return BUILTINS[builtin]["types"], BUILTINS[builtin]["ret"]
         if name not in table:
             raise unknown_function(name, line, table)
         f = table[name]
@@ -2408,6 +2716,9 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
     def valid_type(t: str, tvars: frozenset = frozenset()) -> bool:
         if t in KNOWN_TYPES or t in rec or t in tvars:
             return True
+        if is_money(t):                 # a currency, or a currency variable
+            cur = t[len("Money of "):]
+            return cur in CURRENCIES or cur in tvars
         if t.startswith("List of "):
             return valid_type(t[len("List of "):], tvars)
         if t.startswith("Map of "):
@@ -2422,15 +2733,45 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                 ret == "Unit" or valid_type(ret, tvars))
         return False
 
-    TYPE_HINT = ("use Int, Text, Bool, a record name, or "
+    TYPE_HINT = ("use Int, Text, Bool, Money of INR, a record name, or "
                  "List of <one of those>")
+
+    def currency_named(t: str, tvars: frozenset = frozenset()):
+        """The currency code in type t that is not in the table, if any."""
+        if is_money(t):
+            cur = t[len("Money of "):]
+            return None if cur in CURRENCIES or cur in tvars else cur
+        if t.startswith("List of "):
+            return currency_named(t[8:], tvars)
+        if t.startswith("Map of "):
+            return currency_named(t[7:].partition(" to ")[2], tvars)
+        sig = fn_sig_parts(t)
+        if sig is not None:
+            for p in sig[0] + [sig[1]]:
+                got = currency_named(p, tvars)
+                if got:
+                    return got
+        return None
+
+    def unknown_currency(code: str, line: int) -> VelarisError:
+        return VelarisError("E551",
+            f"'{code}' is not a currency Velaris knows", line,
+            fixes=["the currencies are: " + ", ".join(sorted(CURRENCIES)),
+                   "a currency is added to velaris.CURRENCIES with the "
+                   "minor-unit count ISO 4217 gives it, not by a program"])
+
+    def bad_type(t: str, tvars, message: str, line: int) -> VelarisError:
+        code = currency_named(t, tvars)
+        if code:
+            return unknown_currency(code, line)
+        return VelarisError("E500", message, line, fixes=[TYPE_HINT])
 
     for r in records:
         for fname, ftype in r.fields:
             if not valid_type(ftype):
-                errors.append(blame(r, VelarisError("E500",
+                errors.append(blame(r, bad_type(ftype, frozenset(),
                     f"unknown type '{ftype}' for field '{fname}' of "
-                    f"record '{r.name}'", r.line, fixes=[TYPE_HINT])))
+                    f"record '{r.name}'", r.line)))
 
     # first: every declared type must be a real type
     for f in funcs:
@@ -2448,16 +2789,14 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                     fixes=[f"use {tv} in a parameter type"])))
         for pname, ptype in f.params:
             if not valid_type(ptype, tvs):
-                raise VelarisError("E500", f"unknown type '{ptype}' for parameter "
-                                  f"'{pname}' of '{f.name}'", f.line,
-                                  fixes=[TYPE_HINT])
+                raise bad_type(ptype, tvs, f"unknown type '{ptype}' for "
+                               f"parameter '{pname}' of '{f.name}'", f.line)
         if f.return_type is not None and not valid_type(f.return_type, tvs):
-            raise VelarisError("E500", f"unknown return type '{f.return_type}' "
-                              f"for '{f.name}'", f.line,
-                              fixes=[TYPE_HINT])
+            raise bad_type(f.return_type, tvs, f"unknown return type "
+                           f"'{f.return_type}' for '{f.name}'", f.line)
 
     def builtin_call_fallible(node, infer) -> bool:
-        if node.name in FALLIBLE_BUILTINS:
+        if builtin_reached(node.name, table) in FALLIBLE_BUILTINS:
             return True
         if node.name == "get" and node.args:
             try:
@@ -2500,15 +2839,15 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                 if not user_ok and not builtin_call_fallible(node.value,
                                                              infer):
                     raise VelarisError("E522",
-                        f"'{node.value.name}' cannot fail - call it "
-                        f"directly without 'try'", node.line,
+                        f"'{shown_name(node.value.name)}' cannot fail - "
+                        f"call it directly without 'try'", node.line,
                         fixes=["remove the 'try'"])
                 return infer(node.value, allow_fail=True)
             if isinstance(node, Num):  return "Int"
             if isinstance(node, FloatNum): return "Float"
             if isinstance(node, Neg):
                 t = infer(node.value)
-                if t not in ("Int", "Float"):
+                if t not in ("Int", "Float") and not is_money(t):
                     raise VelarisError("E501",
                         f"'-' needs a number, but this is {t}", node.line,
                         fixes=["negate an Int or Float value"])
@@ -2597,6 +2936,9 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                             f"field '{fname}' is given twice", node.line,
                             fixes=["give each field exactly once"])
                     given[fname] = infer(v)
+                    if currency_clash(want[fname], given[fname]):
+                        raise clash_error(want[fname], given[fname],
+                                          node.line, f"field '{fname}'")
                     if given[fname] != want[fname]:
                         raise VelarisError("E501",
                             f"field '{fname}' of '{node.name}' holds "
@@ -2640,6 +2982,9 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                         raise VelarisError("E501",
                             f"a map cannot mix {kt} and {infer(k)} keys",
                             node.line, fixes=["keep every key the same type"])
+                    if currency_clash(vt, infer(v)):
+                        raise clash_error(vt, infer(v), node.line,
+                                          "a value in this map")
                     if infer(v) != vt:
                         raise VelarisError("E501",
                             f"a map cannot mix {vt} and {infer(v)} values",
@@ -2659,6 +3004,9 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                 t0 = infer(node.items[0])
                 for it in node.items[1:]:
                     t = infer(it)
+                    if currency_clash(t0, t):
+                        raise clash_error(t0, t, node.line,
+                                          "an item in this list")
                     if t != t0:
                         raise VelarisError("E501",
                             f"a list cannot mix {t0} and {t}", node.line,
@@ -2678,6 +3026,33 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                         f"{t0}", node.line, fixes=["pass a list"])
                 elem = t0[len("List of "):]
                 want_p = fmt_fn_type([elem], "Bool")
+                parg = node.args[1]
+                pf = (table.get(parg.name) if isinstance(parg, Var)
+                      and parg.name not in env else None)
+                if pf is not None and currency_generic(pf) \
+                        and is_money(elem):
+                    # a predicate generic only in its currency, like
+                    # money.vel's not_negative, takes the list's (4.3)
+                    ptypes = [t for _, t in pf.params]
+                    if (len(ptypes) != 1 or not is_money(ptypes[0])
+                            or (pf.return_type or "Unit") != "Bool"):
+                        raise VelarisError("E501",
+                            f"'{node.name}' needs a {want_p} predicate, "
+                            f"but '{pf.name}' is not one", node.line,
+                            fixes=[f"pass a function taking {elem} and "
+                                   f"returning Bool"])
+                    if pf.effects or pf.can_fail:
+                        raise VelarisError("E530",
+                            f"'{pf.name}' has effects or can fail - only "
+                            f"pure functions can be passed as values",
+                            node.line,
+                            fixes=["pass a function with no 'uses' clause "
+                                   "and no 'or fail'"])
+                    cur = ptypes[0][len("Money of "):]
+                    if cur not in pf.type_vars and ptypes[0] != elem:
+                        raise clash_error(ptypes[0], elem, node.line,
+                                          "each item")
+                    return "Bool"
                 t1 = infer(node.args[1])
                 if t1 != want_p:
                     raise VelarisError("E501",
@@ -2719,6 +3094,8 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                     if node.name == "set_at":
                         want = t0[len("List of "):]
                         got = infer(node.args[2])
+                        if currency_clash(want, got):
+                            raise clash_error(want, got, node.line)
                         if got != want and want != "Any":
                             raise VelarisError("E501",
                                 f"this list holds {want}, so 'set_at' "
@@ -2756,6 +3133,9 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                             fixes=[f"use {'an' if key_t == 'Int' else 'a'} {key_t} key"])
                     if node.name == "has":
                         return "Bool"
+                    if currency_clash(val_t, infer(node.args[2])):
+                        raise clash_error(val_t, infer(node.args[2]),
+                                          node.line)
                     if infer(node.args[2]) != val_t:
                         raise VelarisError("E501",
                             f"this map holds {val_t} values, cannot put "
@@ -2773,6 +3153,9 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                             f"{infer(node.args[1])}", node.line,
                             fixes=[f"use {'an' if key_t == 'Int' else 'a'} "
                                    f"{key_t} key"])
+                    if currency_clash(val_t, infer(node.args[2])):
+                        raise clash_error(val_t, infer(node.args[2]),
+                                          node.line, "the default")
                     if infer(node.args[2]) != val_t:
                         raise VelarisError("E501",
                             f"this map holds {val_t} values, but the "
@@ -2805,6 +3188,9 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                 elem = t0[len("List of "):]
                 t1 = infer(node.args[1])
                 if node.name == "push":
+                    if currency_clash(elem, t1):
+                        raise clash_error(elem, t1, node.line,
+                                          "what is pushed")
                     if t1 != elem:
                         raise VelarisError("E501",
                             f"this list holds {elem}, cannot push a {t1} into it",
@@ -2825,21 +3211,28 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                         fixes=[f"pass exactly {len(parts)} argument(s)"])
                 for i, (a, want) in enumerate(zip(node.args, parts), 1):
                     got = infer(a)
+                    if currency_clash(want, got):
+                        raise clash_error(want, got, node.line,
+                                          f"argument {i}")
                     if got != want:
                         raise VelarisError("E501",
                             f"'{node.name}' needs {want} for argument {i}, "
                             f"but this is {got}", node.line,
                             fixes=[f"pass a {want} value"])
                 return ret
-            if isinstance(node, Call) and node.name in FALLIBLE_BUILTINS \
-                    and not allow_fail:
+            if isinstance(node, Call) and not allow_fail and \
+                    builtin_reached(node.name, table) in FALLIBLE_BUILTINS:
+                said = shown_name(node.name)
                 raise VelarisError("E520",
-                    f"'{node.name}' can fail - that cannot be ignored",
+                    f"'{said}' can fail - that cannot be ignored",
                     node.line,
-                    fixes=[f"handle it: check {node.name}(...) "
+                    fixes=[f"handle it: check {said}(...) "
                            f"{{ ok v {{ ... }} fail reason {{ ... }} }}",
                            f"or pass it up (inside a fallible function): "
-                           f"try {node.name}(...)"])
+                           f"try {said}(...)"])
+            if isinstance(node, Call) and \
+                    builtin_reached(node.name, table) in MONEY_BUILTINS:
+                return money_call(builtin_reached(node.name, table), node)
             if isinstance(node, Call) and (cg := table.get(node.name)) \
                     is not None and cg.type_vars:
                 if cg.can_fail and not allow_fail:
@@ -2865,6 +3258,8 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                         return True
                     if want == got:
                         return True
+                    if is_money(want) and is_money(got):
+                        return unify(want[9:], got[9:])   # the currency
                     if want.startswith("List of ") and \
                             got.startswith("List of "):
                         return unify(want[8:], got[8:])
@@ -2881,22 +3276,11 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                             unify(wr, gr)
                     return False
 
-                for i, (a, want) in enumerate(zip(node.args, ptypes), 1):
-                    got = infer(a)
-                    if not unify(want, got):
-                        so_far = ", ".join(f"{k} = {v}"
-                                           for k, v in bind.items())
-                        raise VelarisError("E542",
-                            f"'{node.name}' argument {i} should look like "
-                            f"{want}, but this is {got}"
-                            + (f" (so far: {so_far})" if so_far else ""),
-                            node.line,
-                            fixes=["make the arguments agree on what "
-                                   f"{', '.join(cg.type_vars)} is"])
-
                 def subst(t: str) -> str:
                     if t in bind:
                         return bind[t]
+                    if is_money(t):
+                        return "Money of " + subst(t[9:])
                     if t.startswith("List of "):
                         return "List of " + subst(t[8:])
                     if t.startswith("Map of "):
@@ -2908,6 +3292,22 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                         return fmt_fn_type([subst(p) for p in parts],
                                            subst(ret))
                     return t
+
+                for i, (a, want) in enumerate(zip(node.args, ptypes), 1):
+                    got = infer(a)
+                    if not unify(want, got):
+                        if currency_clash(subst(want), got):
+                            raise clash_error(subst(want), got, node.line,
+                                              f"argument {i}")
+                        so_far = ", ".join(f"{k} = {v}"
+                                           for k, v in bind.items())
+                        raise VelarisError("E542",
+                            f"'{node.name}' argument {i} should look like "
+                            f"{want}, but this is {got}"
+                            + (f" (so far: {so_far})" if so_far else ""),
+                            node.line,
+                            fixes=["make the arguments agree on what "
+                                   f"{', '.join(cg.type_vars)} is"])
 
                 return subst(cg.return_type or "Unit")
             if isinstance(node, Call):
@@ -2954,7 +3354,20 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                             f"argument {i} of '{node.name}' is a call to a "
                             f"function that returns nothing", node.line,
                             fixes=["call a function that returns a value here"])
+                    if currency_clash(want, got):
+                        raise clash_error(want, got, node.line,
+                                          f"argument {i} of '{node.name}'")
                     if want != "Any" and got != want:
+                        if (node.name in table and node.name in BUILTINS
+                                and builtin_reached(node.name, table)):
+                            raise VelarisError("E501",
+                                f"'{node.name}' here is the builtin, which "
+                                f"needs {want} for argument {i}; the "
+                                f"function '{node.name}' of this program "
+                                f"is hidden by it", node.line,
+                                fixes=[f"rename your '{node.name}'",
+                                       "or import its file with a name: "
+                                       'import "money.vel" as money'])
                         raise VelarisError("E501",
                             f"'{node.name}' needs {want} for argument {i}, "
                             f"but this is {got}", node.line,
@@ -2977,6 +3390,9 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                         fixes=["use comparisons on both sides, like x > 0 and x < 10"])
                 NUM_FIX = ["make both sides the same number type",
                            "convert with to_float(x), or round(x) for an Int"]
+                if (is_money(l) or is_money(r)) and not (
+                        op == "+" and "Text" in (l, r)):
+                    return money_op(op, l, r, node.line)
                 if op == "+":
                     if l == "Text" or r == "Text":
                         return "Text"                  # text joining, e.g. "n: " + 5
@@ -3014,9 +3430,9 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                 no_shadow(node.name, node.line)
                 if node.ann is not None:
                     if not valid_type(node.ann, frozenset(fn.type_vars)):
-                        raise VelarisError("E500",
-                            f"unknown type '{node.ann}'", node.line,
-                            fixes=[TYPE_HINT])
+                        raise bad_type(node.ann, frozenset(fn.type_vars),
+                                       f"unknown type '{node.ann}'",
+                                       node.line)
                     empty_list = (isinstance(node.value, ListLit)
                                   and not node.value.items)
                     empty_map = (isinstance(node.value, MapLit)
@@ -3034,6 +3450,9 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                         env[node.name] = node.ann
                         return
                     t = infer(node.value)
+                    if currency_clash(node.ann, t):
+                        raise clash_error(node.ann, t, node.line,
+                                          f"'{node.name}'")
                     if t != node.ann:
                         raise VelarisError("E501",
                             f"'{node.name}' is declared {node.ann}, "
@@ -3065,6 +3484,9 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                         f"but returns a {t}", node.line,
                         fixes=[f"add '-> {t}' to the signature of '{fn.name}'",
                                "or remove the returned value"])
+                if currency_clash(declared_ret, t):
+                    raise clash_error(declared_ret, t, node.line,
+                                      "what this returns")
                 if t != declared_ret:
                     raise VelarisError("E503",
                         f"'{fn.name}' promises to return {declared_ret} "
@@ -3091,8 +3513,8 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                 if not user_ok and not builtin_call_fallible(node.subject,
                                                              infer):
                     raise VelarisError("E522",
-                        f"'{node.subject.name}' cannot fail - call it "
-                        f"directly, no check needed", node.line,
+                        f"'{shown_name(node.subject.name)}' cannot fail - "
+                        f"call it directly, no check needed", node.line,
                         fixes=["remove the check block"])
                 rt = infer(node.subject, allow_fail=True)
                 if rt == "Unit" and node.ok_name is not None:
@@ -3139,12 +3561,146 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                         fixes=[f"declare it first: let {node.name} = ..."])
                 t = infer(node.value)
                 have = env[node.name]
+                if currency_clash(have, t):
+                    raise clash_error(have, t, node.line,
+                                      f"what is put in '{node.name}'")
                 if t != have:
                     raise VelarisError("E501",
                         f"'{node.name}' holds {have}, cannot put a {t} in it",
                         node.line,
                         fixes=[f"assign {'an' if have == 'Int' else 'a'} {have} value",
                                f"or make a new variable: let {node.name}2 = ..."])
+
+        # ---- Money (4.3): the rules an amount's type carries ----------
+        UNITS_FIX = ['money(1250, "INR") is an amount of 1250 minor units',
+                     "units_of(m) is an amount's minor units, as an Int"]
+
+        def money_op(op: str, l: str, r: str, line: int) -> str:
+            lm, rm = is_money(l), is_money(r)
+            if op in ("/", "%"):
+                if lm and not rm:
+                    raise VelarisError("E553",
+                        f"'{op}' on an amount would round without saying "
+                        f"how", line,
+                        fixes=['divide_or_fail(amount, n, "half_even") '
+                               "names the rounding",
+                               "money.split(amount, n) makes n parts that "
+                               "add up to the amount exactly",
+                               'percent_of(amount, numerator, denominator, '
+                               '"half_up") for a share'])
+                raise VelarisError("E501",
+                    f"'{op}' cannot divide by an amount: this is "
+                    f"{l} {op} {r}", line, fixes=UNITS_FIX)
+            if "Float" in (l, r):
+                raise VelarisError("E501",
+                    f"an amount never meets a Float: this is {l} {op} {r}",
+                    line, fixes=["a Float cannot hold 0.10 exactly; keep "
+                                 "the amount in minor units",
+                                 'percent_of(amount, 25, 1000, "half_up") '
+                                 "takes 2.5 per cent without one"])
+            if op == "*":
+                if lm and rm:
+                    raise VelarisError("E501",
+                        f"an amount times an amount has no meaning: this "
+                        f"is {l} * {r}", line,
+                        fixes=["multiply an amount by an Int: price * 3",
+                               'percent_of(amount, numerator, denominator, '
+                               '"half_up") for a share of one'])
+                other = r if lm else l
+                if other != "Int":
+                    raise VelarisError("E501",
+                        f"an amount multiplies by an Int, not {other}",
+                        line, fixes=["multiply an amount by an Int: price "
+                                     "* 3"])
+                return l if lm else r
+            if lm and rm:
+                if l != r:
+                    raise clash_error(l, r, line,
+                        "the right side" if op in ("+", "-")
+                        else "one side")
+                return l if op in ("+", "-") else "Bool"
+            if op in ("+", "-"):
+                raise VelarisError("E501",
+                    f"an amount adds only to an amount: this is "
+                    f"{l} {op} {r}", line, fixes=UNITS_FIX)
+            raise VelarisError("E501",
+                f"an amount compares only with an amount: this is "
+                f"{l} {op} {r}", line,
+                fixes=['compare with an amount: m >= money(0, "INR")',
+                       "or compare units_of(m) with an Int"])
+
+        def written_currency(arg, line: int) -> str:
+            if not isinstance(arg, Str):
+                raise VelarisError("E551",
+                    "the currency must be written in the call, as text",
+                    line, fixes=['write it there: money(1250, "INR")'])
+            if arg.value not in CURRENCIES:
+                raise unknown_currency(arg.value, line)
+            return arg.value
+
+        def written_rounding(arg, line: int) -> None:
+            if not (isinstance(arg, Str) and arg.value in ROUNDING):
+                raise VelarisError("E552",
+                    "the rounding mode must be written in the call: "
+                    '"half_up", "half_even" or "down"', line,
+                    fixes=['"half_up" takes a half away from zero, '
+                           '"half_even" to the even neighbour, "down" '
+                           "toward zero",
+                           "there is no default: a division that does "
+                           "not come out even says how it rounds"])
+
+        def money_call(b: str, node) -> str:
+            want_n = {"money": 2, "units_of": 1, "with_units": 2,
+                      "percent_of": 4, "divide_or_fail": 3, "text_of": 1,
+                      "parse_money": 2}[b]
+            if len(node.args) != want_n:
+                raise VelarisError("E401",
+                    f"'{b}' expects {want_n} argument(s) but got "
+                    f"{len(node.args)}", node.line,
+                    fixes=[f"pass exactly {want_n} argument(s)"])
+            types = [infer(a) for a in node.args]
+
+            def need(i: int, want: str) -> None:
+                if types[i] != want:
+                    raise VelarisError("E501",
+                        f"'{b}' needs {want} for argument {i + 1}, but "
+                        f"this is {types[i]}", node.line,
+                        fixes=[f"pass {'an' if want == 'Int' else 'a'} "
+                               f"{want}"])
+
+            def amount(i: int) -> str:
+                if not is_money(types[i]):
+                    raise VelarisError("E501",
+                        f"'{b}' needs an amount for argument {i + 1}, but "
+                        f"this is {types[i]}", node.line, fixes=UNITS_FIX)
+                return types[i]
+
+            if b in ("money", "parse_money"):
+                need(0, "Int" if b == "money" else "Text")
+                return "Money of " + written_currency(node.args[1],
+                                                      node.line)
+            if b == "units_of":
+                t = types[0]
+                if is_money(t) or (t.startswith("List of ")
+                                   and is_money(t[8:])):
+                    return "Int"
+                raise VelarisError("E501",
+                    f"'units_of' takes an amount or a list of amounts, "
+                    f"but this is {t}", node.line, fixes=UNITS_FIX)
+            if b == "text_of":
+                amount(0)
+                return "Text"
+            if b == "with_units":
+                need(1, "Int")
+                return amount(0)
+            if b == "percent_of":
+                need(1, "Int")
+                need(2, "Int")
+                written_rounding(node.args[3], node.line)
+                return amount(0)
+            need(1, "Int")                                  # divide_or_fail
+            written_rounding(node.args[2], node.line)
+            return amount(0)
 
         # contracts are checked first, while env holds exactly the parameters
         for expr, cline in fn.requires:
@@ -3327,10 +3883,11 @@ def _limit_is_invariant(expr, bound: set, table: dict | None) -> bool:
         # a builtin counts when the BUILTINS table says it has no
         # effects and it cannot fail (`length`, `split`, `keys`, ...);
         # a user function when it declares no effects and cannot fail
-        builtin = BUILTINS.get(expr.name)
+        reached = builtin_reached(expr.name, table)
+        builtin = BUILTINS.get(reached) if reached else None
         if builtin is not None:
             pure = (not builtin["effects"]
-                    and expr.name not in FALLIBLE_BUILTINS)
+                    and reached not in FALLIBLE_BUILTINS)
         else:
             fn = (table or {}).get(expr.name)
             pure = fn is not None and not fn.effects and not fn.can_fail
@@ -3488,6 +4045,8 @@ def check_proofs(funcs: list[Function], records: list,
             if isinstance(node, Call):
                 if node.name in ("get", "pop", "slice", "set_at"):
                     found[0] = True
+                if builtin_reached(node.name, table_all) == "percent_of":
+                    found[0] = True           # a divisor, like '/'
                 callee = table_all.get(node.name)
                 if callee is not None and (callee.requires or callee.ensures):
                     found[0] = True
@@ -3523,7 +4082,10 @@ def check_proofs(funcs: list[Function], records: list,
         return
 
     table = {f.name: f for f in funcs}
-    rec_fields = {r.name: r.fields for r in records}
+    # an amount is its minor units here: the type checker has already
+    # kept every currency apart, so what is left is Int arithmetic
+    rec_fields = {r.name: [(f, erase_money(t)) for f, t in r.fields]
+                  for r in records}
 
     def provable_rec(name: str, seen=frozenset()) -> bool:
         if name in seen:
@@ -3553,9 +4115,12 @@ def check_proofs(funcs: list[Function], records: list,
             self.rname, self.fields = rname, fields
 
     class ListVal:
-        """A symbolic list: a Z3 array of Ints plus a length."""
-        def __init__(self, arr, length):
-            self.arr, self.length = arr, length
+        """A symbolic list: a Z3 array of Ints plus a length. `total`,
+        when the list was built here, is what its items add up to - or a
+        function giving it, so a list nobody asks units_of about never
+        pays for the sum."""
+        def __init__(self, arr, length, total=None):
+            self.arr, self.length, self.total = arr, length, total
 
     class GridVal:
         """A symbolic list of lists: rows, row lengths, and how many."""
@@ -3585,6 +4150,139 @@ def check_proofs(funcs: list[Function], records: list,
         z3.ForAll([_t], z3.Length(UPPER(_t)) == z3.Length(_t)),
         z3.ForAll([_t], z3.Length(LOWER(_t)) == z3.Length(_t)),
     ]
+    # units_of(xs) for a list the prover did not build - a parameter, a
+    # loop's list, a call's result - is TOTAL(its array, its length),
+    # a value Z3 is told nothing about except the three facts below,
+    # stated about that list alone: nothing adds up to 0, and items that
+    # are all >= 0 (all <= 0) add up to something >= 0 (<= 0). Each is a
+    # theorem about a real sum. Stating them for every list at once, as
+    # one axiom, made Z3 answer 'unknown' to questions it used to settle,
+    # which would have cost refutations elsewhere in the same program.
+    # A sum is still not defined by them, so a counterexample that
+    # mentions TOTAL may be one no real list has: has_fresh says so.
+    TOTAL = z3.Function("__total", z3.ArraySort(z3.IntSort(), z3.IntSort()),
+                        z3.IntSort(), z3.IntSort())
+    total_facts: list = []
+    _total_seen: set = set()
+
+    def list_total(lv):
+        """What the items of a symbolic list add up to."""
+        t = lv.total
+        if t is None:
+            if lv.arr.sort().range() != z3.IntSort():
+                raise Unprovable()
+            term = TOTAL(lv.arr, lv.length)
+            key = str(term)
+            if key not in _total_seen:
+                _total_seen.add(key)
+                k = z3.Int(f"__total_k{len(_total_seen)}")
+
+                def every(cmp, k=k, lv=lv):
+                    return z3.ForAll([k], z3.Implies(
+                        z3.And(k >= 0, k < lv.length),
+                        cmp(z3.Select(lv.arr, k))))
+
+                total_facts.extend([
+                    z3.Implies(lv.length <= 0, term == 0),
+                    z3.Implies(every(lambda v: v >= 0), term >= 0),
+                    z3.Implies(every(lambda v: v <= 0), term <= 0),
+                ])
+            return term
+        if callable(t):
+            t = lv.total = t()
+        return t
+
+    def new_solver():
+        """A solver that knows what is known about the sums seen so far."""
+        s = z3.Solver()
+        s.set("timeout", solver_budget())
+        if total_facts:
+            s.add(*total_facts)
+        return s
+
+    def mentions_total(e) -> bool:
+        if not z3.is_expr(e):
+            return False
+        if z3.is_app(e) and e.num_args() and \
+                e.decl().name() == "__total":
+            return True
+        return any(mentions_total(c) for c in e.children())
+
+    # The Money builtins the prover models, exactly as the interpreter
+    # runs them. text_of, parse_money and divide_or_fail are not modelled:
+    # a function that uses one keeps its promises as runtime checks.
+    MONEY_Z3 = ("money", "units_of", "with_units", "percent_of")
+    # a parameter or local named like one of them is called as itself
+    money_shadowed = NEW_BUILTINS & set().union(
+        *(local_names_of(f) for f in funcs))
+
+    def money_z3(b: str, node, env, ctx):
+        if b == "money":                  # the currency is in the type
+            return to_z3(node.args[0], env, ctx)
+        if b == "units_of":
+            v = to_z3(node.args[0], env, ctx)
+            if isinstance(v, ListVal):
+                return list_total(v)
+            if z3.is_int(v):
+                return v
+            raise Unprovable()
+        if b == "with_units":
+            to_z3(node.args[0], env, ctx)
+            return to_z3(node.args[1], env, ctx)
+        # percent_of: amount * numerator / denominator, rounded as named,
+        # in the formulas round_ratio computes while running. Like '/',
+        # it is translated only for a denominator shown positive.
+        mode = node.args[3].value if isinstance(node.args[3], Str) else None
+        if mode not in ROUNDING:
+            raise Unprovable()
+        a = to_z3(node.args[0], env, ctx)
+        num = to_z3(node.args[1], env, ctx)
+        den = to_z3(node.args[2], env, ctx)
+        if not all(z3.is_int(x) for x in (a, num, den)):
+            raise Unprovable()
+        constant = z3.is_int_value(den) and den.as_long() > 0
+        if ctx is not None:
+            prove_nonzero(den, ctx, node.line, "/")
+        if not constant and (ctx is None or not provably_positive(den, ctx)):
+            raise Unprovable()
+        return rounded(a * num, den, mode)
+
+    def rounded(p, den, mode: str):
+        """p / den rounded as `mode` says, for den > 0: round_ratio, in
+        Z3's integers. Z3's div and mod agree with Velaris's for a
+        positive divisor, which is the only case translated."""
+        q, r = p / den, p % den
+        if mode == "down":                           # toward zero
+            return z3.If(z3.Or(p >= 0, r == 0), q, q + 1)
+        if mode == "half_up":                        # a half: away from 0
+            return z3.If(2 * r > den, q + 1, z3.If(2 * r < den, q,
+                         z3.If(p >= 0, q + 1, q)))
+        return z3.If(2 * r > den, q + 1, z3.If(2 * r < den, q,  # half_even
+                     z3.If(q % 2 == 0, q, q + 1)))
+
+    def money_fallible(mb: str, node, env, ctx):
+        """parse_money and divide_or_fail on the path where they did not
+        fail. An amount parsed out of text is simply unknown; a division
+        that did not fail is the exact rounding, when the divisor is
+        shown positive (the other side of zero stays unknown)."""
+        for a in node.args:
+            try:
+                to_z3(a, env, ctx)       # what is inside still gets checked
+            except Unprovable:
+                pass
+        if mb == "divide_or_fail":
+            mode = node.args[2].value if isinstance(node.args[2], Str) \
+                else None
+            try:
+                a = to_z3(node.args[0], env, ctx)
+                by = to_z3(node.args[1], env, ctx)
+            except Unprovable:
+                a = by = None
+            if mode in ROUNDING and a is not None and z3.is_int(a) \
+                    and z3.is_int(by) and provably_positive(by, ctx):
+                return rounded(a, by, mode)
+        counter[0] += 1
+        return z3.Int(f"__{mb}_result_{counter[0]}")
 
     def map_parts(t: str):
         """('Map of Text to Int') -> ('Text', 'Int') if both are modelable."""
@@ -3667,6 +4365,9 @@ def check_proofs(funcs: list[Function], records: list,
                 has_fresh(a) for a in e.arrays.values())
         if isinstance(e, RecElem):
             return has_fresh(e.idx) or has_fresh(e.src.length)
+        if z3.is_app(e) and e.num_args() and \
+                e.decl().name() == "__total":
+            return True              # a sum Z3 was never told the value of
         if isinstance(e, MapVal):
             return has_fresh(e.vals) or has_fresh(e.present)
         if isinstance(e, GridVal):
@@ -3742,10 +4443,9 @@ def check_proofs(funcs: list[Function], records: list,
             except Unprovable:
                 continue
             if any(a is not None and has_fresh(a) for a in involved) or \
-                    any(has_fresh(c) for c in ctx.conds):
+                    any(has_fresh(c) for c in ctx.conds) or has_fresh(need):
                 continue        # could be a false alarm; runtime will guard
-            solver = z3.Solver()
-            solver.set("timeout", solver_budget())
+            solver = new_solver()
             solver.add(*ctx.param_assum)
             solver.add(*ctx.conds)
             solver.add(z3.Not(need))
@@ -3767,9 +4467,12 @@ def check_proofs(funcs: list[Function], records: list,
     def predicate_formula(pfn: Function, val):
         """Translate a predicate's body into 'returns true' as a Z3
         formula over val. Only simple pure predicates qualify: one Int
-        parameter, Bool result, no loops, no calls, no failure."""
-        if (pfn.effects or pfn.can_fail or pfn.type_vars
-                or len(pfn.params) != 1 or pfn.params[0][1] != "Int"
+        parameter, Bool result, no loops, no calls, no failure. An
+        amount is an Int parameter here, whatever its currency."""
+        if (pfn.effects or pfn.can_fail
+                or (pfn.type_vars and not currency_generic(pfn))
+                or len(pfn.params) != 1
+                or erase_money(pfn.params[0][1]) != "Int"
                 or pfn.return_type != "Bool"):
             raise Unprovable()
 
@@ -3798,26 +4501,46 @@ def check_proofs(funcs: list[Function], records: list,
 
     def summarize_call(node: Call, env, ctx, allow_fail: bool = False):
         """Model a call to a pure user function by its contract."""
+        if node.name not in money_shadowed and builtin_reached(
+                node.name, table) in ("parse_money", "divide_or_fail"):
+            if not allow_fail or ctx is None:
+                raise Unprovable()
+            return money_fallible(builtin_reached(node.name, table), node,
+                                  env, ctx)
         fnB = table.get(node.name)
 
         def summarizable(t):
+            t = erase_money(t)
             return t in ("Int", "Bool", "Float", "Text") or (
                 map_parts(t) is not None) or (
                 t in rec_fields and provable_rec(t))
 
-        if (fnB is None or fnB.effects or fnB.type_vars
+        # a list of amounts comes back as a fresh list whose length and
+        # sum the callee's promises describe (4.3) - how money.split's
+        # promises reach its caller. Other lists still do not: summarizing
+        # them would move verdicts of programs written before it.
+        ret_t = (fnB.return_type or "") if fnB is not None else ""
+        amounts_back = ret_t.startswith("List of Money of ")
+        if (fnB is None or fnB.effects
+                or (fnB.type_vars and not currency_generic(fnB))
                 or (fnB.can_fail and not allow_fail)
-                or not summarizable(fnB.return_type or "")
+                or not (summarizable(ret_t) or amounts_back)
                 or any(not summarizable(pt) for _, pt in fnB.params)):
             raise Unprovable()
         args_z3 = [to_z3(a, env, ctx) for a in node.args]
         check_requires_at(fnB, args_z3, ctx, node.line)
-        if fnB.return_type in rec_fields:
+        if amounts_back:
+            counter[0] += 1
+            base = f"__{fnB.name}_result_{counter[0]}"
+            rv = ListVal(z3.Array(base, z3.IntSort(), z3.IntSort()),
+                         z3.Int(base + "__n"))
+            ctx.assum.append(rv.length >= 0)
+        elif fnB.return_type in rec_fields:
             counter[0] += 1
             rv = mk_rec(f"__{fnB.name}_result_{counter[0]}",
                         fnB.return_type)
         else:
-            rv = fresh(fnB.return_type, fnB.name)
+            rv = fresh(erase_money(fnB.return_type), fnB.name)
         for ens_expr, _ in fnB.ensures:
             e2 = bind_params(fnB, args_z3)
             e2["result"] = rv
@@ -3878,7 +4601,9 @@ def check_proofs(funcs: list[Function], records: list,
                 if v.sort() != arr.sort().range():
                     raise Unprovable()      # a list cannot mix sorts
                 arr = z3.Store(arr, z3.IntVal(idx), v)
-            return ListVal(arr, z3.IntVal(len(node.items)))
+            return ListVal(arr, z3.IntVal(len(node.items)),
+                           total=lambda vals=vals: sum(vals[1:], vals[0])
+                           if vals else z3.IntVal(0))
         if isinstance(node, Call) and node.name in ("all_of", "any_of"):
             a0 = to_z3(node.args[0], env, ctx)
             if not isinstance(a0, ListVal):
@@ -4012,13 +4737,18 @@ def check_proofs(funcs: list[Function], records: list,
                         a1.sort() != a0.arr.sort().range():
                     raise Unprovable()
                 return ListVal(z3.Store(a0.arr, a0.length, a1),
-                               a0.length + 1)
+                               a0.length + 1,
+                               total=lambda a0=a0, a1=a1: list_total(a0) + a1)
             if not hasattr(a1, "sort") or not z3.is_int(a1):
                 raise Unprovable()          # an index is always an Int
             # get: prove the read stays inside the list (E705)
             if ctx is not None:
                 prove_bounds(a1, a0.length, ctx, node.line)
             return z3.Select(a0.arr, a1)
+        if isinstance(node, Call) and node.name not in money_shadowed and \
+                builtin_reached(node.name, table) in MONEY_Z3:
+            return money_z3(builtin_reached(node.name, table), node, env,
+                            ctx)
         if isinstance(node, Call):
             if ctx is None:            # inside a contract: no call summaries
                 raise Unprovable()
@@ -4080,11 +4810,17 @@ def check_proofs(funcs: list[Function], records: list,
         raise Unprovable()             # Str, ListLit, floats, anything else
 
     def provably_positive(divisor, ctx) -> bool:
-        """True only if the divisor cannot be zero or negative here."""
-        if has_fresh(divisor) or any(has_fresh(c) for c in ctx.conds):
-            return False
-        solver = z3.Solver()
-        solver.set("timeout", solver_budget())
+        """True only if the divisor cannot be zero or negative here.
+
+        Until 4.3 a divisor, or a path, that mentioned a loop's values
+        was never shown positive, so no division by a loop counter was
+        translated. The facts on such a path are the loop's condition and
+        invariants, which hold on every real turn (an inferred one is
+        proven inductive, a written one is proven or the function is
+        not), and the question is only whether the divisor can be <= 0
+        under them - a no there is a no in every run. A callee's promise
+        is not among them: it sits in assum, which this does not read."""
+        solver = new_solver()
         solver.add(*ctx.param_assum)
         solver.add(*ctx.conds)
         solver.add(divisor <= 0)
@@ -4100,8 +4836,7 @@ def check_proofs(funcs: list[Function], records: list,
         # counterexamples, and keeping them costs nothing. Without this a
         # loop anywhere before the division hid the check entirely -
         # which is the shape of nearly every average.
-        solver = z3.Solver()
-        solver.set("timeout", solver_budget())
+        solver = new_solver()
         solver.add(*ctx.param_assum)
         solver.add(*ctx.conds)
         solver.add(divisor == 0)
@@ -4130,8 +4865,7 @@ def check_proofs(funcs: list[Function], records: list,
             return                       # runtime bounds check still guards
         if has_fresh(length) and not pinned_counter[0]:
             return
-        solver = z3.Solver()
-        solver.set("timeout", solver_budget())
+        solver = new_solver()
         solver.add(*ctx.param_assum)
         solver.add(*ctx.conds)
         solver.add(z3.Not(z3.And(idx >= 0, idx < length)))
@@ -4214,12 +4948,14 @@ def check_proofs(funcs: list[Function], records: list,
             goal = to_z3(inv_expr, env, None)
         except Unprovable:
             return                       # can't model it; runtime will check
-        solver = z3.Solver()
-        solver.set("timeout", solver_budget())
+        solver = new_solver()
         solver.add(*ctx.assum)
         solver.add(*ctx.conds)
         solver.add(z3.Not(goal))
         verdict = solver.check()
+        if verdict == z3.sat and mentions_total(goal):
+            raise Unprovable()       # a sum Z3 was not given: the state it
+                                     # found may be one no list is in
         if verdict == z3.sat:
             m = solver.model()
             names = sorted(n for n in expr_vars(inv_expr) if n in env)
@@ -4440,8 +5176,7 @@ def check_proofs(funcs: list[Function], records: list,
                     except KeyError:
                         ok = False
                         break
-                    solver = z3.Solver()
-                    solver.set("timeout", solver_budget())
+                    solver = new_solver()
                     solver.add(*pctx.assum)
                     solver.add(*pctx.conds)
                     solver.add(z3.Not(goal))
@@ -4604,8 +5339,7 @@ def check_proofs(funcs: list[Function], records: list,
                 #     be out of range somewhere" into a fact.
                 if bound_of(s, env, ctx, changed) is not None:
                     counter, last, start = bound_of(s, env, ctx, changed)
-                    reach = z3.Solver()
-                    reach.set("timeout", solver_budget())
+                    reach = new_solver()
                     reach.add(*ctx.param_assum)
                     reach.add(*ctx.conds)
                     reach.add(z3.Not(start <= last))
@@ -4669,9 +5403,12 @@ def check_proofs(funcs: list[Function], records: list,
         before_errors = len(errors)
         current_fn[0] = fn
         saw_fp[0] = False              # FP budget only when FP appears
+        total_facts.clear()            # the sums of the last function's
+        _total_seen.clear()            # lists say nothing about this one's
         env = {}
         list_facts = []
         for pname, ptype in fn.params:
+            ptype = erase_money(ptype)     # an amount: its minor units
             if ptype in ("Int", "Bool", "Float", "Text"):
                 env[pname] = mk(pname, ptype)
             elif ptype == "List of Int":
@@ -4771,15 +5508,14 @@ def check_proofs(funcs: list[Function], records: list,
                     e2 = dict(env)
                     e2["result"] = ret
                     goal = to_z3(ens_expr, e2, None)
-                    solver = z3.Solver()
-                    solver.set("timeout", solver_budget())
+                    solver = new_solver()
                     solver.add(*pctx.assum)
                     solver.add(*pctx.conds)
                     solver.add(z3.Not(goal))
                     verdict = solver.check()
                     if verdict == z3.sat:
-                        if has_fresh(ret) or any(has_fresh(c)
-                                                 for c in pctx.conds):
+                        if has_fresh(ret) or has_fresh(goal) or any(
+                                has_fresh(c) for c in pctx.conds):
                             # counterexample depends on a summarized call:
                             # might be impossible in reality - never claim
                             # "proven"; fall back to runtime checks instead
@@ -4920,7 +5656,8 @@ def native_eligible(funcs: list[Function],
                 else:
                     we(e.left); we(e.right)
             elif isinstance(e, Call):
-                if e.name in BUILTINS or e.name not in table:
+                if builtin_reached(e.name, table) is not None \
+                        or e.name not in table:
                     ok[0] = False
                 else:
                     calls.add(e.name)
@@ -5594,6 +6331,8 @@ class RecordValue:
 
 
 def to_text(v) -> str:
+    if v.__class__ is MoneyValue:
+        return money_text(v)
     if isinstance(v, Function):
         return f"fn {v.name}"
     if isinstance(v, dict):
@@ -5616,6 +6355,54 @@ BUILTIN_EFFECTS = {n: tuple(sorted(d.get("effects", ())))
                    for n, d in BUILTINS.items() if d.get("effects")}
 
 
+def run_money(name: str, args: list, line: int):
+    """The Money builtins while running (SPEC.md 4.4). The type checker
+    has already seen to the currencies and the written arguments; what
+    is left is exact integer arithmetic, and its range."""
+    if name == "money":
+        cur = str(args[1])
+        if cur not in CURRENCIES:              # kept out before running
+            raise VelarisError("E551",
+                f"'{cur}' is not a currency Velaris knows", line)
+        return MoneyValue(int(args[0]), cur)
+    if name == "units_of":
+        x = args[0]
+        if x.__class__ is MoneyValue:
+            return x.units
+        total = 0
+        for m in x:                            # as a loop adding them
+            total = checked_int(total + m.units, "units_of", line)
+        return total
+    if name == "with_units":
+        return MoneyValue(int(args[1]), args[0].currency)
+    if name == "text_of":
+        return money_text(args[0])
+    if name == "parse_money":
+        return parse_money_text(args[0], str(args[1]))
+    mode = str(args[-1])
+    if mode not in ROUNDING:                   # kept out before running
+        raise VelarisError("E552",
+            f"'{mode}' is not a rounding mode", line)
+    m = args[0]
+    if name == "percent_of":
+        num, den = int(args[1]), int(args[2])
+        if den == 0:
+            raise VelarisError("E403", "percent_of with a denominator of "
+                               "zero", line,
+                               fixes=["check the denominator first"])
+        # the product is exact, however large: only the answer must fit
+        return checked_int(MoneyValue(round_ratio(m.units * num, den, mode),
+                                      m.currency), "percent_of", line)
+    by = int(args[1])                          # divide_or_fail
+    if by == 0:
+        raise FailSignal("cannot divide an amount by zero")
+    units = round_ratio(m.units, by, mode)
+    if not INT_MIN <= units <= INT_MAX:
+        raise FailSignal(f"dividing {money_text(m)} by {by} makes an "
+                         f"amount too big to hold")
+    return MoneyValue(units, m.currency)
+
+
 def run_builtin(name: str, args: list, line: int):
     # The hot three, before anything else: these are most of the builtin
     # calls in any program and used to sit behind thirty string
@@ -5635,6 +6422,8 @@ def run_builtin(name: str, args: list, line: int):
         return xs[at]
     if name == "push" and isinstance(args[0], list):
         return args[0] + [args[1]]
+    if name in MONEY_BUILTINS:
+        return run_money(name, args, line)
 
     import time as _time
     import random as _rand
@@ -5871,6 +6660,9 @@ def run_builtin(name: str, args: list, line: int):
                     return [plain(x) for x in v]
                 if isinstance(v, RecordValue):
                     return {f: plain(x) for f, x in v.fields.items()}
+                if v.__class__ is MoneyValue:     # exact: never a JSON
+                    return {"currency": v.currency,   # number with a point
+                            "units": v.units}
                 return v
             return _json.dumps(plain(args[0]), ensure_ascii=False)
 
@@ -6166,13 +6958,19 @@ def build_runtime(funcs: list[Function], native: dict | None = None):
     native = native or {}
     table = {f.name: f for f in funcs}
 
+    # builtins from 4.3 on give way to the program's own function of the
+    # same name; '@name' is a library's call bound to the builtin
+    hidden = NEW_BUILTINS & set(table)
+
     def call(name: str, args: list, line: int):
         if name in ("all_of", "any_of"):
             xs, p = args
             hits = (call_function(p, [v], line) for v in xs)
             return all(hits) if name == "all_of" else any(hits)
-        if name in BUILTINS:
+        if name in BUILTINS and name not in hidden:
             return run_builtin(name, args, line)
+        if name[0] == "@":
+            return run_builtin(name[1:], args, line)
         if name in native:                 # machine code, C-like speed
             if TRACE["on"]:                # still visible when tracing
                 fnn = table.get(name)
@@ -6352,7 +7150,11 @@ def build_runtime(funcs: list[Function], native: dict | None = None):
             return node.value
         if cls is Num:  return node.value
         if cls is FloatNum: return node.value
-        if cls is Neg:  return -eval_(node.value, env)
+        if cls is Neg:
+            v = -eval_(node.value, env)
+            if v.__class__ is MoneyValue:        # -(the smallest amount)
+                return checked_int(v, "-", node.line)   # does not fit
+            return v
         if cls is TryExpr:
             return eval_(node.value, env)   # a failure keeps rising
         if cls is Str:  return node.value

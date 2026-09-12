@@ -41,6 +41,7 @@ fn main() uses io {
     let happy = true             // Bool
     let scores = [10, 8, 9]      // List of Int
     let ages = {"a": 1, "b": 2}  // Map of Text to Int
+    let fee = money(1250, "INR") // Money of INR - 12.50, as 1250 paise
     print(format("{} is {}", name, age))
 }
 ```
@@ -49,6 +50,10 @@ Types are inferred for locals and written down for parameters. Numbers
 do not mix silently: `1 + 1.5` is an error, because rounding surprises
 are how money goes missing. Convert on purpose with `to_float(x)` or
 `round(x)`.
+
+Actual money never becomes a `Float` at all: an amount is whole minor
+units with its currency in the type, two currencies never mix, and a
+division that could round says how (SPEC.md §4.3).
 
 `format` fills each `{}` with a value, and the compiler counts the
 holes for you — the wrong number of values is a compile error, not a

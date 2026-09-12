@@ -105,7 +105,7 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 </style></head><body>
 <nav><div class="in"><a class="brand" href="index.html">
 <span class="dot"></span>Velaris</a><a href="index.html" class="">Home</a><a href="tutorial.html" class="here">Tutorial</a><a href="spec.html" class="">Reference</a><a href="library.html" class="">Library</a><a href="errors.html" class="">Errors</a><a href="floats.html" class="">Floats</a><a href="playground.html" class="">Playground</a>
-<span class="ver">v4.2.1</span></div></nav>
+<span class="ver">v4.3.0</span></div></nav>
 <main class=""><h1>Velaris in an hour</h1>
 <br>
 <p>Velaris is a language where a function&#x27;s first line tells you</p>
@@ -149,6 +149,7 @@ fn main() uses io {
     let happy = true             // Bool
     let scores = [10, 8, 9]      // List of Int
     let ages = {&quot;a&quot;: 1, &quot;b&quot;: 2}  // Map of Text to Int
+    let fee = money(1250, &quot;INR&quot;) // Money of INR - 12.50, as 1250 paise
     print(format(&quot;{} is {}&quot;, name, age))
 }
 </code></pre>
@@ -157,6 +158,10 @@ fn main() uses io {
 <p>do not mix silently: <code>1 + 1.5</code> is an error, because rounding surprises</p>
 <p>are how money goes missing. Convert on purpose with <code>to_float(x)</code> or</p>
 <p><code>round(x)</code>.</p>
+<br>
+<p>Actual money never becomes a <code>Float</code> at all: an amount is whole minor</p>
+<p>units with its currency in the type, two currencies never mix, and a</p>
+<p>division that could round says how (SPEC.md §4.3).</p>
 <br>
 <p><code>format</code> fills each <code>{}</code> with a value, and the compiler counts the</p>
 <p>holes for you — the wrong number of values is a compile error, not a</p>

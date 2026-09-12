@@ -105,7 +105,7 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 </style></head><body>
 <nav><div class="in"><a class="brand" href="index.html">
 <span class="dot"></span>Velaris</a><a href="index.html" class="">Home</a><a href="tutorial.html" class="">Tutorial</a><a href="spec.html" class="here">Reference</a><a href="library.html" class="">Library</a><a href="errors.html" class="">Errors</a><a href="floats.html" class="">Floats</a><a href="playground.html" class="">Playground</a>
-<span class="ver">v4.2.1</span></div></nav>
+<span class="ver">v4.3.0</span></div></nav>
 <main class="wide"><h1>The Velaris language reference</h1>
 <br>
 <p>This is the specification: what Velaris means, precisely. It is not a</p>
@@ -156,6 +156,7 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 <h2>3. Types</h2>
 <br>
 <p>    Int  Float  Bool  Text  Handle</p>
+<p>    Money of CUR             (an amount in a currency, §4.4)</p>
 <p>    List of T</p>
 <p>    Map of K to V            (K is Text or Int)</p>
 <p>    fn(T, ...) -&gt; R          (a function value; pure only)</p>
@@ -196,7 +197,76 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 <p><code>Int</code> and <code>Float</code> never mix implicitly. <code>to_float(x)</code> widens;</p>
 <p><code>round(x)</code> narrows.</p>
 <br>
-<h3>4.3 Text</h3>
+<h3>4.3 Money</h3>
+<br>
+<p><code>Money of CUR</code> is an exact amount: a whole number of <b>minor units</b> —</p>
+<p>paise, cents, fils — in the currency <code>CUR</code>, which is part of the type.</p>
+<p>The units are an <code>Int</code>, with the same 64-bit range and the same error</p>
+<p>past it (E407). No <code>Float</code> is part of any of it, and there is no</p>
+<p>conversion between currencies: a rate and a rounding policy are a</p>
+<p>program&#x27;s decisions, not a language&#x27;s.</p>
+<br>
+<p>    money(1250, &quot;INR&quot;)        12.50 rupees, as 1250 paise</p>
+<p>    units_of(m)               its minor units, as an Int</p>
+<p>    with_units(m, n)          n minor units, in m&#x27;s currency</p>
+<br>
+<p><code>money</code> and <code>parse_money</code> take the currency as text **written in the</p>
+<p>call**, and it must be one the implementation knows (<code>CURRENCIES</code> in</p>
+<p><code>velaris.py</code>, §4.4); anything else is E551. A function may be generic in</p>
+<p>a currency: <code>fn f(m: Money of C) -&gt; Money of C for any C</code>.</p>
+<br>
+<p><b>Arithmetic.</b> Two amounts in the same currency add, subtract and</p>
+<p>compare. An amount multiplies by an <code>Int</code>. Everything else is refused</p>
+<p>before the program runs: two currencies mixed (E550), an amount times an</p>
+<p>amount, an amount and a number, an amount and a <code>Float</code> (E501), and <code>/</code></p>
+<p>or <code>%</code> on an amount (E553), because both would round without saying how.</p>
+<br>
+<p><b>Rounding is named or it does not happen.</b> Where a result may not come</p>
+<p>out even, the mode is a required argument, written in the call as</p>
+<p><code>&quot;half_up&quot;</code> (a half goes away from zero), <code>&quot;half_even&quot;</code> (to the even</p>
+<p>neighbour) or <code>&quot;down&quot;</code> (toward zero). Anything else is E552.</p>
+<br>
+<p>    percent_of(amount, numerator, denominator, &quot;half_up&quot;)</p>
+<p>    divide_or_fail(amount, by, &quot;half_even&quot;)          // can fail</p>
+<br>
+<p><code>percent_of</code> multiplies before it divides and is exact in between,</p>
+<p>however large that product; only its result must fit in 64 bits. A</p>
+<p>denominator of zero is an error while running (E403), and one the prover</p>
+<p>shows can be zero is E706. <code>divide_or_fail</code> fails, catchably, on zero</p>
+<p>and on a result too large to hold.</p>
+<br>
+<p><code>units_of</code> also takes a <b>list</b> of amounts and gives what they add up</p>
+<p>to, as an <code>Int</code>, and 0 for an empty list. There is no <code>Money</code>-valued</p>
+<p>total of a list, because an empty list has no currency to give one.</p>
+<br>
+<p><code>text_of(m)</code> writes the code, then the amount with exactly as many</p>
+<p>digits after the point as the currency has minor units: <code>INR 12.50</code>,</p>
+<p><code>JPY 1250</code>, <code>KWD 1.250</code>, <code>INR -0.05</code>. <code>to_text</code>, <code>print</code> and <code>format</code></p>
+<p>write an amount the same way; <code>json_of</code> writes it as its currency and</p>
+<p>its units, never as a number with a point. <code>parse_money(text, &quot;INR&quot;)</code></p>
+<p>reads back what <code>text_of</code> wrote, and the same without the code or with</p>
+<p>fewer digits after the point; it fails on anything else, including a</p>
+<p>text with more digits than the currency has.</p>
+<br>
+<p>Dividing an amount into parts that still add up to it is</p>
+<p><code>money.split(amount, n)</code> from <code>stdlib/money.vel</code>, which is written in</p>
+<p>Velaris so that its promises are proven with the program that imports</p>
+<p>it (§9.2): <code>length(result) == n</code>, <code>units_of(result) == units_of(amount)</code>,</p>
+<p>and no part with a sign the amount does not have.</p>
+<br>
+<h3>4.4 Which currencies</h3>
+<br>
+<p>An implementation carries a table of currency codes and how many digits</p>
+<p>each has after the point: <code>CURRENCIES</code> in <code>velaris.py</code>, which today</p>
+<p>holds 21 of them — 2 digits for INR, USD, EUR and most others, 0 for JPY</p>
+<p>and KRW, 3 for KWD, BHD, JOD and OMR. <b>It is not exhaustive.</b> A</p>
+<p>currency outside it is refused (E551) rather than assumed to have two</p>
+<p>digits, because an assumed minor unit prints and parses amounts wrongly.</p>
+<p>Adding one is a line in that table with the count ISO 4217 gives it, and</p>
+<p>a case in <code>check_money.py</code>. A program cannot add its own: two programs</p>
+<p>that disagreed about a currency would write the same amount two ways.</p>
+<br>
+<h3>4.5 Text</h3>
 <br>
 <p><code>Text</code> is a sequence of Unicode code points. <code>length</code> counts code</p>
 <p>points, not bytes, and <code>code_at(t, i)</code> returns the code point at a</p>
@@ -310,8 +380,8 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 <p>fail.</p>
 <br>
 <p>Fallible builtins: <code>to_int</code>, <code>read_file</code>, <code>fetch</code>, <code>post</code>,</p>
-<p><code>fetch_status</code>, <code>get</code> on a <b>map</b>, the <code>py_*</code> family, and the <code>json_*</code></p>
-<p>readers. <code>get</code> on a <b>list</b> is not fallible: list bounds are the</p>
+<p><code>fetch_status</code>, <code>get</code> on a <b>map</b>, <code>divide_or_fail</code>, <code>parse_money</code>, the</p>
+<p><code>py_*</code> family, and the <code>json_*</code> readers. <code>get</code> on a <b>list</b> is not fallible: list bounds are the</p>
 <p>prover&#x27;s domain (§9.4), and <code>get_or(m, k, default)</code> gives a total map</p>
 <p>lookup.</p>
 <br>
@@ -361,6 +431,18 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 <p>never zero; <code>Float</code> in genuine IEEE-754 rather than as real numbers;</p>
 <p><code>length</code> and <code>contains</code> on text, <code>upper</code>/<code>lower</code> as length-preserving,</p>
 <p>and <code>split</code> as producing at least one piece.</p>
+<br>
+<p>Amounts (§4.3) prove as the whole numbers they are: an amount is its</p>
+<p>minor units to the prover, so <code>ensures result &gt;= money(0, &quot;INR&quot;)</code> is</p>
+<p>settled the way <code>result &gt;= 0</code> is, and <code>percent_of</code> is the exact rounding</p>
+<p>the interpreter performs, translated for a denominator shown positive.</p>
+<p>What a list of amounts adds up to is an unknown the prover is told three</p>
+<p>true things about — that nothing adds up to zero, and that items all</p>
+<p><code>&gt;= 0</code> (all <code>&lt;= 0</code>) add up to something <code>&gt;= 0</code> (<code>&lt;= 0</code>) — so a promise</p>
+<p>that needs more about a sum than those, such as one that needs induction</p>
+<p>over the list, is left to runtime rather than claimed. <code>text_of</code>,</p>
+<p><code>parse_money</code> and <code>divide_or_fail</code> are not modelled at all: a function</p>
+<p>that uses one keeps its promises as runtime checks.</p>
 <br>
 <p>Not proven, and checked at runtime instead: the contents of text</p>
 <p>beyond the above; anything involving values that come back from the</p>
@@ -429,6 +511,21 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 <br>
 <p>Imports are resolved relative to the importing file, with the bundled</p>
 <p>standard library searched last. Import cycles are rejected.</p>
+<br>
+<h3>10.1 Your names and the builtins</h3>
+<br>
+<p>A builtin added in <b>4.3 or later</b> gives way to a function of the same</p>
+<p>name that the program defines: <code>money</code>, <code>units_of</code>, <code>with_units</code>,</p>
+<p><code>percent_of</code>, <code>divide_or_fail</code>, <code>text_of</code> and <code>parse_money</code> are the</p>
+<p>program&#x27;s own wherever it declares one. A program written before a</p>
+<p>builtin existed therefore keeps meaning exactly what it meant, which is</p>
+<p>what lets a minor version add one at all. Inside a library imported</p>
+<p><b>with a name</b>, such a call always reaches the builtin: the library&#x27;s</p>
+<p>own functions carry its prefix, and it was not written against the</p>
+<p>program importing it.</p>
+<br>
+<p>The builtins that existed before 4.3 keep the precedence they have</p>
+<p>always had: a function named like one of those is never reached.</p>
 <br>
 <h2>11. Compilation and execution</h2>
 <br>

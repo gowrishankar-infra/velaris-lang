@@ -110,6 +110,47 @@ than being waved through.
 None of these make the demo look better. All of them are the reason the
 demo can be believed.
 
+## Money is not a float, and Velaris will not let you pretend
+
+Everything above is about being honest when a program genuinely needs
+IEEE-754. Currency is the case where it does not.
+
+`0.10` is not a double any more than `0.1` is. A hundred-rupee balance
+built out of ten-rupee floats is not a hundred rupees, and the error
+compounds quietly: it never trips an exception, it just ends the quarter
+a few paise off, in a direction nobody chose. The proof story makes it
+worse, not better. `ensures total >= 0.0` about floats is provable and
+almost worthless, because the number it is proving things about is
+already not the amount you meant.
+
+So an amount in Velaris is not a `Float` at all. `Money of INR` (SPEC.md
+§4.3) is a whole number of minor units - paise, cents, fils - with the
+currency in its type:
+
+```
+let claim = money(125075, "INR")           // 1250.75, exactly
+let fee = percent_of(claim, 25, 1000, "half_up")   // 2.5%, rounded
+                                                   // the way you said
+let parts = money.split(claim, 3)          // and they add up to claim
+```
+
+It is an `Int` underneath, so it proves the way whole numbers prove -
+the same solver, the same milliseconds, none of the bit-blasting the
+first half of this page is about. `money.split` promises that its parts
+add up to exactly what it was given, and that promise is **proven**,
+before your program runs, by the prover you already have.
+
+Three things are compile errors rather than surprises: a `Float`
+anywhere near an amount, two currencies in one sum, and `/` on an
+amount - because dividing 100 paise three ways has to round, and Velaris
+will not pick the rounding for you. You write `"half_up"`,
+`"half_even"` or `"down"` in the call, or you use `money.split`, which
+does not round at all.
+
+If you are holding money in a `Float` today, that is the one case on
+this page where the answer is not "be careful with floats" but "do not
+use them".
+
 ## Try it
 
 The compiler runs in your browser, no install:

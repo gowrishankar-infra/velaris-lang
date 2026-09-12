@@ -76,6 +76,7 @@ prover could not settle.
 | `check_library.py` | do the library and MCP server keep the same promises |
 | `check_pool.py` | can a pooled worker leak anything to the next program |
 | `check_termination.py` | does each loop get the termination verdict it must |
+| `check_money.py` | are amounts exact, kept to one currency, and rounded only where the call says so |
 | `check_ratchet.py` | does every widening of the capability surface fail, against the declared baseline and not the previous commit, and does every change that does not widen pass |
 | `velaris test examples/std_test.vel` | does the standard library behave |
 | `velaris conformance` | does this implementation pass velaris-spec's corpus, at L1, L2 and L3 |

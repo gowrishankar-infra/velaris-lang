@@ -105,7 +105,7 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 </style></head><body>
 <nav><div class="in"><a class="brand" href="index.html">
 <span class="dot"></span>Velaris</a><a href="index.html" class="">Home</a><a href="tutorial.html" class="">Tutorial</a><a href="spec.html" class="">Reference</a><a href="library.html" class="">Library</a><a href="errors.html" class="">Errors</a><a href="floats.html" class="here">Floats</a><a href="playground.html" class="">Playground</a>
-<span class="ver">v4.2.1</span></div></nav>
+<span class="ver">v4.3.0</span></div></nav>
 <main class=""><h1>Your verifier is probably lying to you about floats</h1>
 <br>
 <p>Here is a promise that looks obviously true:</p>
@@ -217,6 +217,47 @@ error[E700] promise cannot be kept: &#x27;add_twice&#x27; ensures result == x + 
 <br>
 <p>None of these make the demo look better. All of them are the reason the</p>
 <p>demo can be believed.</p>
+<br>
+<h2>Money is not a float, and Velaris will not let you pretend</h2>
+<br>
+<p>Everything above is about being honest when a program genuinely needs</p>
+<p>IEEE-754. Currency is the case where it does not.</p>
+<br>
+<p><code>0.10</code> is not a double any more than <code>0.1</code> is. A hundred-rupee balance</p>
+<p>built out of ten-rupee floats is not a hundred rupees, and the error</p>
+<p>compounds quietly: it never trips an exception, it just ends the quarter</p>
+<p>a few paise off, in a direction nobody chose. The proof story makes it</p>
+<p>worse, not better. <code>ensures total &gt;= 0.0</code> about floats is provable and</p>
+<p>almost worthless, because the number it is proving things about is</p>
+<p>already not the amount you meant.</p>
+<br>
+<p>So an amount in Velaris is not a <code>Float</code> at all. <code>Money of INR</code> (SPEC.md</p>
+<p>§4.3) is a whole number of minor units - paise, cents, fils - with the</p>
+<p>currency in its type:</p>
+<br>
+<pre><code>
+let claim = money(125075, &quot;INR&quot;)           // 1250.75, exactly
+let fee = percent_of(claim, 25, 1000, &quot;half_up&quot;)   // 2.5%, rounded
+                                                   // the way you said
+let parts = money.split(claim, 3)          // and they add up to claim
+</code></pre>
+<br>
+<p>It is an <code>Int</code> underneath, so it proves the way whole numbers prove -</p>
+<p>the same solver, the same milliseconds, none of the bit-blasting the</p>
+<p>first half of this page is about. <code>money.split</code> promises that its parts</p>
+<p>add up to exactly what it was given, and that promise is <b>proven</b>,</p>
+<p>before your program runs, by the prover you already have.</p>
+<br>
+<p>Three things are compile errors rather than surprises: a <code>Float</code></p>
+<p>anywhere near an amount, two currencies in one sum, and <code>/</code> on an</p>
+<p>amount - because dividing 100 paise three ways has to round, and Velaris</p>
+<p>will not pick the rounding for you. You write <code>&quot;half_up&quot;</code>,</p>
+<p><code>&quot;half_even&quot;</code> or <code>&quot;down&quot;</code> in the call, or you use <code>money.split</code>, which</p>
+<p>does not round at all.</p>
+<br>
+<p>If you are holding money in a <code>Float</code> today, that is the one case on</p>
+<p>this page where the answer is not &quot;be careful with floats&quot; but &quot;do not</p>
+<p>use them&quot;.</p>
 <br>
 <h2>Try it</h2>
 <br>

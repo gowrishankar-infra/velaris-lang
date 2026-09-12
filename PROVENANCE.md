@@ -18,7 +18,8 @@ those services.
 | The capability ratchet (`velaris.capabilities/1`) | `ae7a04102cc9d0704be659036bcd2c535983f036`, v4.0.0; GitHub release published 2026-09-11T08:11:46Z | 2026-09-11T13:41:12+05:30 |
 | The conformance corpus, citation files, the predicate type | `3c81ed1353d3dc1aeec2779329ce59e324f39114`, v4.1.0; GitHub release published 2026-09-11T10:40:34Z | 2026-09-11T16:09:50+05:30 |
 | `velaris attest`, a producer of the predicate type | `53fa3cb5c008d202dec6abf56e76d496d4221da3`, v4.2.0; GitHub release published 2026-09-11T14:52:36Z | 2026-09-11T19:50:49+05:30 |
-| This version: the author's name with a capital S | 4.2.1, tag `v4.2.1` | 2026-09-11 |
+| The author's name with a capital S | 4.2.1, tag `v4.2.1` | 2026-09-11 |
+| This version: `Money of CUR`, an exact amount whose split is proven to add up | 4.3.0, tag `v4.3.0` | 2026-09-12 |
 
 ## velaris-spec
 

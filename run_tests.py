@@ -27,6 +27,7 @@ EXPECT = {
     "funcs.vel": "RUNS",
     "generics.vel": "RUNS",
     "ledger.vel": "RUNS",
+    "settlement.vel": "RUNS",
     "rec_proof.vel": "RUNS",
     "native_float.vel": "RUNS",
     "qlist_proof.vel": "RUNS",
@@ -100,6 +101,8 @@ EXPECT = {
 # scripted keyboard input for interactive examples
 ARGS = {
     "wordcount.vel": ["examples/sample.txt", "3"],
+    # the settlement needs the console and nothing else, and says so
+    "settlement.vel": ["--allow", "io"],
 }
 
 STDIN = {

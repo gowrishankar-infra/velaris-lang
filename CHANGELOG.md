@@ -1,5 +1,177 @@
 # Velaris changelog
 
+## 4.3 - Money, which is not a float
+
+A minor version, and an additive one: every program that compiled under
+4.2 compiles, runs and means the same.
+
+A currency amount is not a real number. A `Float` cannot hold 0.10, so a
+premium, a claim or a settlement computed in floats is wrong in a way
+that compounds quietly and is never signalled. Velaris already proves
+things about whole numbers honestly; an amount is now a whole number
+with a currency, and it proves the same way.
+
+**The type.** `Money of INR` is an exact amount in **minor units** -
+paise, cents, fils - held as a 64-bit `Int`, with the currency part of
+the type (SPEC.md 4.3). One way to write one:
+
+    money(1250, "INR")           // 12.50 rupees, as 1250 paise
+
+There is deliberately no `from_major(12, 50, "INR")` or `rupees(12, 50)`
+beside it: a major/minor pair is ambiguous for a currency with three
+digits after the point and meaningless for one with none, and
+`parse_money("12.50", "INR")` already reads the human form. `units_of(m)`
+gives the minor units back, and `with_units(m, n)` makes an amount of
+`n` units in the currency of `m`, which is how code generic in a
+currency builds one.
+
+**Currency is part of the value, and of the type.** Adding INR to USD is
+a compile error (E550), not a surprise while running, and so is
+comparing them, putting both in one list, or passing one where the other
+is declared. There is no conversion builtin: converting needs a rate and
+a rounding policy, and both are a program's decisions. A function can be
+generic in a currency - `fn fee(m: Money of C) -> Money of C for any C` -
+and the currency is then whatever the call site's amount has.
+
+**Arithmetic.** Amounts in one currency add and subtract; an amount
+multiplies by an `Int`. An amount times an amount is a type error
+(E501), an amount and a `Float` never meet (E501), and an amount past
+64 bits stops the program with E407, exactly as an `Int` does.
+
+**Rounding is never implicit.** `/` and `%` on an amount are refused
+(E553, a new code), because both would round without saying how. Where
+a result can fail to come out even, the mode is a required argument,
+written in the call:
+
+    percent_of(amount, numerator, denominator, "half_up")
+    divide_or_fail(amount, by, "half_even")        // can fail
+
+`"half_up"` takes a half away from zero, `"half_even"` to the even
+neighbour, `"down"` toward zero; anything else, or a mode held in a
+variable, is E552. There is no default. `percent_of` multiplies before
+it divides and is exact in between however large that product; only its
+answer must fit in 64 bits. A denominator of zero is E403 while running,
+or E706 where the prover can show it. `divide_or_fail` fails catchably
+on zero and on an answer too large to hold, and joins the fallible
+builtins, with `parse_money`.
+
+**Splitting, with the sum proven.** `money.split(amount, ways)`, in the
+new `stdlib/money.vel`, gives `ways` parts that add up to the amount
+exactly, the remainder distributed one minor unit at a time, largest
+part first:
+
+    import "money.vel" as money
+    let parts = money.split(money(1000, "INR"), 3)   // 334, 333, 333
+
+It is written in Velaris, not in the compiler, so that the code that
+runs is the code the prover proves - with your program, every time you
+compile it. Its promises, all **proven**: as many parts as asked; the
+parts add up to the amount exactly; and no part is negative when the
+amount is not (nor positive when the amount is not). A negative amount
+gives the negated parts of the positive one, so a charge and its refund
+cancel party by party rather than leaving one party a unit up. It is
+`money.split` and not `split` because `split` is already the text
+builtin; the file is imported with a name, as `dates.vel` and `csv.vel`
+are.
+
+**Text.** `text_of(m)` writes the code and then the amount with exactly
+as many digits after the point as the currency has minor units: `INR
+12.50`, `JPY 1250`, `KWD 1.250`, `INR -0.05`. `to_text`, `print` and
+`format` agree with it, and `json_of` writes an amount as its currency
+and its units, never as a JSON number with a point. `parse_money(text,
+"INR")` reads back what `text_of` wrote, with or without the code and
+with fewer digits after the point, and fails on everything else -
+including a text with more digits than the currency has, which would
+have to round.
+
+**The currency table is small, and says so.** `CURRENCIES` in
+`velaris.py` holds 21 codes with their minor-unit counts (2 for INR and
+USD, 0 for JPY and KRW, 3 for KWD, BHD, JOD and OMR). It is **not
+exhaustive**. A currency outside it is refused (E551) rather than
+assumed to have two digits, because a wrong minor unit prints and parses
+every amount in that currency wrongly. Adding one is a line in that
+table with the count ISO 4217 gives it and a case in `check_money.py`;
+a program cannot add its own, because two programs disagreeing about a
+currency would write the same amount two ways.
+
+**What the prover makes of it.** An amount is its minor units to the
+prover - an `Int` - so `ensures result >= money(0, "INR")` is settled
+the way `result >= 0` is, at the same speed, with none of the
+bit-blasting `Float` needs. `percent_of` is translated as the exact
+rounding the interpreter performs, for a denominator shown positive.
+What a list of amounts adds up to is a value the prover is told three
+true things about - nothing adds up to zero; items all `>= 0` (all
+`<= 0`) add up to something `>= 0` (`<= 0`) - and nothing more, so it is
+never claimed as a counterexample. `text_of`, `parse_money` and
+`divide_or_fail` are not modelled: a function that uses one keeps its
+promises as runtime checks, as with the other fallible builtins.
+
+Four promises were asked for by name. All four **prove**, and
+`check_money.py` asserts each:
+
+- a total over a list of amounts is non-negative when every item is -
+  both as a loop that adds them and, through the facts above, as
+  `units_of(xs)`;
+- `money.split`'s parts add up to its amount - in `money.vel` where it
+  is written, and at a caller through its promise;
+- `percent_of` never exceeds its amount for a numerator at most the
+  denominator - with the rate written in the call and with the rate
+  symbolic;
+- a subtraction guarded by a `requires` cannot go negative.
+
+What does **not** prove, stated rather than weakened: a promise that
+needs more about a sum than the three facts - anything needing induction
+over a list, such as "the total of a list each of whose items is at
+least 10 is at least 10 times its length". Such a promise is checked
+while running, and `velaris proofs` says so.
+
+**Money is pure.** No new effect, nothing new in the capability surface,
+no change to `velaris.audit/1`, `velaris.capabilities/1` or the ratchet.
+A program full of amounts and nothing else declares nothing and runs
+under any budget; `examples/settlement.vel` runs under `--allow io`.
+
+**A builtin added from 4.3 on gives way to your own function of that
+name** (SPEC.md 10.1). `examples/ledger.vel` has had a function called
+`money` since 1.13, and a program that defines `money`, `units_of`,
+`text_of` or any of the others keeps meaning what it meant; the builtin
+is simply not reached there. Inside a library imported with a name the
+builtin is always reached, since the library's own functions carry its
+prefix. This is what lets a minor version add a builtin at all; the
+builtins that existed before 4.3 keep the precedence they had.
+
+**The prover settles one more thing than it did**, which STABILITY.md's
+"prover's reach" covers and which is named here: a division whose
+divisor mentions a loop's values is now translated when the loop's own
+condition and invariants show it positive, where before any such divisor
+was left alone. `money.split` needs it - it divides by "the parts still
+to make" - and an average computed after a loop gets it too. No verdict
+in this repository moved: every function of all 172 `.vel` files here
+was compared, before the change and after, and nothing differed -
+neither a proof status nor an error code.
+
+**`examples/settlement.vel`** is the demonstration: rows of claims read
+and parsed, totalled, a 2.5% fee taken with `"half_up"` named in the
+call, the rest split three ways, and the result printed. Five of its
+five functions are proven, among them that the parts add up to the
+payout and that no party is paid a negative amount. It runs under
+`--allow io` and is in `run_tests.py`.
+
+**`check_money.py`** is the new suite: 81 cases covering mixed-currency
+arithmetic refused at compile time, an amount times an amount refused,
+the 64-bit edges, `split` for 1, 3, 7 and 100 ways and for amounts that
+do not divide and for negative amounts and for zero ways, every rounding
+mode on a half case in both signs against Python's `decimal` module as
+an independent oracle, JPY with no minor unit and KWD with three, text
+and parsing round-trips for all 21 currencies, a property test over 200
+random amounts and divisors, the four promises above, and the prover's
+rounding formulas checked against the interpreter's on 450 cases.
+
+SPEC.md gains sections 4.3, 4.4 and 10.1; LLM.md gains the type, the
+builtins, the module and rule 16, which states the three rules a model
+gets wrong - no floats, no two currencies, rounding always named;
+`docs/floats.md` gains the section that says currency is the case where
+the answer is not "be careful with floats" but "do not use them".
+
 ## 4.2.1 - The author name, capitalised correctly
 
 A patch version, and a text change only. The compiler, the runtime and

@@ -1,7 +1,7 @@
 {
   "schema": "velaris.capabilities/1",
-  "velaris_version": "4.2.1",
-  "date": "2026-09-11",
+  "velaris_version": "4.3.0",
+  "date": "2026-09-12",
   "surface": {
     "grants": [
       "clock",
@@ -1529,6 +1529,22 @@
         "touches_the_network": ["net"]
       }
     },
+    {
+      "file": "examples/settlement.vel",
+      "grants": [
+        "io"
+      ],
+      "counts": {},
+      "functions": {
+        "fee_on": [],
+        "main": ["io"],
+        "not_negative": [],
+        "parse_claim": [],
+        "payout_of": [],
+        "shares_of": [],
+        "total_of": []
+      }
+    },
     {"file": "examples/sneaky.vel", "compiles": false},
     {
       "file": "examples/sneaky_fixed.vel",
@@ -1837,6 +1853,16 @@
         "field": [],
         "info": ["io"],
         "warn": ["io"]
+      }
+    },
+    {
+      "file": "stdlib/money.vel",
+      "grants": [],
+      "counts": {},
+      "functions": {
+        "not_negative": [],
+        "not_positive": [],
+        "split": []
       }
     },
     {

@@ -105,7 +105,7 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 </style></head><body>
 <nav><div class="in"><a class="brand" href="index.html">
 <span class="dot"></span>Velaris</a><a href="index.html" class="">Home</a><a href="tutorial.html" class="">Tutorial</a><a href="spec.html" class="">Reference</a><a href="library.html" class="here">Library</a><a href="errors.html" class="">Errors</a><a href="floats.html" class="">Floats</a><a href="playground.html" class="">Playground</a>
-<span class="ver">v4.2.1</span></div></nav>
+<span class="ver">v4.3.0</span></div></nav>
 <main class=""><h1>Standard library</h1>
 <p class="lead">Every function below is written in Velaris and parsed onto this page by the real compiler &mdash; contracts included. A violated <code>requires</code> is a compile error at your call site.</p>
 <div class="fnrow">
@@ -242,6 +242,20 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 <div class="sig">fn log.fail_with(message: Text) uses io</div>
 </div>
 <div class="fnrow">
+<div class="sig">fn money.not_negative(m: Money of C) -&gt; Bool for any C</div>
+</div>
+<div class="fnrow">
+<div class="sig">fn money.not_positive(m: Money of C) -&gt; Bool for any C</div>
+</div>
+<div class="fnrow">
+<div class="sig">fn money.split(amount: Money of C, ways: Int) -&gt; List of Money of C for any C</div>
+<div class="contract">requires ways &gt; 0</div>
+<div class="contract">ensures length(result) == ways</div>
+<div class="contract">ensures units_of(result) == units_of(amount)</div>
+<div class="contract">ensures units_of(amount) &lt; 0 or all_of(result, not_negative)</div>
+<div class="contract">ensures units_of(amount) &gt; 0 or all_of(result, not_positive)</div>
+</div>
+<div class="fnrow">
 <div class="sig">fn first(xs: List of T) -&gt; T for any T</div>
 <div class="contract">requires length(xs) &gt; 0</div>
 </div>
@@ -339,6 +353,7 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 <tr><td><code>code_at</code></td><td>pure</td><td>Text, Int</td><td>Int</td></tr>
 <tr><td><code>contains</code></td><td>pure</td><td>Text, Text</td><td>Bool</td></tr>
 <tr><td><code>div_or_fail</code> <span class="ecode">or fail</span></td><td>pure</td><td>Int, Int</td><td>Int</td></tr>
+<tr><td><code>divide_or_fail</code> <span class="ecode">or fail</span></td><td>pure</td><td>Money of C, Int, Text</td><td>Money of C</td></tr>
 <tr><td><code>env</code></td><td>env</td><td>Text, Text</td><td>Text</td></tr>
 <tr><td><code>exit_with</code></td><td>io</td><td>Int</td><td>Unit</td></tr>
 <tr><td><code>fetch</code> <span class="ecode">or fail</span></td><td>net</td><td>Text</td><td>Text</td></tr>
@@ -359,8 +374,11 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 <tr><td><code>log</code></td><td>io</td><td>Any</td><td>Unit</td></tr>
 <tr><td><code>lower</code></td><td>pure</td><td>Text</td><td>Text</td></tr>
 <tr><td><code>mod_or_fail</code> <span class="ecode">or fail</span></td><td>pure</td><td>Int, Int</td><td>Int</td></tr>
+<tr><td><code>money</code></td><td>pure</td><td>Int, Text</td><td>Money of that currency</td></tr>
 <tr><td><code>mul_or_fail</code> <span class="ecode">or fail</span></td><td>pure</td><td>Int, Int</td><td>Int</td></tr>
 <tr><td><code>now</code></td><td>clock</td><td></td><td>Int</td></tr>
+<tr><td><code>parse_money</code> <span class="ecode">or fail</span></td><td>pure</td><td>Text, Text</td><td>Money of that currency</td></tr>
+<tr><td><code>percent_of</code></td><td>pure</td><td>Money of C, Int, Int, Text</td><td>Money of C</td></tr>
 <tr><td><code>pop</code> <span class="ecode">or fail</span></td><td>pure</td><td>Any</td><td>Any</td></tr>
 <tr><td><code>post</code> <span class="ecode">or fail</span></td><td>net</td><td>Text, Text</td><td>Text</td></tr>
 <tr><td><code>print</code></td><td>io</td><td>Any</td><td>Unit</td></tr>
@@ -383,10 +401,13 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 <tr><td><code>slice</code> <span class="ecode">or fail</span></td><td>pure</td><td>Any, Int, Int</td><td>Any</td></tr>
 <tr><td><code>split</code></td><td>pure</td><td>Text, Text</td><td>List of Text</td></tr>
 <tr><td><code>sub_or_fail</code> <span class="ecode">or fail</span></td><td>pure</td><td>Int, Int</td><td>Int</td></tr>
+<tr><td><code>text_of</code></td><td>pure</td><td>Money of C</td><td>Text</td></tr>
 <tr><td><code>to_float</code></td><td>pure</td><td>Int</td><td>Float</td></tr>
 <tr><td><code>to_int</code> <span class="ecode">or fail</span></td><td>pure</td><td>Text</td><td>Int</td></tr>
 <tr><td><code>to_text</code></td><td>pure</td><td>Any</td><td>Text</td></tr>
+<tr><td><code>units_of</code></td><td>pure</td><td>Money of C, or List of Money of C</td><td>Int</td></tr>
 <tr><td><code>upper</code></td><td>pure</td><td>Text</td><td>Text</td></tr>
+<tr><td><code>with_units</code></td><td>pure</td><td>Money of C, Int</td><td>Money of C</td></tr>
 <tr><td><code>write_file</code></td><td>fs</td><td>Text, Any</td><td>Unit</td></tr>
 </table><p style='font-size:13.5px;color:var(--mut)'>get on a map can also fail (missing key); get_or never fails.</p></main>
 <footer>Velaris is MIT-licensed open source &middot;
