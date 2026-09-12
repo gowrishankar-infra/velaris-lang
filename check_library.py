@@ -444,15 +444,24 @@ fn main() uses io {
          "and says it never declassifies",
          files={"main.vel": '''fn main() uses io, env {
     let key = env("API_KEY", "")
-    if key == "" {
-        print("not set")
-    }
+    print("a key was read, and this program cannot print it")
 }
 '''},
          expect=surface(["env", "io"],
                         _fns(("main", ["env", "io"], False)),
                         "velaris <file> --allow env,io",
                         secrets=_secrets(sources=["env"]))),
+    dict(id="secret-branched-on", description="a program cannot branch "
+         "on a value derived from a Secret: a comparison gives a Secret "
+         "of Bool, and an 'if' on one is refused (E563)",
+         files={"main.vel": '''fn main() uses io, env {
+    let key = env("API_KEY", "")
+    if key == "" {
+        print("not set")
+    }
+}
+'''},
+         expect=refused("E563")),
     dict(id="secret-declassified", description="a program that "
          "declassifies says so, with the reason written in the call and "
          "the function it is in; declassify is an effect, so a budget "
@@ -476,7 +485,7 @@ fn main() uses io {
          files={"main.vel": '''fn main() uses io, fs {
     check read_file_secret("etc/token") {
         ok body {
-            print(length(body) == 0)
+            print("read the token; it cannot be printed")
         }
         fail why {
             print(why)
@@ -1219,8 +1228,12 @@ def main() -> int:
                  "        }\n        i = i + 1\n    }\n}\n")
     refused("run STOPS at the network operation count (E315)",
             count_net, ["io", f"net:127.0.0.1:{gp}@2"], "E315", "net")
+    # 7.0: what env() returns is a Secret of Text, nothing derived from
+    # one is printable and nothing branches on one - so the program says
+    # only that it read it, and the budget is what refuses the read.
     env_prog = ('fn main() uses io, env {\n'
-                '    print(length(env("PATH", "")) > 0)\n}\n')
+                '    let path = env("PATH", "")\n'
+                '    print("read it")\n}\n')
     refused("run REFUSES env() with only io granted (E310)",
             env_prog, ["io"], "E310", "env")
     c = velaris.check('fn main() uses io {\n    print(env("PATH", ""))\n}\n')
@@ -1238,15 +1251,20 @@ def main() -> int:
                     allow={"io", f"net:127.0.0.1:{gp}", f"net:localhost:{op}"})
     ok("a redirect to a granted host is followed",
        r.ok and r.output.strip() == "GOT hello", str(r.as_dict())[:120])
-    honest = ("fn main() uses io, env, fs, net {\n"
+    honest = ("fn main() uses io, env, fs, net, declassify {\n"
               f'    check read_file("{inside.as_posix()}") {{\n'
               "        ok t {\n"
               f'            write_file("{(box / "out" / "copy.txt").as_posix()}", t)\n'
               f'            check fetch_status("http://127.0.0.1:{gp}/") {{\n'
-              '                ok c { print(format("ok {} {}", c, length(env("PATH", "")) > 0)) }\n'
+              '                ok c {\n'
+              '                    let path = declassify(env("PATH", ""),\n'
+              '                    "whether PATH is set at all is not its contents")\n'
+              '                    print(format("ok {} {}", c, length(path) > 0))\n'
+              "                }\n"
               "                fail w { print(w) }\n            }\n        }\n"
               "        fail w { print(w) }\n    }\n}\n")
-    r = velaris.run(honest, allow={"io", "env", f"fs:read:{data}",
+    r = velaris.run(honest, allow={"io", "env", "declassify",
+                                   f"fs:read:{data}",
                                    f"fs:write:{out}@5", f"net:127.0.0.1:{gp}@5"})
     ok("an honest program using exactly its grants runs",
        r.ok and r.output.strip() == "ok 200 true", str(r.as_dict())[:120])
@@ -2039,7 +2057,8 @@ def main() -> int:
     door_box.mkdir(exist_ok=True)
     door_log = door_box / "door.jsonl"
     door_log.unlink(missing_ok=True)
-    server, port = start_door("--max-allow", "io,fs,env", "--log-file",
+    server, port = start_door("--max-allow", "io,fs,env,declassify",
+                              "--log-file",
                               str(door_log), env={"VELARIS_TOKEN": TOKEN})
     calls = 0                             # non-health calls made below
     sources = []
@@ -2058,7 +2077,8 @@ def main() -> int:
            str(health))
         health = as_json(ask(port, "GET", "/health", token=TOKEN)[1])
         ok("...and with the token it reports the ceiling",
-           health.get("max_allow") == ["env", "fs", "io"], str(health))
+           health.get("max_allow") == ["declassify", "env", "fs", "io"],
+       str(health))
 
         d = post("/audit", {"source": READS_A_FILE})
         ok("audit over HTTP carries the schema",
@@ -2084,18 +2104,21 @@ def main() -> int:
            str(d)[:120])
 
         # 6.0: env() hands back a Secret of Text, which cannot be
-        # printed. A comparison over one gives an ordinary Bool, which
-        # is exactly what this asks - is the token reachable or not -
-        # so the test says the same thing without the program being
-        # able to say it.
-        env_prog = ('fn main() uses io, env {\n'
+        # printed - and from 6.1 a program cannot branch on one either.
+        # So the program says what it is doing: it declassifies the one
+        # bit this test asks about, which needs the effect and the
+        # grant, and the audit records the reason.
+        env_prog = ('fn main() uses io, env, declassify {\n'
                     '    let token = env("VELARIS_TOKEN", "absent")\n'
-                    '    if token == "absent" {\n'
+                    '    let shown = declassify(token,\n'
+                    '    "this test asks only whether the door removed it")\n'
+                    '    if shown == "absent" {\n'
                     '        print("absent")\n'
                     '    } else {\n'
                     '        print("READ IT")\n'
                     '    }\n}\n')
-        d = post("/run", {"source": env_prog, "allow": ["io", "env"]})
+        d = post("/run", {"source": env_prog,
+                          "allow": ["io", "env", "declassify"]})
         ok("a program granted env cannot read VELARIS_TOKEN: the door took "
            "it out of the environment its workers inherit",
            d.get("ok") and d.get("output", "").strip() == "absent",

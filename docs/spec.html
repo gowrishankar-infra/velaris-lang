@@ -105,7 +105,7 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 </style></head><body>
 <nav><div class="in"><a class="brand" href="index.html">
 <span class="dot"></span>Velaris</a><a href="index.html" class="">Home</a><a href="tutorial.html" class="">Tutorial</a><a href="spec.html" class="here">Reference</a><a href="library.html" class="">Library</a><a href="errors.html" class="">Errors</a><a href="floats.html" class="">Floats</a><a href="playground.html" class="">Playground</a>
-<span class="ver">v6.0.0</span></div></nav>
+<span class="ver">v7.0.0</span></div></nav>
 <main class="wide"><h1>The Velaris language reference</h1>
 <br>
 <p>This is the specification: what Velaris means, precisely. It is not a</p>
@@ -114,7 +114,7 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 <p>this language can find out exactly what it promises — and what it</p>
 <p>does not.</p>
 <br>
-<p>Version 2.31. Where this document and the implementation disagree,</p>
+<p>Version 2.32. Where this document and the implementation disagree,</p>
 <p>that is a bug in one of them; please report it.</p>
 <br>
 <h2>1. Programs</h2>
@@ -192,26 +192,46 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 <p>through <code>read_line</code>, through <code>args</code>, through <code>ffi</code> - is an ordinary</p>
 <p><code>Text</code> and is outside this entirely.</p>
 <br>
-<p><b>Where one cannot go.</b> A builtin that declares an effect emits what</p>
-<p>it is given: to the console, a file, a host, Python or the operating</p>
-<p>system. None of them takes an argument that carries a Secret, and a</p>
+<p><b>Where one cannot go.</b> Two kinds of builtin put a value in front of</p>
+<p>somebody, and neither takes an argument that carries a Secret. A</p>
 <p>program that gives one is refused with <b>E560</b>, which names the value,</p>
-<p>what would have emitted it, and where the secret came from. That covers</p>
-<p><code>print</code>, <code>log</code>, <code>ask</code>, <code>exit_with</code>, <code>read_file</code>, <code>read_file_secret</code>,</p>
-<p><code>write_file</code>, <code>file_exists</code>, <code>fetch</code>, <code>post</code>, <code>fetch_status</code>,</p>
-<p><code>request</code>, <code>env</code> itself, <code>now</code>, <code>random</code> and the whole <code>py_*</code> family.</p>
+<p>what would have emitted it, and where the secret came from.</p>
+<br>
+<li><b>A builtin that declares an effect</b> emits what it is given: to the</li>
+<p>  console, a file, a host, Python or the operating system. That covers</p>
+<p>  <code>print</code>, <code>log</code>, <code>ask</code>, <code>exit_with</code>, <code>read_file</code>, <code>read_file_secret</code>,</p>
+<p>  <code>write_file</code>, <code>file_exists</code>, <code>fetch</code>, <code>post</code>, <code>fetch_status</code>,</p>
+<p>  <code>request</code>, <code>env</code> itself, <code>now</code>, <code>random</code> and the whole <code>py_*</code> family.</p>
+<li><b>A builtin that can fail</b> gives a reason, and a reason is <code>Text</code></li>
+<p>  the program may print. The runtime writes it out of the values it was</p>
+<p>  given — <code>to_int</code> quotes the text it could not read, <code>parse_money</code> the</p>
+<p>  amount it could not parse — and nothing at run time knows which of</p>
+<p>  those the type system called secret. So <code>to_int</code>, <code>parse_money</code>,</p>
+<p>  <code>json_get</code>, the <code>_or_fail</code> family, <code>pop</code>, <code>slice</code> and <code>set_at</code> take</p>
+<p>  no secret either. <code>get</code> on a map is the exception that proves the</p>
+<p>  rule: its reason names the key, and a key is <code>Text</code> or <code>Int</code>, never a</p>
+<p>  Secret.</p>
+<br>
 <p>The reason given to <code>fail</code> is emitted too, and is refused the same way.</p>
 <p>A program&#x27;s own effectful function needs no rule of its own: it</p>
 <p>declares the types it takes, and a Secret is not one of them unless the</p>
 <p>signature says so.</p>
 <br>
 <p>One rule is about generic functions. A generic body is checked once,</p>
-<p>with its type variables standing for nothing in particular, so</p>
-<p><code>print(x)</code> inside <code>fn show(x: T) uses io</code> is allowed there. Binding <code>T</code></p>
-<p>to a secret at a call site would print it, so **a generic function that</p>
-<p>declares any effect takes no argument carrying a Secret** (E560). A</p>
-<p>pure generic function may take one: it can reach no sink, and what it</p>
-<p>hands back is a secret where the caller stands.</p>
+<p>with its type variables standing for nothing in particular. Inside it a</p>
+<p>value of type <code>T</code> can be compared - <code>got == item</code> gives a plain <code>Bool</code></p>
+<p>there, because there is no secret in sight - handed to <code>to_text</code>, or</p>
+<p>printed. Bind <code>T</code> to a secret at a call site and each of those becomes</p>
+<p>an oracle that gives the caller an ordinary <code>Bool</code>, <code>Int</code> or <code>Text</code>:</p>
+<p><code>contains_item([guess], key)</code> is exactly that. So **no type variable is</p>
+<p>ever bound to a type that carries a secret** (E560), whether the</p>
+<p>generic function declares an effect or not.</p>
+<br>
+<p>That is blunt, and it is the sound rule. The way to write a generic</p>
+<p>function over secrets is to say so in its signature -</p>
+<p><code>fn pass(s: Secret of T) -&gt; Secret of T for any T</code> binds <code>T</code> to <code>Text</code>,</p>
+<p>which carries nothing - and then the body is checked knowing what it</p>
+<p>holds.</p>
 <br>
 <p><b>What carries one.</b> A value carries a secret when it is one, or holds</p>
 <p>one anywhere inside: <code>List of Secret of Text</code>, `Map of Text to Secret</p>
@@ -221,36 +241,81 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 <p><code>Int</code>, so a secret is never a key. A function value is a name, not what</p>
 <p>it would return, and carries nothing.</p>
 <br>
-<p><b>What keeps one.</b> Pure computation over a secret gives a secret:</p>
-<p><code>length(k)</code> is a <code>Secret of Int</code>, <code>&quot;Bearer &quot; + k</code> is a `Secret of</p>
-<p>Text<code>, and </code>upper(k)<code>, </code>to_text(k)<code>, </code>format(&quot;{}&quot;, k)<code> and </code>json_of(k)`</p>
-<p>all give a <code>Secret of Text</code>. The rule is one line: **a pure operation</p>
-<p>on a value that carries a secret gives a Secret of its result type,</p>
-<p>unless that result is <code>Bool</code>.** There is no <code>Secret of Secret of T</code></p>
-<p>(E562).</p>
+<p><b>What keeps one.</b> Every pure operation over a secret gives a secret,</p>
+<p>with no exceptions: <code>length(k)</code> is a <code>Secret of Int</code>, <code>&quot;Bearer &quot; + k</code> a</p>
+<p><code>Secret of Text</code>, <code>upper(k)</code>, <code>to_text(k)</code>, <code>format(&quot;{}&quot;, k)</code> and</p>
+<p><code>json_of(k)</code> all <code>Secret of Text</code> — **and <code>k == &quot;&quot;</code>, <code>length(k) &lt; 10</code></p>
+<p>and <code>contains(k, &quot;a&quot;)</code> are all <code>Secret of Bool</code>.** The rule is one</p>
+<p>line: **a pure operation on a value that carries a secret gives a</p>
+<p>Secret of its result type.** There is no <code>Secret of Secret of T</code></p>
+<p>(E562). A comparison may put a secret beside a plain value of the same</p>
+<p>type, and that is the only place the two mix.</p>
 <br>
-<p><b>The Bool, stated as a choice.</b> A comparison is the exception:</p>
-<p><code>k == &quot;&quot;</code>, <code>length(k) &lt; 10</code> and <code>k &gt; other</code> all give an ordinary</p>
-<p><code>Bool</code>, which may be printed. A comparison may also put a secret beside</p>
-<p>a plain value of the same type, and that is the only place the two mix.</p>
+<p>One thing is not derived from a secret and is not one: what a</p>
+<p>*container* is, rather than what it holds. <code>length</code> of a `List of</p>
+<p>Secret of Text<code> is an ordinary </code>Int<code>, </code>keys` of a map of them an</p>
+<p>ordinary <code>List of Text</code>, and <code>has(m, key)</code> an ordinary <code>Bool</code> - because</p>
+<p>how many items a list holds, and which keys a map has, were decided by</p>
+<p>the pushes and puts the program made, and no program can have made</p>
+<p>those depend on a secret without branching on one, which is E563. So a</p>
+<p>program can walk a list of secrets. <code>length</code> of a <code>Secret of Text</code> is</p>
+<p>still a <code>Secret of Int</code>: that one *is* the secret&#x27;s own shape.</p>
 <br>
-<p>That is a one-bit channel per comparison, and enough comparisons</p>
-<p>recover the whole secret: a loop that compares <code>length(k)</code> against</p>
-<p>0, 1, 2, ... tells you the length exactly, and the program may print</p>
-<p>what it learns. It is allowed anyway, for a reason worth stating. An</p>
-<p><code>if</code> condition must be a <code>Bool</code>, so a comparison that gave a `Secret of</p>
-<p>Bool` could never be branched on, and a program could not check whether</p>
-<p>its own API key was empty. And a rule that refused <code>print(k == &quot;&quot;)</code></p>
-<p>while allowing <code>if k == &quot;&quot; { print(&quot;empty&quot;) }</code> would stop nothing and</p>
-<p>cost everything. <b>Velaris bounds explicit flow, not implicit flow.</b></p>
-<p>What it guarantees is that the secret&#x27;s *value* never reaches a sink.</p>
-<p>What a program can work out about the secret through its own control</p>
-<p>flow, and then say, is not bounded, and no part of this document</p>
-<p>claims otherwise.</p>
+<p><b>Nothing branches on one.</b> An <code>if</code> or a <code>while</code> whose condition</p>
+<p>carries a secret is refused with <b>E563</b>, which names where the secret</p>
+<p>came from. Nor is a <code>Secret of Bool</code> printable: it is a Secret like any</p>
+<p>other, so E560 covers it.</p>
 <br>
-<p>A <code>Secret of Bool</code> that a program *declares* is a different thing: it</p>
-<p>is kept, <code>and</code> and <code>or</code> over it keep it, and it is not a condition</p>
-<p>(E504). Only a comparison makes a plain one.</p>
+<p>That pair of rules is the point, and the reason is worth stating,</p>
+<p>because the obvious alternative is wrong. It is tempting to let a</p>
+<p>comparison give an ordinary <code>Bool</code> — a comparison is one bit, and `if</p>
+<p>key == &quot;&quot;` is a natural thing to write. But a comparison is not one bit</p>
+<p>once it is in a loop. With <code>length</code> and <code>code_at</code>, <code>key == c</code> is a</p>
+<p>character-by-character oracle:</p>
+<br>
+<p>    let at = 0</p>
+<p>    while at &lt; 3 {</p>
+<p>        for c in alphabet {</p>
+<p>            if code_at(key, at) == code_at(c, 0) {   // E563</p>
+<p>                found = found + c</p>
+<p>            }</p>
+<p>        }</p>
+<p>        at = at + 1</p>
+<p>    }</p>
+<p>    print(&quot;recovered: &quot; + found)                     // the whole key</p>
+<br>
+<p>A rule that stopped <code>print(key)</code> and allowed that would not be an</p>
+<p>information-flow type; it would be a decoration. So the line is drawn</p>
+<p>at the branch. A comparison over a secret gives a <code>Secret of Bool</code></p>
+<p>precisely so that acting on it is refused.</p>
+<br>
+<p><b>What it costs, and what to write instead.</b> A program cannot check</p>
+<p>whether its own API key is empty without saying so. Saying so is</p>
+<p><code>declassify</code>:</p>
+<br>
+<p>    let empty = declassify(key == &quot;&quot;,</p>
+<p>                           &quot;whether a key is set at all is not the key&quot;)</p>
+<p>    if empty { ... }</p>
+<br>
+<p>which needs the effect, the grant and a written reason, and is named in</p>
+<p>the audit. That is the trade: not silence, a statement. A program that</p>
+<p>means to look at a secret says so in its type, in its audit and to its</p>
+<p>operator, and the operator can refuse.</p>
+<br>
+<p><b>A promise is not a branch.</b> A <code>requires</code>, <code>ensures</code> or <code>invariant</code></p>
+<p>may be a <code>Secret of Bool</code> — <code>requires length(key) &gt; 0</code> is exactly the</p>
+<p>kind of thing to promise. A broken promise stops the run, cannot be</p>
+<p>caught, and cannot accumulate, so it tells a reader at most one bit per</p>
+<p>run rather than reading a secret out in a loop, and the message it</p>
+<p>prints redacts the values whose type is secret. THREAT_MODEL.md lists</p>
+<p>the bit per run that remains.</p>
+<br>
+<p><b>What is still not bounded.</b> This bounds what a program can *do* with</p>
+<p>a secret it cannot see. It does not make Velaris non-interfering, and</p>
+<p>this document does not claim that it does: a program still chooses how</p>
+<p>long to run and whether to stop, and an operator who runs the same</p>
+<p>program repeatedly is outside anything stated here. THREAT_MODEL.md</p>
+<p>says what is left.</p>
 <br>
 <p><b>The way out.</b> <code>declassify(value, reason)</code> takes a <code>Secret of T</code> and</p>
 <p>gives back the <code>T</code>. It is the only way, and it says so three times:</p>

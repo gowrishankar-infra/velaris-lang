@@ -1,5 +1,129 @@
 # Velaris changelog
 
+## 7.0 - A secret you cannot look at
+
+6.0, published this morning, shipped `Secret of T` with a hole in it,
+and this release closes it. The hole was in a decision 6.0 made
+deliberately and argued for in writing, which is the kind worth
+describing rather than quietly fixing.
+
+**What 6.0 got wrong.** It let a comparison over a secret give an
+ordinary `Bool`. The argument was that a comparison is one bit, that
+`if key == ""` has to be writable, and that refusing `print(k == "")`
+while allowing `if k == "" { print("empty") }` would stop nothing.
+Every step of that is true of *one* comparison. It is false of a loop:
+
+```
+let at = 0
+while at < 3 {
+    for c in alphabet {
+        if code_at(key, at) == code_at(c, 0) {
+            found = found + c
+        }
+    }
+    at = at + 1
+}
+print("recovered: " + found)
+```
+
+That program compiled under 6.0 and printed the key. A comparison is
+not a one-bit channel; with `length` and `code_at` it is a
+character-by-character oracle. A type that stopped `print(key)` and
+allowed the loop above is not information-flow control, it is a
+decoration — and shipping a decoration under that name is worse than
+shipping nothing, because somebody relies on it.
+
+**What 7.0 does.** The rule loses its exception and gains a second
+half:
+
+- **Every pure operation over a secret gives a secret, a comparison
+  included.** `key == ""` is a `Secret of Bool`. So are
+  `length(key) < 10` and `contains(key, "a")`. Nothing prints one — it
+  is a Secret, so E560 already covers it. What a *container* is, as
+  against what it holds, is not: `length` of a list of secrets is an
+  ordinary `Int` and `has(m, key)` an ordinary `Bool`, because a
+  program cannot have made a list's length depend on a secret without
+  branching on one. So a program can still walk a list of secrets.
+- **Nothing branches on one.** An `if` or `while` whose condition
+  carries a secret is **E563**, naming where the secret came from. The
+  loop above is refused at the branch, before the print.
+- **A promise is not a branch.** `requires length(key) > 0` is still
+  allowed: a broken promise stops the run, cannot be caught and cannot
+  accumulate, so it tells a reader one bit per run rather than reading
+  a secret out in a loop, and its message already redacts the values
+  whose type is secret.
+
+To look at a secret, a program says so:
+
+```
+let empty = declassify(key == "",
+"whether a key is set at all is not the key")
+if empty { ... }
+```
+
+which needs `uses declassify`, the operator's grant, and a reason the
+audit records. That is the trade the language now offers: not silence,
+a statement.
+
+**A third rule, and the second hole.** Looking for the first hole
+turned up two more routes, both the same shape - a value derived from a
+secret coming back as an ordinary one.
+
+A generic body is checked once, with its type variables standing for
+nothing in particular, so inside `fn contains_item(xs: List of T, item:
+T) -> Bool` the comparison `get(xs, i) == item` is a plain `Bool`;
+there is no secret in sight. Bind `T` to one at the call site and
+`contains_item([guess], key)` hands the caller an ordinary `Bool` about
+the key. 6.0 refused only *effectful* generics, on the reasoning that a
+pure one can reach no sink - which was wrong, because it does not have
+to reach a sink, it only has to hand the value back. **No type variable
+is now bound to a type that carries a secret** (E560), pure or not. The
+way to write a generic over secrets is to say so:
+`fn pass(s: Secret of T) -> Secret of T for any T`.
+
+**And the second hole.** A failure's reason is `Text` the
+program can print, and the runtime writes it out of the values it was
+given — `to_int` quotes the text it could not read. So
+`check to_int(key) { fail w { print(w) } }` printed the key under 6.0.
+No builtin that can fail now takes an argument carrying a Secret
+(E560): `to_int`, `parse_money`, `json_get`, `pop`, `slice`, `set_at`
+and the `_or_fail` family. `get` on a map is the exception that proves
+the rule — its reason names the key, and a key is `Text` or `Int`.
+The whole sink check now lives in one place in the type checker, so a
+builtin added later cannot acquire a route quietly.
+
+### What a 6.0 user has to change
+
+6.0 was published for one day. If you wrote anything against it:
+
+1. `if key == ""` and any other branch on a value derived from a
+   secret — E563. Declassify the answer with a reason, or decide
+   without looking.
+2. `to_int(key)`, `parse_money(key, ...)`, `json_get(key, ...)` and any
+   other fallible builtin given a secret — E560. Declassify first.
+3. `stdlib/env_tools.vel`'s `number_setting` now declassifies before it
+   looks, rather than after; its signature is unchanged.
+
+This is a major version because it refuses programs that compiled
+under 6.0, and STABILITY.md rule 1 says that ships in a major version
+even when — especially when — it is a security fix. STABILITY.md
+records 6.0.0 as a release that stood for one day.
+
+### The record
+
+One new code, **E563**. `check_secret.py` grows from 58 checks to 76:
+every fallible builtin refused, the comparison rules in both
+directions, the branch refused in `if` and in `while`, the extraction
+loop refused at the branch and the same program accepted with
+`declassify` and recorded in the audit, `contains_item`, `index_of` and
+`first` each refused a secret, and the `Secret of T` signature that is
+the way to write a generic over one. `check_refusals.py` gains E563.
+velaris-spec goes to 0.8.0: no rule of the format changes, and section
+8.6 narrows what it claimed. The corpus is 456 cases.
+
+The benchmark is unchanged: 42 caught before running, 12 during, 2
+missed, 0 false positives.
+
 ## 6.0 - Secrets that cannot be printed
 
 A major version, and a breaking one. Effects tell you a program
@@ -223,7 +347,8 @@ E562. `check_sandbox.py` gains the `declassify` grant refused and
 allowed. `check_fallible.py` gains `read_file_secret`. velaris-spec's
 corpus grows from 444 cases to 455: eight L1 cases for the new audit
 field and the refusals around it, three L2 cases for the grant, and one
-L2 case reworded because the program it held no longer compiles.
+L2 case reworded because the program it held no longer compiles. (7.0
+takes it to 456.)
 
 velaris-spec goes to 0.7.0: `declassify` joins section 3.1, and section
 8.6 defines `secrets`. PRIOR_ART.md's TACIT entry, which said Velaris

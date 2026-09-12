@@ -141,7 +141,7 @@ fn negated(n: Int) -> Int {
     return -n
 }
 
-fn main() uses io, env, ffi, net, clock {
+fn main() uses io, env, ffi, net, clock, declassify {
     let passed = 0
     let failed = 0
     let skipped = 0
@@ -473,8 +473,13 @@ fn main() uses io, env, ffi, net, clock {
         }
     }
 
-    // --- the process
-    if length(env("PATH", "")) > 0 {
+    // --- the process. env() gives a Secret of Text (6.0), and a
+    // program does not branch on a secret (E563) - so this says why it
+    // is looking, which is what declassify is for and what the audit
+    // reports.
+    let path = declassify(env("PATH", ""),
+    "whether PATH is readable at all is not its contents")
+    if length(path) > 0 {
         print("PASS  environment: PATH is readable")
         passed = passed + 1
     } else {

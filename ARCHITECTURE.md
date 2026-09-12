@@ -29,11 +29,12 @@ missing effect is a clearer error than a type mismatch downstream.
 call sites, and decides which builtins are fallible in context (`get`
 on a map can fail; on a list it cannot). It also carries `Secret of T`
 (6.0, SPEC.md §3.1): which record types hold a secret is a fixpoint
-computed once per program; a pure operation over a secret gives one, a
-comparison gives a plain Bool, and no builtin that declares an effect
-accepts an argument carrying one (E560). `declassify` is the only way
-out, and it is an effect, so the effect checker above enforces it like
-any other.
+computed once per program; every pure operation over a secret gives
+one, a comparison included; no builtin that declares an effect or can
+fail accepts an argument carrying one (E560); no type variable is bound
+to one; and no `if` or `while` branches on one (E563). `declassify` is
+the only way out, and it is an effect, so the effect checker above
+enforces it like any other.
 
 **Prover** is the interesting part. For each function it explores the
 body symbolically, building Z3 formulas, and asks whether the
@@ -92,7 +93,7 @@ prover could not settle.
 
 Conformance to [velaris-spec](https://github.com/gowrishankar-infra/velaris-spec),
 the capability format published separately, is its corpus: from 4.1,
-455 JSON cases in velaris-spec's `tests/`, at three levels its
+456 JSON cases in velaris-spec's `tests/`, at three levels its
 CONFORMANCE.md defines, which an implementation in any language runs
 its own way. Until 4.1 it was six suites of this repository -
 `check_termination.py`, `check_sandbox.py`, `check_refusals.py`,

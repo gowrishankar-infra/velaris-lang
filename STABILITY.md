@@ -10,8 +10,8 @@ A change to any of these is a breaking change, and ships only in a
 major version.
 
 - **The language**: its syntax and semantics as [SPEC.md](SPEC.md)
-  states them. A program that compiles and runs under 5.x compiles,
-  runs and means the same under every later 5.x, with the one
+  states them. A program that compiles and runs under 7.x compiles,
+  runs and means the same under every later 7.x, with the one
   exception under *The prover's reach* below. What a run is *allowed*
   to do is the operator's budget, not the language, and the budget a
   run gets when nobody writes one changed in 5.0 - see *Breaks we have
@@ -104,9 +104,9 @@ function named like one of those is still never reached.
 
 ## Breaks we have made
 
-The README has promised semantic versioning since 2.2. 2.0, 3.0, 4.0
-and 5.0 broke things in major versions, as promised; the rest below did
-not. None of them is being undone - the versions are published - and
+The README has promised semantic versioning since 2.2. 2.0, 3.0, 4.0,
+5.0, 6.0 and 7.0 broke things in major versions, as promised; the rest
+below did not. None of them is being undone - the versions are published - and
 this section exists so the record is whole and so the rules above are
 applied from 4.0 on.
 
@@ -234,3 +234,24 @@ which the compiler points at one by one; and a repository with a
 committed `velaris.capabilities` has to record `declassify` the first
 time one of its programs needs it, in review, which is the ratchet
 working rather than a break.
+
+**7.0 (major), 2026-09-12. 6.0.0 stood for one day.** 6.0 let a
+comparison over a secret give an ordinary `Bool`, and said in writing
+why: a comparison is one bit, `if key == ""` has to be writable, and
+refusing the Bool while allowing the branch would stop nothing. That
+is true of one comparison and false of a loop - with `length` and
+`code_at`, `key == c` reads the key out a character at a time, and the
+program prints what it read. A second route was found the same way: a
+failure's reason is text the program can print and the runtime builds
+it from the values it was given, so `to_int(key)` printed the key when
+it failed. 7.0 makes a comparison over a secret a `Secret of Bool`,
+refuses any `if` or `while` on a value that carries a secret (E563),
+and refuses a secret to every fallible builtin (E560). Programs that
+compiled under 6.0 are refused, so it is a major version by rule 1.
+
+6.0.0 is not withdrawn. It was published to PyPI, tagged and signed,
+and moving a published version breaks whoever pinned it - the same
+reason 3.4 was not retagged. It is listed here as what it was: a
+release whose central feature had a hole, closed the same day it was
+found. What the rule bought is that the fix arrived as 7.0 rather than
+as 6.0.1, so nobody upgrades into a refusal without reading why.

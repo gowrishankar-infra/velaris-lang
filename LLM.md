@@ -173,41 +173,71 @@ These are the mistakes that actually happen. Read them twice.
     GBP HKD INR JOD JPY KRW KWD MXN OMR SAR SGD USD ZAR (else E551).
 
 17. **`env()` gives a `Secret of Text`, and a Secret cannot be
-    printed.** This is the one a model gets wrong: you write
-    `print(env("API_KEY", ""))`, or `fn config(n: Text) -> Text uses
-    env { return env(n, "") }`, and neither compiles. `Secret of T`
-    wraps any T; `env()` and `read_file_secret()` are the only two
-    builtins that make one.
+    printed — or looked at.** This is the one a model gets wrong: you
+    write `print(env("API_KEY", ""))`, or `if env("API_KEY", "") == ""
+    { ... }`, or `fn config(n: Text) -> Text uses env { return env(n,
+    "") }`, and none of the three compiles. `Secret of T` wraps any T;
+    `env()` and `read_file_secret()` are the only two builtins that
+    make one.
 
     - **Nothing with an effect takes one.** `print`, `log`, `ask`,
       `exit_with`, `write_file`, `read_file`, `fetch`, `post`,
       `request`, `env` itself, and every `py_*` refuse a Secret
       argument with **E560**. So does the reason given to `fail`.
+    - **Nothing that can fail takes one either**, for the same reason:
+      a failure's reason is text the program can print and the runtime
+      writes it out of what it was given. `to_int`, `parse_money`,
+      `json_get`, `pop`, `slice`, `set_at` and the `_or_fail` family
+      all refuse a Secret (E560). Declassify first if you need them.
     - **It spreads through pure work and through structures.**
       `"Bearer " + key` is a `Secret of Text`; `length(key)` is a
       `Secret of Int`; `to_text`, `format`, `json_of`, `upper` all
       keep it. A list of them, a map of them, or a record with one
       secret field carries it, and the whole structure is refused at a
       sink - not just the field.
-    - **A comparison gives an ordinary Bool.** `if key == ""`,
-      `length(key) < 10`, `key == other` - these are plain `Bool` and
-      may be printed. That is how you write anything useful about a
-      secret without letting it out.
+    - **A comparison keeps it too, and you cannot branch on it.**
+      `key == ""` is a `Secret of Bool`, not a `Bool`. `if` and
+      `while` on one are **E563**. This is the rule a model most often
+      trips over after the first: `if key == "" { ... }` does not
+      compile. It is deliberate - with `length` and `code_at`, a plain
+      Bool from `==` is not one bit, it is a loop that reads the whole
+      key out a character at a time.
     - **Say Secret in the signature.** A function that hands one back
       must write `-> Secret of Text`, or it is E503. Pass one along as
       `fn f(k: Secret of Text) -> Secret of Text`.
+    - **A promise may be about one.** `requires length(key) > 0` is
+      fine: a broken promise stops the run and cannot be caught, so it
+      is not a branch.
+    - **No generic function takes one.** `first(xs)`, `index_of(...)`,
+      `contains_item(...)` and every other `for any T` helper refuse a
+      secret (E560) - a generic body was checked without knowing `T`
+      could be one, so it could compare it and hand back an ordinary
+      answer. Write `fn f(s: Secret of T) -> Secret of T for any T` if
+      you need a generic over secrets.
     - **`declassify(value, "why")` is the only way out**, needs
       `uses declassify`, and the reason must be written as text in the
       call (E561) - it goes into the audit. Use it when the value
-      genuinely is not a secret (a region, a log level), not to get
-      past the compiler.
+      genuinely is not a secret (a region, a log level), or when you
+      must look at one and are willing to say so.
 
-    What to write instead of `print(env("API_KEY", ""))`:
+    So do not write `print(env("API_KEY", ""))`, and do not write
+    `if env("API_KEY", "") == "" { ... }` either. Write either of
+    these:
 
     ```
+    // hold it, use it, never look at it
     fn main() uses io, env {
         let key = env("API_KEY", "")
-        if key == "" {
+        let header = "Bearer " + key      // still a Secret of Text
+        print("a request was built; the key is not in this output")
+    }
+
+    // or look at it, and say so
+    fn main() uses io, env, declassify {
+        let key = env("API_KEY", "")
+        let missing = declassify(key == "",
+        "whether a key is set at all is not the key")
+        if missing {
             print("API_KEY is not set")
         } else {
             print("API_KEY is set")

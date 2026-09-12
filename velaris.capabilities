@@ -1,6 +1,6 @@
 {
   "schema": "velaris.capabilities/1",
-  "velaris_version": "5.0.1",
+  "velaris_version": "7.0.0",
   "date": "2026-09-12",
   "surface": {
     "grants": [
@@ -1561,7 +1561,6 @@
       "functions": {
         "authorization": [],
         "build": [],
-        "is_set": [],
         "key": ["env"],
         "main": ["env", "io"],
         "summary": []
@@ -1663,6 +1662,7 @@
       "file": "examples/stress.vel",
       "grants": [
         "clock",
+        "declassify",
         "env",
         "ffi:datetime",
         "ffi:math",
@@ -1679,7 +1679,7 @@
         "discount": [],
         "halve": [],
         "is_even": [],
-        "main": ["clock", "env", "ffi", "io", "net"],
+        "main": ["clock", "declassify", "env", "ffi", "io", "net"],
         "negated": [],
         "quarter": [],
         "rows_of": [],

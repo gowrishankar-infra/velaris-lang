@@ -6,7 +6,7 @@ programming. It exists so that anyone deciding whether to depend on
 this language can find out exactly what it promises — and what it
 does not.
 
-Version 2.31. Where this document and the implementation disagree,
+Version 2.32. Where this document and the implementation disagree,
 that is a bug in one of them; please report it.
 
 ## 1. Programs
@@ -84,26 +84,46 @@ else is secret by default, and a secret that arrives some other way -
 through `read_line`, through `args`, through `ffi` - is an ordinary
 `Text` and is outside this entirely.
 
-**Where one cannot go.** A builtin that declares an effect emits what
-it is given: to the console, a file, a host, Python or the operating
-system. None of them takes an argument that carries a Secret, and a
+**Where one cannot go.** Two kinds of builtin put a value in front of
+somebody, and neither takes an argument that carries a Secret. A
 program that gives one is refused with **E560**, which names the value,
-what would have emitted it, and where the secret came from. That covers
-`print`, `log`, `ask`, `exit_with`, `read_file`, `read_file_secret`,
-`write_file`, `file_exists`, `fetch`, `post`, `fetch_status`,
-`request`, `env` itself, `now`, `random` and the whole `py_*` family.
+what would have emitted it, and where the secret came from.
+
+- **A builtin that declares an effect** emits what it is given: to the
+  console, a file, a host, Python or the operating system. That covers
+  `print`, `log`, `ask`, `exit_with`, `read_file`, `read_file_secret`,
+  `write_file`, `file_exists`, `fetch`, `post`, `fetch_status`,
+  `request`, `env` itself, `now`, `random` and the whole `py_*` family.
+- **A builtin that can fail** gives a reason, and a reason is `Text`
+  the program may print. The runtime writes it out of the values it was
+  given — `to_int` quotes the text it could not read, `parse_money` the
+  amount it could not parse — and nothing at run time knows which of
+  those the type system called secret. So `to_int`, `parse_money`,
+  `json_get`, the `_or_fail` family, `pop`, `slice` and `set_at` take
+  no secret either. `get` on a map is the exception that proves the
+  rule: its reason names the key, and a key is `Text` or `Int`, never a
+  Secret.
+
 The reason given to `fail` is emitted too, and is refused the same way.
 A program's own effectful function needs no rule of its own: it
 declares the types it takes, and a Secret is not one of them unless the
 signature says so.
 
 One rule is about generic functions. A generic body is checked once,
-with its type variables standing for nothing in particular, so
-`print(x)` inside `fn show(x: T) uses io` is allowed there. Binding `T`
-to a secret at a call site would print it, so **a generic function that
-declares any effect takes no argument carrying a Secret** (E560). A
-pure generic function may take one: it can reach no sink, and what it
-hands back is a secret where the caller stands.
+with its type variables standing for nothing in particular. Inside it a
+value of type `T` can be compared - `got == item` gives a plain `Bool`
+there, because there is no secret in sight - handed to `to_text`, or
+printed. Bind `T` to a secret at a call site and each of those becomes
+an oracle that gives the caller an ordinary `Bool`, `Int` or `Text`:
+`contains_item([guess], key)` is exactly that. So **no type variable is
+ever bound to a type that carries a secret** (E560), whether the
+generic function declares an effect or not.
+
+That is blunt, and it is the sound rule. The way to write a generic
+function over secrets is to say so in its signature -
+`fn pass(s: Secret of T) -> Secret of T for any T` binds `T` to `Text`,
+which carries nothing - and then the body is checked knowing what it
+holds.
 
 **What carries one.** A value carries a secret when it is one, or holds
 one anywhere inside: `List of Secret of Text`, `Map of Text to Secret
@@ -113,36 +133,81 @@ so a structure is not a way around the rule. A map's keys are `Text` or
 `Int`, so a secret is never a key. A function value is a name, not what
 it would return, and carries nothing.
 
-**What keeps one.** Pure computation over a secret gives a secret:
-`length(k)` is a `Secret of Int`, `"Bearer " + k` is a `Secret of
-Text`, and `upper(k)`, `to_text(k)`, `format("{}", k)` and `json_of(k)`
-all give a `Secret of Text`. The rule is one line: **a pure operation
-on a value that carries a secret gives a Secret of its result type,
-unless that result is `Bool`.** There is no `Secret of Secret of T`
-(E562).
+**What keeps one.** Every pure operation over a secret gives a secret,
+with no exceptions: `length(k)` is a `Secret of Int`, `"Bearer " + k` a
+`Secret of Text`, `upper(k)`, `to_text(k)`, `format("{}", k)` and
+`json_of(k)` all `Secret of Text` — **and `k == ""`, `length(k) < 10`
+and `contains(k, "a")` are all `Secret of Bool`.** The rule is one
+line: **a pure operation on a value that carries a secret gives a
+Secret of its result type.** There is no `Secret of Secret of T`
+(E562). A comparison may put a secret beside a plain value of the same
+type, and that is the only place the two mix.
 
-**The Bool, stated as a choice.** A comparison is the exception:
-`k == ""`, `length(k) < 10` and `k > other` all give an ordinary
-`Bool`, which may be printed. A comparison may also put a secret beside
-a plain value of the same type, and that is the only place the two mix.
+One thing is not derived from a secret and is not one: what a
+*container* is, rather than what it holds. `length` of a `List of
+Secret of Text` is an ordinary `Int`, `keys` of a map of them an
+ordinary `List of Text`, and `has(m, key)` an ordinary `Bool` - because
+how many items a list holds, and which keys a map has, were decided by
+the pushes and puts the program made, and no program can have made
+those depend on a secret without branching on one, which is E563. So a
+program can walk a list of secrets. `length` of a `Secret of Text` is
+still a `Secret of Int`: that one *is* the secret's own shape.
 
-That is a one-bit channel per comparison, and enough comparisons
-recover the whole secret: a loop that compares `length(k)` against
-0, 1, 2, ... tells you the length exactly, and the program may print
-what it learns. It is allowed anyway, for a reason worth stating. An
-`if` condition must be a `Bool`, so a comparison that gave a `Secret of
-Bool` could never be branched on, and a program could not check whether
-its own API key was empty. And a rule that refused `print(k == "")`
-while allowing `if k == "" { print("empty") }` would stop nothing and
-cost everything. **Velaris bounds explicit flow, not implicit flow.**
-What it guarantees is that the secret's *value* never reaches a sink.
-What a program can work out about the secret through its own control
-flow, and then say, is not bounded, and no part of this document
-claims otherwise.
+**Nothing branches on one.** An `if` or a `while` whose condition
+carries a secret is refused with **E563**, which names where the secret
+came from. Nor is a `Secret of Bool` printable: it is a Secret like any
+other, so E560 covers it.
 
-A `Secret of Bool` that a program *declares* is a different thing: it
-is kept, `and` and `or` over it keep it, and it is not a condition
-(E504). Only a comparison makes a plain one.
+That pair of rules is the point, and the reason is worth stating,
+because the obvious alternative is wrong. It is tempting to let a
+comparison give an ordinary `Bool` — a comparison is one bit, and `if
+key == ""` is a natural thing to write. But a comparison is not one bit
+once it is in a loop. With `length` and `code_at`, `key == c` is a
+character-by-character oracle:
+
+    let at = 0
+    while at < 3 {
+        for c in alphabet {
+            if code_at(key, at) == code_at(c, 0) {   // E563
+                found = found + c
+            }
+        }
+        at = at + 1
+    }
+    print("recovered: " + found)                     // the whole key
+
+A rule that stopped `print(key)` and allowed that would not be an
+information-flow type; it would be a decoration. So the line is drawn
+at the branch. A comparison over a secret gives a `Secret of Bool`
+precisely so that acting on it is refused.
+
+**What it costs, and what to write instead.** A program cannot check
+whether its own API key is empty without saying so. Saying so is
+`declassify`:
+
+    let empty = declassify(key == "",
+                           "whether a key is set at all is not the key")
+    if empty { ... }
+
+which needs the effect, the grant and a written reason, and is named in
+the audit. That is the trade: not silence, a statement. A program that
+means to look at a secret says so in its type, in its audit and to its
+operator, and the operator can refuse.
+
+**A promise is not a branch.** A `requires`, `ensures` or `invariant`
+may be a `Secret of Bool` — `requires length(key) > 0` is exactly the
+kind of thing to promise. A broken promise stops the run, cannot be
+caught, and cannot accumulate, so it tells a reader at most one bit per
+run rather than reading a secret out in a loop, and the message it
+prints redacts the values whose type is secret. THREAT_MODEL.md lists
+the bit per run that remains.
+
+**What is still not bounded.** This bounds what a program can *do* with
+a secret it cannot see. It does not make Velaris non-interfering, and
+this document does not claim that it does: a program still chooses how
+long to run and whether to stop, and an operator who runs the same
+program repeatedly is outside anything stated here. THREAT_MODEL.md
+says what is left.
 
 **The way out.** `declassify(value, reason)` takes a `Secret of T` and
 gives back the `T`. It is the only way, and it says so three times:

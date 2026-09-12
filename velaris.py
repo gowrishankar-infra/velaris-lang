@@ -291,7 +291,7 @@ Usage:
 import json
 import os
 
-VERSION = "6.0.0"
+VERSION = "7.0.0"
 import re
 import sys
 from dataclasses import dataclass, field
@@ -363,6 +363,9 @@ def type_mentions(t: str, tv: str) -> bool:
         return True
     if t.startswith("Money of "):           # a currency variable
         return t[len("Money of "):] == tv
+    if t.startswith("Secret of "):          # Secret of T, the way a
+        return type_mentions(t[len("Secret of "):], tv)   # generic says
+                                            # it holds a secret on purpose
     if t.startswith("List of "):
         return type_mentions(t[len("List of "):], tv)
     if t.startswith("Map of "):
@@ -610,6 +613,8 @@ ERROR_TABLE = {
     "E561": "declassify without a reason written as text in the call, or "
             "given something that is not a Secret",
     "E562": "a Secret of a Secret",
+    "E563": "an 'if' or 'while' branching on a value derived from a "
+            "Secret",
     "E540": "a type variable that appears only in the return type",
     "E541": "a type variable named like a real type",
     "E542": "a function value of the wrong shape",
@@ -2569,12 +2574,18 @@ def secret_inner(t: str) -> str:
 
 
 def wrap_secret(t: str) -> str:
-    """A result derived from a secret is a secret - unless it already
-    holds one, because Secret of Secret of T is the same secret, and
-    unless it is Bool or Unit. Bool is the one-bit channel SPEC.md 3.1
-    leaves open on purpose: `if key == ""` must be writable, and a rule
-    that refused the Bool while allowing the branch would stop nothing."""
-    if t in ("Bool", "Unit", "") or carries_secret(t):
+    """A result derived from a secret is a secret. No exceptions - a
+    Bool least of all. A comparison is not a one-bit channel: with
+    `length` and a loop, `secret == c` reads the value out character by
+    character, and a program that could print that Bool could print the
+    whole key. So a Bool derived from a Secret is a `Secret of Bool`,
+    which nothing prints and nothing branches on (E560, E563), and
+    `declassify` is what a program writes when it means to act on one.
+    SPEC.md 3.1 states the choice. `Unit` is not a value.
+
+    `Secret of Secret of T` is the same secret, so a type that already
+    carries one is left alone."""
+    if t in ("Unit", "") or carries_secret(t):
         return t
     return SECRET_PREFIX + t
 
@@ -3024,6 +3035,20 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
         walk(f.body)
         return found[0]
 
+    def tattling_builtin(name: str) -> str | None:
+        """The fallible builtin this call reaches, or None.
+
+        A failure's reason is Text the program may print, and the
+        runtime writes it out of the values it was given - `to_int` and
+        `parse_money` quote the text they could not read, and
+        `divide_or_fail` the amount it could not divide. Nothing at run
+        time knows which of those values the type system called secret,
+        so the compiler keeps secrets away from all of them. `get` on a
+        map is not one: its reason names the key, and a key is Text or
+        Int, never a Secret."""
+        b = builtin_reached(name, table)
+        return b if b in FALLIBLE_BUILTINS else None
+
     def leak(what: str, where: str, t: str, origin: str,
              line: int) -> VelarisError:
         return VelarisError("E560",
@@ -3037,11 +3062,31 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                    'in the audit with that reason, and an operator can '
                    'refuse to grant it'])
 
-    SECRET_BOOL_FIX = [
-        "a comparison over a secret gives an ordinary Bool: write "
-        "`if key == \"\"` rather than holding a Secret of Bool",
-        'or declassify it first: declassify(b, "why this bit is safe to '
-        'act on")']
+    def no_secret_branch(kind: str, t: str, node, origin: str) -> None:
+        """A program does not branch on a secret (6.1, SPEC.md 3.1).
+
+        A comparison over a secret gives a `Secret of Bool`, and this is
+        why: with `length` and a loop, `key == c` is not one bit, it is
+        a character-by-character oracle that reads the whole key out and
+        can then print it. So the branch is where the line is drawn, and
+        `declassify` is what a program writes when it means to cross
+        it - in the signature, in the audit, and in the operator's
+        budget."""
+        if not carries(t):
+            return
+        raise VelarisError("E563",
+            f"'{kind}' would branch on {t}, which came from {origin} - "
+            f"a program does not choose what to do by looking at a "
+            f"secret. A comparison over one gives a Secret of Bool "
+            f"exactly so that this is refused: in a loop it would read "
+            f"the secret out a character at a time", node.line,
+            fixes=['say so and branch on the answer: '
+                   'declassify(key == "", "whether a key is set is not '
+                   'the key") needs "uses declassify", is named in the '
+                   'audit with that reason, and an operator can refuse '
+                   'to grant it',
+                   "or decide without looking: build what you do out of "
+                   "values that are not secret"])
 
     def callee_sig(name: str, line: int = 1) -> tuple[list[str], str]:
         builtin = builtin_reached(name, table)
@@ -3425,6 +3470,25 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                             f"a list cannot mix {t0} and {t}", node.line,
                             fixes=["keep every item in a list the same type"])
                 return "List of " + t0
+            # ---- the sink check (6.0), in one place ------------------
+            # Every route by which a builtin can put a value in front of
+            # somebody is here, so a builtin added later cannot acquire
+            # one quietly. `node.name in env` is a function value being
+            # called, not a builtin.
+            if isinstance(node, Call) and node.name not in env:
+                emits = sink_builtin(node.name)
+                if emits is not None:
+                    refuse_secret_args(
+                        node, shown_name(node.name),
+                        f"'{emits}' performs "
+                        f"{', '.join(sorted(BUILTINS[emits]['effects']))}")
+                tells = tattling_builtin(node.name)
+                if tells is not None:
+                    refuse_secret_args(
+                        node, shown_name(node.name),
+                        f"'{tells}' can fail with a reason the runtime "
+                        f"builds out of the values it was given, which "
+                        f"the program can then print")
             if isinstance(node, Call) and node.name in (
                     "all_of", "any_of"):
                 if len(node.args) != 2:
@@ -3473,7 +3537,7 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                         f"but this is {t1}", node.line,
                         fixes=[f"pass a function taking {elem} and "
                                f"returning Bool"])
-                return "Bool"
+                return wrap_secret("Bool") if carries(t0) else "Bool"
             if isinstance(node, Call) and node.name in (
                     "length", "push", "get", "put", "has", "keys",
                     "get_or", "pop", "slice", "set_at"):
@@ -3497,11 +3561,20 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                             if sec0 and not carries(t) else t)
 
                 def keep_any(t: str) -> str:
-                    """for a result that is not one of the values held:
-                    a count, a list of keys"""
+                    """For a result that is about the container rather
+                    than about what it holds: how many items there are,
+                    which keys exist, whether one does.
+
+                    This is secret when the *container* is - the length
+                    of a `Secret of Text` is a secret - and not when
+                    only its elements are. How many secrets a list holds
+                    was decided by the pushes the program made, and a
+                    program cannot have made those depend on a secret:
+                    that would need a branch on one, which is E563. So
+                    `length(List of Secret of Text)` is an ordinary Int,
+                    and a program can walk a list of secrets."""
                     return (SECRET_PREFIX + t
-                            if (sec0 or carries(t0)) and not carries(t)
-                            else t)
+                            if sec0 and not carries(t) else t)
 
                 is_map = t0.startswith("Map of ")
                 if is_map:
@@ -3562,7 +3635,7 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                             f"{infer(node.args[1])}", node.line,
                             fixes=[f"use {'an' if key_t == 'Int' else 'a'} {key_t} key"])
                     if node.name == "has":
-                        return "Bool"
+                        return keep_any("Bool")
                     if currency_clash(val_t, infer(node.args[2])):
                         raise clash_error(val_t, infer(node.args[2]),
                                           node.line)
@@ -3763,21 +3836,6 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
 
                 for i, (a, want) in enumerate(zip(node.args, ptypes), 1):
                     got = infer(a)
-                    # A generic function's body was checked once, with its
-                    # type variables standing for nothing in particular -
-                    # so `print(x)` inside `fn show(x: T) uses io` is
-                    # allowed there, and binding T to a secret here would
-                    # print it. A generic function that declares an effect
-                    # therefore takes no secret. A pure one may: it can
-                    # reach no sink, and what it hands back is a secret
-                    # where the caller stands.
-                    if carries(got) and cg.effects and not is_secret(want):
-                        raise leak(f"argument {i} of '{node.name}'",
-                                   f"'{node.name}' is generic and declares "
-                                   f"'uses {', '.join(sorted(cg.effects))}'"
-                                   f", so what it does with {got} is not "
-                                   f"known here", got,
-                                   origin_of(a), node.line)
                     if not unify(want, got):
                         if currency_clash(subst(want), got):
                             raise clash_error(subst(want), got, node.line,
@@ -3792,6 +3850,37 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                             fixes=["make the arguments agree on what "
                                    f"{', '.join(cg.type_vars)} is"])
 
+                # A generic body is checked once, with its type
+                # variables standing for nothing in particular. Inside
+                # it a value of type T can be compared (`got == item`
+                # gives a plain Bool there), handed to `to_text`, or
+                # printed - none of which the checker can see as
+                # touching a secret, because there is no secret in
+                # sight. Bind T to one at a call site and those become
+                # an oracle that hands the caller an ordinary Bool, Int
+                # or Text: `contains_item([guess], key)` is exactly
+                # that. So **no type variable is ever bound to a type
+                # that carries a secret** (E560).
+                #
+                # It is a blunt rule and it is the sound one. The way
+                # to write a generic function over secrets is to say so
+                # in its signature - `fn pass(s: Secret of T) ->
+                # Secret of T for any T` binds T to Text, which carries
+                # nothing - and then the body is checked knowing what
+                # it holds.
+                for tv, bound in bind.items():
+                    if carries(bound):
+                        at = next((j for j, (_, w) in
+                                   enumerate(zip(node.args, ptypes), 1)
+                                   if type_mentions(w, tv)), 1)
+                        raise leak(
+                            f"argument {at} of '{node.name}'",
+                            f"'{node.name}' is generic, and its body was "
+                            f"checked without knowing that {tv} could be "
+                            f"a secret - so it may compare one, or hand "
+                            f"one to to_text, and give the answer back as "
+                            f"an ordinary value", bound,
+                            origin_of(node.args[at - 1]), node.line)
                 return subst(cg.return_type or "Unit")
             if isinstance(node, Call):
                 cfn = table.get(node.name)
@@ -3804,18 +3893,6 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                                f"or pass it up (inside a fallible "
                                f"function): try {node.name}(...)"])
                 ptypes, ret = callee_sig(node.name, node.line)
-                # the sink check (6.0): a builtin that declares an effect
-                # hands what it is given to the console, a file, a host,
-                # Python or the operating system, so none of its
-                # arguments may carry a secret. There is no way around
-                # it: a program's own effectful function takes declared
-                # types, and a Secret is not the type it declared.
-                emits = sink_builtin(node.name)
-                if emits is not None:
-                    refuse_secret_args(
-                        node, shown_name(node.name),
-                        f"'{emits}' performs "
-                        f"{', '.join(sorted(BUILTINS[emits]['effects']))}")
                 if node.name == "format":          # text, then one value
                     if not node.args:              # per {} placeholder
                         raise VelarisError("E401",
@@ -3898,7 +3975,8 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                     l, r = strip_secret(l), strip_secret(r)
 
                 def kept(t: str) -> str:
-                    """A result computed from a secret is a secret."""
+                    """A result computed from a secret is a secret - a
+                    Bool from a comparison included (SPEC.md 3.1)."""
                     return (SECRET_PREFIX + t
                             if secret_in and not carries_secret(t) else t)
 
@@ -3943,7 +4021,7 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                         f"{l} {op} {r}", node.line, fixes=NUM_FIX)
                 if op in ("<", ">", "<=", ">="):
                     if l == r and l in ("Int", "Float", "Text"):
-                        return "Bool"   # Text compares alphabetically
+                        return kept("Bool")   # Text compares alphabetically
                     raise VelarisError("E501",
                         f"'{op}' compares two Ints, two Floats, or two "
                         f"Texts, but this is {l} {op} {r}", node.line,
@@ -3952,7 +4030,7 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                     raise VelarisError("E501",
                         f"cannot compare {l} with {r}", node.line,
                         fixes=["compare values of the same type"])
-                return "Bool"
+                return kept("Bool")
 
         def check_stmt(node) -> None:
             if isinstance(node, Let):
@@ -4075,22 +4153,22 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
                     check_stmt(s)
             elif isinstance(node, If):
                 c = infer(node.cond)
+                no_secret_branch("if", c, node, origin_of(node.cond))
                 if c != "Bool":
                     raise VelarisError("E504",
                         f"'if' needs a yes/no condition (Bool), but this is {c}",
-                        node.line, fixes=SECRET_BOOL_FIX if is_secret(c)
-                        else ["use a comparison like x > 0"])
+                        node.line, fixes=["use a comparison like x > 0"])
                 for s in node.then + node.other:
                     check_stmt(s)
             elif isinstance(node, While):
                 c = infer(node.cond)
+                no_secret_branch("while", c, node, origin_of(node.cond))
                 if c != "Bool":
                     raise VelarisError("E504",
                         f"'while' needs a yes/no condition (Bool), but this is {c}",
-                        node.line, fixes=SECRET_BOOL_FIX if is_secret(c)
-                        else ["use a comparison like i < 10"])
+                        node.line, fixes=["use a comparison like i < 10"])
                 for inv_expr, iline in node.invariants:
-                    if infer(inv_expr) != "Bool":
+                    if strip_secret(infer(inv_expr)) != "Bool":
                         raise VelarisError("E505",
                             "'invariant' must be a yes/no promise (Bool)",
                             iline, fixes=["use a comparison like total >= 0"])
@@ -4246,9 +4324,18 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
             written_rounding(node.args[2], node.line)
             return amount(0)
 
-        # contracts are checked first, while env holds exactly the parameters
+        # Contracts are checked first, while env holds exactly the
+        # parameters. A promise may be about a secret - `requires
+        # length(key) > 0` is exactly the kind of thing to promise -
+        # so a `Secret of Bool` is a promise, where it is not a branch
+        # (E563). It is not one for a reason: a broken promise stops
+        # the run, cannot be caught and cannot accumulate, so it tells
+        # a reader at most one bit per run rather than reading a secret
+        # out in a loop, and the message it prints redacts the values
+        # whose type is secret. SPEC.md 3.1 says so, and THREAT_MODEL.md
+        # lists the bit-per-run that remains.
         for expr, cline in fn.requires:
-            if infer(expr) != "Bool":
+            if strip_secret(infer(expr)) != "Bool":
                 raise VelarisError("E505",
                     f"'requires' must be a yes/no promise (Bool)", cline,
                     fixes=["use a comparison like price >= 0"])
@@ -4256,7 +4343,7 @@ def check_types(funcs: list[Function], records: list, errors: list) -> None:
             if declared_ret != "Unit":
                 env["result"] = declared_ret
             for expr, cline in fn.ensures:
-                if infer(expr) != "Bool":
+                if strip_secret(infer(expr)) != "Bool":
                     raise VelarisError("E505",
                         f"'ensures' must be a yes/no promise (Bool)", cline,
                         fixes=["use a comparison like result >= 0"])

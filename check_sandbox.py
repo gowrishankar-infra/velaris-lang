@@ -474,9 +474,6 @@ fn main() uses io, net {
     escape("env-under-io", "env() with only io granted", '''
 fn main() uses io, env {
     let path = env("PATH", "")
-    if path == "" {
-        print("READ IT (nothing there)")
-    }
     print("READ IT")
 }
 ''', allow="io", refused="E310", spec=["3.1", "6 G2"]),
@@ -564,16 +561,14 @@ fn main() uses io, clock {
     # environment and compare what it got without any grant beyond env;
     # and one granted declassify may let a value out, which is the only
     # way a secret becomes an ordinary value.
-    honest("secret-kept-under-env", "a secret read and compared, never let "
-           "out", '''
+    honest("secret-kept-under-env", "a secret read and held, never let out",
+           '''
 fn main() uses io, env {
     let key = env("VELARIS_NOT_SET", "")
-    if key == "" {
-        print("no key, and this program could not print one")
-    }
+    print("a key was read, and this program could not print it")
 }
 ''', allow="io,env",
-        stdout=["no key, and this program could not print one"],
+        stdout=["a key was read, and this program could not print it"],
         spec=["3.1"]),
     honest("declassify-granted", "declassify when declassify is allowed",
            '''
@@ -680,14 +675,16 @@ fn main() uses io {
     # ---- scoped grants (3.0)
     honest("scoped-exact-grants", "an honest program using exactly its grants",
            '''
-fn main() uses io, env, fs, net {
+fn main() uses io, env, fs, net, declassify {
     check read_file("{DATA}/a.txt") {
         ok t {
             write_file("{OUT}/copy.txt", t)
             check fetch_status("http://127.0.0.1:{PORT_A}/") {
                 ok c {
+                    let path = declassify(env("PATH", ""),
+                    "whether PATH is set at all is not its contents")
                     print(format("all grants used, status {}, path set: {}",
-                                 c, length(env("PATH", "")) > 0))
+                                 c, length(path) > 0))
                 }
                 fail w {
                     print("fetch failed: " + w)
@@ -699,7 +696,7 @@ fn main() uses io, env, fs, net {
         }
     }
 }
-''', allow="io,env,fs:read:{DATA},fs:write:{OUT}@5,"
+''', allow="declassify,io,env,fs:read:{DATA},fs:write:{OUT}@5,"
            "net:127.0.0.1:{PORT_A}@5",
         stdout=["all grants used, status 200"], spec=["5.1", "5.2", "5.4"]),
     honest("redirect-to-ungranted-host-is-a-failure",

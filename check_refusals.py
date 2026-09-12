@@ -235,6 +235,14 @@ fn main() uses io {
     print(hold(1))
 }
 '''),
+    ("branching on a value derived from a secret", "E563", False, '''
+fn main() uses io, env {
+    let key = env("API_KEY", "")
+    if key == "" {
+        print("not set")
+    }
+}
+'''),
 ]
 
 # refused only by `velaris check --strict`; the same programs run normally
