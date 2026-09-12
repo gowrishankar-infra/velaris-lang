@@ -1456,6 +1456,185 @@ def main() -> int:
     ok("the pre-commit hooks exist", hooks.exists())
 
     print()
+    print("the npm wrapper picks the right Python (4.3.4)")
+    print("-" * 62)
+    # The npm package is a wrapper: it finds a Python that can import
+    # velaris and calls it. Until 4.3.4 it took the first candidate that
+    # could import the module at all, so an old Velaris earlier in PATH
+    # silently shadowed a newer one - and a subcommand added after that
+    # old version came out reached the old compiler, which read it as a
+    # file name ("cannot find file 'mcp'"). These checks build real
+    # interpreters with known Velaris versions and drive the wrapper.
+    import os as _os_npm
+    import re as _re_npm
+    import shutil as _sh_npm
+    import tempfile as _tf_npm
+
+    _node = _sh_npm.which("node")
+    _wrapper = HERE / "npm" / "bin" / "velaris.js"
+    if not _node or not _wrapper.exists():
+        print("  skipped  node is not installed" if not _node
+              else "  skipped  no npm wrapper in this tree")
+    else:
+        # On each platform the boxes are named so that the OLDER Velaris
+        # sits at the candidate the wrapper tries FIRST. Choosing on
+        # version is the whole point, so the test has to make the
+        # version disagree with the order.
+        _first, _second = (("python", "python3") if _os_npm.name == "nt"
+                           else ("python3", "python"))
+        _nbox = Path(_tf_npm.mkdtemp(prefix="velaris-npm-"))
+        try:
+            def _fake_python(name, version, called):
+                """A venv holding one Velaris, reachable only as `called`."""
+                home = _nbox / name
+                subprocess.run(
+                    [sys.executable, "-m", "venv", "--without-pip", str(home)],
+                    check=True, capture_output=True, timeout=900)
+                scripts = home / ("Scripts" if _os_npm.name == "nt" else "bin")
+                sites = list(home.glob("Lib/site-packages")) or \
+                    list(home.glob("lib/*/site-packages"))
+                if version is not None:
+                    (sites[0] / "velaris.py").write_text(
+                        'VERSION = "' + version + '"\n'
+                        "import sys\n"
+                        "def card():\n"
+                        '    return "fake card ' + version + '"\n'
+                        'if __name__ == "__main__":\n'
+                        '    print("fake ' + version + ' ran: " + '
+                        '" ".join(sys.argv[1:]))\n',
+                        encoding="utf-8")
+                suffix = ".exe" if _os_npm.name == "nt" else ""
+                real = scripts / ("python" + suffix)
+                want = scripts / (called + suffix)
+                if want != real:
+                    _sh_npm.copyfile(real, want)
+                    _os_npm.chmod(want, 0o755)
+                # every other spelling goes, so only `called` is found
+                for entry in list(scripts.iterdir()):
+                    if entry.name.startswith("python") and entry != want \
+                            and not entry.name.startswith("pythonw"):
+                        entry.unlink()
+                return scripts
+
+            _old = _fake_python("old", "4.0.0", _first)
+            _new = _fake_python("new", "9.9.9", _second)
+            _none = _fake_python("none", None, _first)
+            _real = _fake_python("real", None, _first)
+
+            def _wrapped(dirs, *args, script=None, extra=None):
+                """Drive the wrapper with PATH holding only `dirs`.
+
+                cwd is the box, never the repo: with the repo as cwd
+                every interpreter would import the repo's velaris.py and
+                the boxes would mean nothing.
+                """
+                env = dict(_os_npm.environ)
+                env["PATH"] = _os_npm.pathsep.join(str(d) for d in dirs)
+                env.pop("PYTHONPATH", None)
+                env.update(extra or {})
+                return subprocess.run(
+                    [_node, str(script or _wrapper), *args],
+                    capture_output=True, text=True, cwd=str(_nbox),
+                    env=env, timeout=900)
+
+            shadowed = _wrapped([_old, _new], "hello.vel")
+            ok("a stale Velaris earlier in PATH does not shadow a newer "
+               "one: the wrapper takes the newest it found",
+               shadowed.returncode == 0 and "9.9.9" in shadowed.stdout,
+               (shadowed.stdout + shadowed.stderr)[:200])
+
+            missing = _wrapped([_none], "hello.vel")
+            ok("with no Velaris anywhere, the wrapper still says how to "
+               "install it",
+               missing.returncode == 127
+               and "pip install velaris-lang" in missing.stderr,
+               missing.stderr[:200])
+
+            usual = _wrapped([_new], "hello.vel")
+            ok("the ordinary case is unchanged: one Velaris at least as "
+               "new as the package runs with nothing said",
+               usual.returncode == 0 and "9.9.9" in usual.stdout
+               and usual.stderr.strip() == "",
+               (usual.stdout + usual.stderr)[:200])
+
+            # the real compiler, reached the way a user's pip install
+            # would be: a plain interpreter with velaris importable
+            genuine = _wrapped([_real], "version",
+                               extra={"PYTHONPATH": str(HERE)})
+            ok("the real compiler runs through the wrapper, and the "
+               "wrapper says nothing when the versions agree",
+               genuine.returncode == 0
+               and velaris.VERSION in genuine.stdout
+               and genuine.stderr.strip() == "",
+               (genuine.stdout + genuine.stderr)[:200])
+
+            behind = _wrapped([_old], "check", "hello.vel")
+            ok("a compiler older than the package is never used "
+               "silently: one line names both versions and the "
+               "interpreter",
+               behind.returncode == 0
+               and "4.0.0" in behind.stderr
+               and _json_version(npm_pkg) in behind.stderr
+               and str(_old) in behind.stderr
+               and len(behind.stderr.strip().splitlines()) == 1,
+               behind.stderr[:240])
+
+            absent = _wrapped([_old], "mcp")
+            ok("a subcommand the older compiler does not have is named "
+               "as missing, not handed over to be read as a file name",
+               absent.returncode == 127
+               and "mcp" in absent.stderr and "4.3.3" in absent.stderr
+               and "4.0.0" in absent.stderr
+               and "fake 4.0.0 ran" not in absent.stdout,
+               (absent.stdout + absent.stderr)[:240])
+
+            flagged = _wrapped([_old], "--proof-timeout", "300", "mcp")
+            ok("a global flag before the subcommand does not hide it "
+               "from that check",
+               flagged.returncode == 127 and "mcp" in flagged.stderr,
+               (flagged.stdout + flagged.stderr)[:240])
+
+            # the Node library has the same wrapper underneath it
+            driver = _nbox / "use-library.mjs"
+            driver.write_text(
+                "import { card } from "
+                + json.dumps((HERE / "npm" / "index.js").as_uri()) + ";\n"
+                "console.log(await card());\n", encoding="utf-8")
+            lib = _wrapped([_old, _new], script=driver)
+            ok("the Node library chooses the same way the command line "
+               "does, and says when it is behind",
+               lib.returncode == 0 and "9.9.9" in lib.stdout,
+               (lib.stdout + lib.stderr)[:240])
+
+            lib_behind = _wrapped([_old], script=driver)
+            ok("the Node library says once, not per call, that its "
+               "compiler is older than the package",
+               lib_behind.returncode == 0 and "4.0.0" in lib_behind.stdout
+               and len(lib_behind.stderr.strip().splitlines()) == 1,
+               (lib_behind.stdout + lib_behind.stderr)[:240])
+        finally:
+            _sh_npm.rmtree(_nbox, ignore_errors=True)
+
+        # The wrapper can only name a missing subcommand if its table of
+        # which version each one arrived in covers every subcommand the
+        # compiler has. Nothing else would notice a new command added
+        # without an entry, and the silent failure is the old one back.
+        _dispatch = set()
+        _src = (HERE / "velaris.py").read_text(encoding="utf-8")
+        for _m in _re_npm.finditer(r"argv\[:1\] (?:==|in) (.+)", _src):
+            _dispatch |= set(_re_npm.findall(r'"([a-z][a-z-]*)"', _m.group(1)))
+        _table = set(_re_npm.findall(
+            r'^\s*"?([a-z][a-z-]*)"?:\s*"\d',
+            _wrapper.read_text(encoding="utf-8"), _re_npm.M))
+        ok("the wrapper's table of subcommands covers every subcommand "
+           "the compiler dispatches",
+           bool(_dispatch) and not (_dispatch - _table),
+           "missing from npm/bin/velaris.js: " + str(sorted(_dispatch - _table)))
+        ok("and claims none the compiler does not have",
+           not (_table - _dispatch),
+           "not a subcommand: " + str(sorted(_table - _dispatch)))
+
+    print()
     print("velaris.lock (3.1)")
     print("-" * 62)
     import shutil as _sh

@@ -14,25 +14,32 @@
 // while the program runs, whatever its source claims, and a refusal
 // cannot be caught by the program.
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
+import { behindWarning, findVelaris, packageVersion } from "./python.js";
 
 let cachedPython = null;
 
+// Said once per process, not once per call: several calls through one
+// stale compiler are one mistake, and repeating it would bury whatever
+// the caller was printing.
+let saidBehind = false;
+
+// Not the first Python that can import velaris - the one with the
+// newest velaris. Taking the first let an old install earlier in PATH
+// shadow a newer one, which then answered every call in this module
+// with the behaviour of a version the caller did not ask for.
 function findPython() {
   if (cachedPython) return cachedPython;
-  const candidates =
-    process.platform === "win32"
-      ? ["py", "python", "python3"]
-      : ["python3", "python"];
-  for (const exe of candidates) {
-    const probe = spawnSync(exe, ["-c", "import velaris"], {
-      stdio: "ignore",
-    });
-    if (probe.status === 0) return (cachedPython = exe);
+  const found = findVelaris();
+  if (!found) {
+    throw new Error("velaris is not installed: pip install velaris-lang");
   }
-  throw new Error(
-    "velaris is not installed: pip install velaris-lang"
-  );
+  if (!saidBehind) {
+    const behind = behindWarning(found, packageVersion());
+    if (behind) console.error(behind);
+    saidBehind = true;
+  }
+  return (cachedPython = found.interpreter);
 }
 
 function callPython(script, payload) {

@@ -110,3 +110,30 @@ HOW THE PACKAGE WAS MADE AND CHECKED (2026-09-11)
   2025-08-03; this build used the final TeX Live 2025 (March 2026). The
   packages the paper loads are standard ones. If arXiv's form suggests
   a processor other than pdflatex, change it to pdflatex.
+
+REBUILT 2026-09-12 (velaris-lang 4.3.4)
+  velaris.md gained a paragraph at the top of the reproducibility
+  section saying which two tags the paper describes (v4.2.1 and
+  velaris-spec v0.5.1) and that later releases are not reflected in it.
+  velaris.tex is pandoc output, so it was regenerated rather than
+  edited, with pandoc 3.11 and the same command as step 1 above. The
+  new .tex differs from the previous one by that paragraph alone: ten
+  added lines, nothing else changed.
+
+  Checked again as steps 2 and 3: pdflatex, bibtex, pdflatex, pdflatex
+  with the .bib beside it, then velaris.tex and velaris.bbl alone in an
+  empty folder, pdflatex twice, no bibtex. Result: 11 pages, as before,
+  so "11 pages, 1 figure, 2 tables" in the Comments field still holds;
+  no undefined citation or reference; no overfull or underfull box; no
+  error; the same one harmless caption warning. BibTeX produced a .bbl
+  whose text is identical to the committed one - the bibliography did
+  not change - so velaris.bbl is unchanged and was not rewritten.
+
+  One difference from the 2026-09-11 build, and the only one: that build
+  used TeX Live 2025 (pdfTeX 1.40.28, BibTeX 0.99d), which is what arXiv
+  runs. No TeX Live was installed on this machine any longer, so this
+  rebuild used MiKTeX 25.12 (MiKTeX-pdfTeX 4.23, BibTeX 0.99d), which
+  SUBMITTING.md names as one of the options. Both are pdflatex and both
+  gave 11 clean pages from the same source, but the engine build is not
+  the one arXiv uses. Read the PDF arXiv builds before confirming, which
+  was always the last step anyway.

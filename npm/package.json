@@ -1,6 +1,6 @@
 {
   "name": "velaris-lang",
-  "version": "4.3.3",
+  "version": "4.3.4",
   "mcpName": "io.github.gowrishankar-infra/velaris",
   "description": "Run code you did not write. A language where a signature declares its effects and promises, and the runtime refuses anything you did not allow.",
   "keywords": [
@@ -30,6 +30,7 @@
   "files": [
     "index.js",
     "index.d.ts",
+    "python.js",
     "bin/",
     "README.md"
   ],

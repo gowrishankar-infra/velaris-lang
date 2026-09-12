@@ -136,12 +136,13 @@ From `paper/`, after editing the date:
 
 Tested here: pandoc 3.11 wrote `velaris.tex` from the paper as of this
 commit, and Tectonic 0.17.0 (XeTeX engine) compiled it to 11 pages at
-1-inch margins with no overfull lines. **Not tested: pdflatex**, which
-is arXiv's default; no TeX Live or MiKTeX is installed on this machine.
-The pandoc template supports both engines, and the only characters
-outside ASCII that reach the `.tex` are two in reference names (ø in
-Bjørner, č in Bračevac), which pdflatex's T1 encoding covers - but run
-pdflatex before submitting.
+1-inch margins with no overfull lines. pdflatex, which is arXiv's
+default, has been run on the package since - with TeX Live 2025 on
+2026-09-11 and with MiKTeX 25.12 on 2026-09-12, 11 clean pages both
+times; `paper/arxiv/README-for-me.txt` records both. The pandoc
+template supports both engines, and the only characters outside ASCII
+that reach the `.tex` are two in reference names (ø in Bjørner, č in
+Bračevac), which pdflatex's T1 encoding covers.
 
 ## 4. Metadata
 

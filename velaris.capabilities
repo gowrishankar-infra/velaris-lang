@@ -1,6 +1,6 @@
 {
   "schema": "velaris.capabilities/1",
-  "velaris_version": "4.3.3",
+  "velaris_version": "4.3.4",
   "date": "2026-09-12",
   "surface": {
     "grants": [

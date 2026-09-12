@@ -52,6 +52,17 @@ runs fully interpreted and checks promises while running - it prints
 `note: llvmlite is not installed - running fully interpreted` and
 carries on, refusing effects outside the budget exactly the same way.
 
+### Which Python it uses
+
+The wrapper tries `py`, `python` and `python3` on Windows, `python3`
+then `python` elsewhere, asks each one which Velaris it has, and uses
+the newest. If the newest it finds is older than this npm package it
+still uses it, but says so first, on stderr, naming both versions and
+the interpreter - so a stale install left on PATH is visible rather
+than mysterious. If you ask for a subcommand that version does not
+have, it says which command and which version introduced it instead of
+handing it over. `pip install -U velaris-lang` upgrades the compiler.
+
 [Documentation](https://gowrishankar-infra.github.io/velaris-lang/) ·
 [Playground](https://gowrishankar-infra.github.io/velaris-lang/playground.html) ·
 [Source](https://github.com/gowrishankar-infra/velaris-lang)

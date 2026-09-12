@@ -1,5 +1,70 @@
 # Velaris changelog
 
+## 4.3.4 - The npm wrapper picks the right Python, and says when it cannot
+
+A patch version. Every program that compiled under 4.3.3 compiles, runs
+and means the same; nothing is added to the language, the capability
+surface or any document format. What changes is how the npm package
+decides which Python holds the compiler, and what it tells you when the
+one it found is not the one you meant.
+
+**The wrapper takes the newest Velaris it finds, not the first.** It
+tries `py`, `python` and `python3` in that order on Windows, `python3`
+then `python` elsewhere, and until now it took the first of them that
+could import `velaris` at all - whatever version that one held. So an
+old install earlier in the order silently shadowed a newer one further
+down, and every run went to the old compiler. That is how `npx
+velaris-lang mcp` failed on the maintainer's machine the day 4.3.3 went
+out. Each candidate is now asked for `velaris.VERSION` rather than merely
+whether the import works, and the newest answer wins. `velaris.VERSION`
+has been there since 1.0, so every real compiler answers; something
+importable as `velaris` that is not one is still used if it is the only
+candidate, but ranks below every version that can be read, so it cannot
+shadow a real install by being earlier in the order.
+
+**A compiler older than the package is never used silently.** If the
+newest Velaris found is still older than the npm package that invoked
+it, the wrapper runs it - refusing would help nobody - but first prints
+one line to stderr naming both versions and the interpreter the compiler
+came from. The interpreter is the part worth printing: when two Pythons
+each have a Velaris, knowing which file was imported is the difference
+between a five-minute fix and a mystery. Nothing else about the run
+changes, and stdout is untouched, so a script reading the wrapper's
+output still reads only the compiler's.
+
+**A subcommand the compiler is too old to have is named as missing.**
+`velaris mcp` arrived in 4.3.3. Handed to a compiler older than that, it
+is not a subcommand at all, so the compiler took it for a file name and
+said `cannot find file 'mcp'` - true, and no help to anyone. The wrapper
+now carries the version each subcommand first shipped in, and when the
+compiler it found is older than that, it says so instead of handing the
+command over: which command, which version it arrived in, which
+interpreter holds which older version. It stops before running, so there
+is one message rather than two. A global flag before the subcommand,
+such as `--proof-timeout 300`, does not hide it; an argument that is not
+a subcommand, such as a file name, is left alone. `check_library.py`
+holds the table to the compiler's own dispatch in both directions, so a
+subcommand cannot be added to the language without an entry, and the
+table cannot claim one the compiler lacks.
+
+**The Node library chooses the same way.** `findPython` in
+`npm/index.js` had the same flaw, and it mattered more there: one stale
+choice is cached for the life of the process, so every `check`, `audit`
+and `run` through the module answered with a version the caller did not
+ask for. It now shares the probing with the command line - both import
+`npm/python.js` - and prints the same line, once per process rather than
+once per call. When no candidate has Velaris at all, both say what they
+said before: `pip install velaris-lang`.
+
+**The arXiv package is level with the paper again.** `paper/velaris.md`
+gained a paragraph in the reproducibility section saying which two tags
+the paper describes; `paper/arxiv/velaris.tex` is pandoc output and is
+regenerated rather than edited, so it was left one paragraph behind
+until pandoc was available. It has been regenerated with the command in
+`paper/arxiv/README-for-me.txt` and rebuilt the way arXiv builds it. The
+paper still describes Velaris 4.2.1 and velaris-spec 0.5.1; that pin is
+unchanged.
+
 ## 4.3.3 - velaris mcp, so the npm package can start the server too
 
 A patch version. Every program that compiled under 4.3.2 compiles, runs
