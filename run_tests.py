@@ -100,12 +100,36 @@ EXPECT = {
     "termination_bad.vel": "RUNS",
 }
 
+# The budget each example needs, narrowest first. From 5.0 a run with
+# no --allow gets io, so every example that touches a file, a host, the
+# clock, randomness, the environment or Python has to say so - and says
+# exactly what it needs, never `all`. `velaris migrate --to 5.0 examples`
+# derives this list from each program's own audit; an example missing
+# from it runs under the 5.0 default.
+ALLOW = {
+    # _sqlite3 as well as sqlite3: sqlite3.connect belongs to the C
+    # extension, and 3.3's reach check binds a grant to the module a
+    # call actually reaches, which the audit reading the source cannot
+    # see. Still named modules, never plain ffi.
+    "database.vel": "ffi:_sqlite3,builtins,sqlite3,io",
+    "edges.vel": "ffi:datetime,io",
+    "effects.vel": "clock,fs:read:report.txt,fs:write:report.txt,io,rand",
+    "ffi.vel": "ffi:base64,builtins,datetime,io",
+    "json_ffi.vel": "ffi:math,io",
+    "ledger.vel": "fs:read:ledger.txt,fs:write:ledger.txt,io",
+    "report_fixes.vel": "ffi:math,io",
+    "sandbox.vel": "ffi:builtins,fs:read,io,net",
+    "stdlib_tools.vel": "env,ffi:_sqlite3,builtins,sqlite3,io",
+    "wordcount.vel": "fs:read,io",
+    # the ones that reach the network are not run by this suite with a
+    # net grant: fetcher, linkcheck, net and stress are RUNS only where
+    # there is a network, and the suite that exercises them is
+    # check_library.py's door and pool cases
+}
+
 # scripted keyboard input for interactive examples
 ARGS = {
     "wordcount.vel": ["examples/sample.txt", "3"],
-    # the settlement needs the console and nothing else, and says so
-    "settlement.vel": ["--allow", "io"],
-    "discount.vel": ["--allow", "io"],
 }
 
 STDIN = {
@@ -203,9 +227,10 @@ def main() -> int:
             print(f"MISSING   {name}")
             failed += 1
             continue
+        budget = (["--allow", ALLOW[name]] if name in ALLOW else [])
         r = subprocess.run(
             [sys.executable, str(here / "velaris.py"), str(path)]
-            + ARGS.get(name, []) + extra,
+            + budget + ARGS.get(name, []) + extra,
             capture_output=True, text=True, timeout=300,
             input=STDIN.get(name))
         got = "RUNS" if r.returncode == 0 else "REJECTED"

@@ -177,6 +177,20 @@ randomness. Not "should not" - the runtime refuses, and a refusal
 **cannot be caught** by the program, so it cannot swallow the refusal
 and carry on.
 
+**`allow=None` is the same `io`, from 5.0.** It used to be all seven
+effects, so a caller who forgot the argument got the widest budget
+there is; now forgetting it gets the narrowest useful one. The ways to
+ask for everything, both of which say so where you can see them:
+
+```python
+velaris.run(source, allow="all")                  # one line to stderr
+velaris.run(source, allow=set(velaris.ALL_EFFECTS))
+```
+
+`velaris.Pool(...)` and `velaris.run(..., timeout=...)` take the same
+default, and so does `velaris <file>` on the command line: one answer
+in every place a budget comes from.
+
 A grant can be narrower than an effect, in the same grammar the
 command line takes (SPEC.md 7.1):
 
@@ -197,9 +211,9 @@ outside the grants, which fails the request naming the target.
 `refused_effect` reports `fs:<path>`, `net:<host>` or `fs@count` /
 `net@count` for those.
 
-It is not a security boundary. `allow={"ffi"}` grants everything
-Python can do, and nothing here limits memory, time, or what a program
-prints. It is a real guard against accident and casual misbehaviour -
+It is not a security boundary. `allow={"ffi"}` and `allow="all"` grant
+everything Python can do, and nothing here limits memory, time, or what
+a program prints. It is a real guard against accident and casual misbehaviour -
 the situation you are in when a model hands you a script.
 
 `run` captures stdout as `output` and stderr as `logs`, accepts
@@ -557,7 +571,9 @@ none of this held**: a door started without `--max-allow` granted every
 effect, `ffi` included, to anyone holding the token, and a caller could
 send any timeout and any memory cap and have it. Starting a door with a
 wider ceiling now takes naming it: `--max-allow
-io,env,fs,net,clock,rand,ffi` is what 3.4 granted by default.
+io,env,fs,net,clock,rand,ffi` is what 3.4 granted by default, and from
+5.0 `--max-allow all` is the same thing written shorter - the door
+writes one line to stderr when it is started that way.
 `--max-memory-mb` on `velaris serve` used to set a cap on the door's
 own process (on Linux and macOS); it is now the most each run may have,
 and the door's process is not capped.
@@ -641,6 +657,9 @@ const result = await run(source, { allow: ["io"] });
 console.log(result.ok, result.output, result.refusedEffect);
 ```
 
+Leaving `allow` out is `io`, the same default the command line and the
+Python library have from 5.0.
+
 The compiler is a Python package, so `pip install velaris-lang` once;
 the npm package says so plainly if it is missing. Types ship with it.
 
@@ -661,7 +680,8 @@ fn main() uses io {
 `--audit` prints what the cell can touch and how much of its promises
 are proven before running - useful when the code in the cell came from
 a model. Effects outside `--allow` are refused, and the cell says which
-flag would permit them.
+flag would permit them. A cell with no `--allow` gets `io`, which the
+magic has always done and which 5.0 made true everywhere else too.
 
 ## As a GitHub Action
 
@@ -818,6 +838,41 @@ it reads text, so what a granted `ffi` module does is beyond it, paths
 are compared as written, and a function renamed as it gains an effect
 is a new function.
 
+## Moving a 4.x project to 5.0
+
+```
+velaris migrate --to 5.0                # every program under .
+velaris migrate --to 5.0 src/report.vel # one of them
+velaris migrate --to 5.0 --json         # velaris.migrate/1
+velaris migrate --to 5.0 --write        # and change what it can parse
+```
+
+In 5.0 a run given no budget gets `io` rather than all seven effects,
+so a command, script or CI step that runs a program needing more has
+to say what it needs. `migrate` works that out: for each program it
+reads, it derives the narrowest budget the program's own audit can
+write - the grants `safe_command` carries - and prints the command to
+run it under 5.0.
+
+```
+examples/wordcount.vel
+    uses:  fs, io
+    run:   velaris examples/wordcount.vel --allow fs:read,io
+```
+
+A program that uses `io` or no effect at all is counted and not
+listed: 5.0 grants it already. A file that does not compile is named
+with the problem, never guessed at.
+
+It changes nothing without `--write`, and with it changes only lines
+it can parse with no guessing: one command on the line, a `.vel` path
+that resolves to a program it audited, no `--allow` or `--deny`
+already there, and no pipe, chain, substitution or redirection that
+would make the end of the command the wrong place for a flag. It
+writes `.sh`, `.bash`, `.yml` and `.yaml` files, puts the flag after
+the file name and before the program's own arguments, and lists every
+line it left alone with the budget to add by hand.
+
 ## Running velaris-spec's conformance corpus
 
 ```
@@ -968,7 +1023,7 @@ repos:
 ## Trying it with nothing installed
 
 ```
-pipx run --spec velaris-lang velaris hello.vel
+pipx run --spec velaris-lang velaris hello.vel --allow io
 ```
 
 Or open the [playground](https://gowrishankar-infra.github.io/velaris-lang/playground.html) -

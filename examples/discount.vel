@@ -1,6 +1,6 @@
 // DISCOUNT - a rule the customer wrote, proven before it runs.
 //
-// velaris examples/discount.vel --allow io
+// velaris examples/discount.vel              (io, the 5.0 default)
 // velaris proofs examples/discount.vel --detail
 //
 // A commerce platform lets each customer write their own discount

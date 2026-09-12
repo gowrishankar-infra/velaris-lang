@@ -106,7 +106,10 @@ def grants(*effects, ffi=None, fs=None, net=None, counts=None) -> dict:
 
 # (id, what it shows, allow, deny, the budget it parses to - or None when
 # the whole budget must be refused). allow None means no grants were
-# given, so the budget starts from all seven effects (velaris-spec 4.4).
+# given, so the budget starts from the runtime's default, which is io
+# from 5.0 and was all seven effects before (velaris-spec 4.4, 4.6).
+# An entry with no allow and a deny is left out of the conformance
+# corpus for that reason - build_conformance.py says so.
 BUDGETS = [
     # the grammar's forms (velaris-spec 4.1, 4.2)
     ("spec-example", "the example of velaris-spec 4: a path, a host with a "
@@ -230,9 +233,18 @@ BUDGETS = [
     ("path-raw-comma", "a raw comma ends an item: fs:read:./a,b.txt holds "
      "b.txt, which is not an effect", "fs:read:./a,b.txt", None, None),
     # denials (velaris-spec 4.4)
-    ("deny-from-all-seven", "denying net and ffi, with no grants given, "
-     "leaves the other five unscoped", None, "net,ffi",
+    # Until 5.0 this case gave no grants at all and expected the denial
+    # to start from all seven effects. From 5.0 no grants means the
+    # runtime's default budget, which for this one is io (velaris-spec
+    # 4.6), so the denial algorithm is stated against grants that are
+    # written down - which is what another implementation can run.
+    ("deny-from-grants-given", "denying net and ffi from a budget that "
+     "grants all seven leaves the other five unscoped",
+     "io,env,fs,net,clock,rand,ffi", "net,ffi",
      grants("clock", "env", "fs", "io", "rand", fs="any")),
+    ("deny-narrows-the-default", "a denial with no grants narrows the "
+     "default budget, which is io from 5.0", None, "net,ffi",
+     grants("io")),
     ("deny-removes-scope", "a denial removes the effect with its scope "
      "and count", "io,fs:read:./a@5", "fs", grants("io")),
     ("deny-scoped-refused", "a denial cannot be scoped: fs:write is not an "
@@ -639,6 +651,30 @@ fn root(n: Text) -> Text uses ffi or fail {
 ]
 
 
+def _refuses_budget(text: str) -> bool:
+    """True when Budget.parse refuses this text whole. `all` is the
+    command line's shorthand for every effect (5.0), not a grant of the
+    budget grammar, so nothing that takes a budget from a caller - the
+    HTTP door, the MCP server - can be made to accept it."""
+    try:
+        velaris.Budget.parse(text)
+        return False
+    except velaris.BudgetError:
+        return True
+
+
+def _budget_error(argv: list) -> bool:
+    """True when a command line is refused as a budget error rather than
+    raising something else."""
+    try:
+        velaris.cli_budget(argv)
+        return False
+    except velaris.BudgetError:
+        return True
+    except Exception:
+        return False
+
+
 def _json_version(path) -> str:
     import json as _j
     return _j.loads(path.read_text(encoding="utf-8"))["version"]
@@ -876,6 +912,91 @@ def main() -> int:
     r = velaris.run(PURE, allow={"io"}, timeout=30)
     ok("an honest program is unaffected by limits",
        r.ok and r.output.strip() == "42", repr(r.output))
+
+    print()
+    print("the default budget is io, not everything (5.0)")
+    print("-" * 62)
+    # Until 5.0 a run given no budget got all seven effects: the command
+    # line with no --allow, and the library with allow=None. The doors
+    # had already been narrowed to io (the MCP server in 3.4, the HTTP
+    # door in 4.0); the two that had not are the ones below, and the
+    # last check here is that all four now say the same thing.
+
+    r = velaris.run(READS_A_FILE)
+    ok("run() with no allow refuses fs",
+       not r.ok and r.refused_effect == "fs" and "READ IT" not in r.output,
+       str(r.as_dict())[:160])
+
+    refusal = " ".join(p.message + " " + " ".join(p.fixes or [])
+                       for p in r.problems)
+    ok("...and the refusal names the effect and the flag that grants it",
+       "'fs' effect" in refusal and "--allow io,fs" in refusal,
+       refusal[:200])
+
+    r = velaris.run(PURE)
+    ok("run() with no allow may still print",
+       r.ok and r.output.strip() == "42", repr(r.output))
+
+    r = velaris.run(READS_A_FILE, allow="all")
+    ok("run(allow=\"all\") grants what a run with no budget used to get",
+       r.ok or r.refused_effect is None, str(r.as_dict())[:160])
+
+    r = velaris.run(READS_A_FILE, allow=set(velaris.ALL_EFFECTS))
+    ok("...and so does naming the seven effects",
+       r.ok or r.refused_effect is None, str(r.as_dict())[:160])
+
+    r = velaris.run(READS_A_FILE, timeout=30)
+    ok("a bounded run with no allow refuses fs in the child too",
+       not r.ok and r.refused_effect == "fs" and "READ IT" not in r.output,
+       str(r.as_dict())[:160])
+
+    with velaris.Pool(size=1) as pool:
+        ok("a pool made with no allow is io", pool.allow == "io",
+           repr(pool.allow))
+        r = pool.run(READS_A_FILE)
+        ok("...and a program on it that reads a file is refused",
+           not r.ok and r.refused_effect == "fs", str(r.as_dict())[:160])
+        r = pool.run(PURE)
+        ok("...while one that only prints runs",
+           r.ok and r.output.strip() == "42", repr(r.output))
+
+    # the four places a budget comes from when nobody named one: the
+    # command line, the library, the HTTP door's ceiling and the MCP
+    # server's ceiling. They have to agree, or "the default" means four
+    # things. The doors' behaviour is asserted above, under their own
+    # sections; this compares what each one starts from.
+    import velaris_mcp as _mcp
+    defaults = {
+        "the command line": velaris.cli_budget(["prog.vel"]).spec(),
+        "the library": velaris._budget_from(None, None).spec(),
+        "velaris.Pool": velaris.Pool(size=1, allow=None).allow,
+        "the HTTP door's ceiling":
+            velaris.Budget.parse(velaris.DEFAULT_ALLOW).spec(),
+        "the MCP server's ceiling":
+            velaris.Budget.parse(_mcp.DEFAULT_CEILING).spec(),
+    }
+    ok("the command line, the library, the pool and both doors all "
+       "default to the same budget",
+       set(defaults.values()) == {"io"}, str(defaults))
+
+    ok("--allow all is not part of the budget grammar a caller can send",
+       _refuses_budget("all") and _refuses_budget("io,all"),
+       "Budget.parse accepted 'all'")
+
+    ok("velaris.expand_allow turns the operator's shorthand into the "
+       "seven effects",
+       velaris.expand_allow("all") == ",".join(velaris.ALL_EFFECTS)
+       and velaris.expand_allow("io,fs") == "io,fs",
+       velaris.expand_allow("all"))
+
+    ok("--deny narrows the default rather than widening it",
+       velaris.cli_budget(["prog.vel", "--deny", "net"]).spec() == "io"
+       and velaris._budget_from(None, {"net"}).spec() == "io",
+       velaris.cli_budget(["prog.vel", "--deny", "net"]).spec())
+
+    ok("a flag written last, with no value, is a budget error and not a "
+       "crash", _budget_error(["prog.vel", "--allow"])
+       and _budget_error(["prog.vel", "--deny"]))
 
     print()
     print("scoped grants through the library (3.0)")

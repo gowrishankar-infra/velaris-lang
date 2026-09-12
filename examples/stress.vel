@@ -1,6 +1,6 @@
 // A stress test for the whole language, written in Velaris.
 //
-// velaris examples/stress.vel
+// velaris examples/stress.vel --allow clock,env,ffi:datetime,math,sqlite3,io,net:raw.githubusercontent.com
 //
 // It asks nothing, exercises every part of the language and the
 // standard library, prints one line per check, and exits non-zero if

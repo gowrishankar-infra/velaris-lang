@@ -1,4 +1,7 @@
 // LEDGER - a real expense tracker, written in Velaris.
+//
+// velaris examples/ledger.vel --allow fs:read:ledger.txt,fs:write:ledger.txt,io
+//
 // Everything the language stands for, carrying actual weight:
 // records for data, contracts on the math, 'or fail' parsing that
 // cannot be ignored, file persistence visible as 'uses fs', and a

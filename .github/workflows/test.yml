@@ -71,7 +71,7 @@ jobs:
       - name: Wrong programs are refused for the right reason
         run: python check_refusals.py
       - name: Edge, property and round-trip tests
-        run: velaris examples/edges.vel
+        run: velaris examples/edges.vel --allow ffi:datetime,io
       - name: Velaris tests written in Velaris
         run: velaris test examples/std_test.vel
       - name: Compile check (every example compiles)

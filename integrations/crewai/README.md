@@ -20,7 +20,9 @@ grants exactly those paths, hosts and counts (SPEC.md 7.1).
 print and nothing else - not read a file, reach the network, or call
 Python - whatever the code claims. The budget is chosen by you, the
 crew's author, not by the agent. A refusal stops the program and the
-tool reports which effect was refused.
+tool reports which effect was refused. `VelarisRunTool()` with no
+`allow` is the same `io`, which is also what `velaris.run` and the
+command line give a run that asks for nothing (velaris-lang 5.0).
 
 `VelarisAuditTool` tells the agent (and you) what a program can touch
 and how much of its promises were proven before running, in the

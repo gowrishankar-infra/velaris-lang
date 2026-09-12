@@ -1,5 +1,11 @@
 // v2.27: real libraries, not just functions.
 //
+// velaris examples/database.vel --allow ffi:_sqlite3,builtins,sqlite3,io
+//
+// _sqlite3 as well as sqlite3: sqlite3.connect belongs to the C
+// extension, and a grant is bound to the module a call reaches, not
+// the one it names.
+//
 // A Handle is a ticket for something living on the Python side - a
 // database connection, a session, a file. py_new makes one, py_do
 // calls a method on it, py_field reads an attribute, py_close lets it

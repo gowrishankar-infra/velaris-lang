@@ -1,4 +1,7 @@
 // v0.12: a real, playable game written in Velaris.
+//
+// velaris examples/guess.vel --allow io,rand
+//
 // 'ask' reads your keyboard (an io effect - it's in the signature),
 // 'to_int' turns the answer into a number (typing "banana" gives a
 // clean error, not a crash). Interactive, so not in run_tests.py.

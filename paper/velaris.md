@@ -540,9 +540,13 @@ modules a run may reach, not which values may flow to them.
 directories, sockets and other resources its host hands it as handles,
 so a module given nothing reaches nothing [@wasi]. Velaris's grants are
 text an operator writes, enforced inside the same process rather than
-at a virtual machine's boundary, and its command line grants every
-effect when no budget is given, so deny-by-default holds only once an
-operator writes one.
+at a virtual machine's boundary. Until version 5.0 its command line
+granted every effect when no budget was given, so deny-by-default held
+only once an operator wrote one; 5.0 made the default `io` - the
+console and nothing else - in the command line, the library, the worker
+pool and both doors, so a run that asks for nothing now gets close to
+what a WASI module given nothing gets, and `--allow all` is the
+explicit way to ask for everything.
 
 **Deno.** Deno's permission flags give a script no file, network,
 environment or subprocess access unless granted, with scoped forms much
@@ -599,7 +603,9 @@ bundles that replay to identical outputs [@boruna]; it parses `ensures`
 without enforcing it and has no prover, its evidence describes a run
 where Velaris's audit describes a source text and binds to in-toto and
 SARIF, and it grants nothing by default, where Velaris without a budget
-grants all seven effects. Thermite mandates `req`, `ens` and `fx` on
+granted all seven effects until version 5.0 and grants `io` - the
+console alone - from it. Boruna's default is still the stricter of the
+two: it grants nothing, and a Velaris program with no budget can print. Thermite mandates `req`, `ens` and `fx` on
 every function and settles each obligation separately on a five-rung
 ladder from reconstruction in Lean down to an always-active runtime
 check, recording engine and level per clause [@thermite]; its
@@ -699,8 +705,13 @@ number in it was verified against those two tags. Releases after them
 postdate the paper and are not reflected in it: 4.3.0 added `Money of
 CUR`, an exact decimal whose split is proven to add back up; 4.3.1 made
 a proof that exhausts its time budget say so rather than fall silently
-back to a runtime check; and later patches corrected documentation and
-packaging. What each one changed is in the two repositories' changelogs.
+back to a runtime check; 4.4.0 added a reference platform service; and
+5.0.0 made `io` the budget a run gets when nobody writes one, where
+every version this paper measured granted all seven effects - the
+related-work paragraphs on WASI and on Boruna say what changed, and
+velaris-spec 0.6.0 restates its sections 4.4 and 4.6 to match. Later
+patches corrected documentation and packaging. What each one changed is
+in the two repositories' changelogs.
 The tags below are therefore the ones to check out, not the current
 releases.
 

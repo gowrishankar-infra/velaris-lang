@@ -46,5 +46,10 @@ class Velaris < Formula
     output = shell_output("#{bin}/velaris #{testpath}/peek.vel --allow io 2>&1",
                           1)
     assert_match "E310", output
+
+    # ...and it holds with no --allow at all: a run gets io from 5.0,
+    # where before it got every effect
+    output = shell_output("#{bin}/velaris #{testpath}/peek.vel 2>&1", 1)
+    assert_match "E310", output
   end
 end

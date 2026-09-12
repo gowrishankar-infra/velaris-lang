@@ -1,6 +1,10 @@
 // A real text-analysis tool, written in Velaris.
 //
-// velaris examples/wordcount.vel <file> [how-many]
+// velaris examples/wordcount.vel --allow fs:read,io <file> [how-many]
+//
+// fs:read is unscoped because the file to read is an argument, not
+// text the audit can see. Narrow it to the directory you mean:
+// velaris examples/wordcount.vel --allow fs:read:./docs,io docs/a.md
 //
 // It reads a file, counts how often each word appears, and reports the
 // most common ones. Every risky step is visible in a signature: the
@@ -115,7 +119,7 @@ fn report(text: Text, top: Int) -> Text or fail
 fn main() uses io, fs {
     let given = args()
     if length(given) == 0 {
-        print("usage: velaris examples/wordcount.vel <file> [how-many]")
+        print("usage: velaris examples/wordcount.vel --allow fs:read,io <file> [how-many]")
         return
     }
     let path = get(given, 0)

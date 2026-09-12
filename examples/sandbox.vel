@@ -1,8 +1,13 @@
 // Running a program you have not read.
 //
-// velaris examples/sandbox.vel                  everything allowed
-// velaris examples/sandbox.vel --allow io       only printing
-// velaris examples/sandbox.vel --deny net,ffi   everything but those
+// io alone, which is what a run with no --allow gets from 5.0:
+// velaris examples/sandbox.vel
+// exactly what it needs, and nothing more:
+// velaris examples/sandbox.vel --allow ffi:builtins,fs:read,io,net
+// everything, which is what a run used to get with no budget:
+// velaris examples/sandbox.vel --allow all
+// everything but those two:
+// velaris examples/sandbox.vel --allow all --deny net,ffi
 //
 // The compiler checks that a function declares what it does. The
 // runtime refuses anything outside the budget you granted on the

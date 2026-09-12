@@ -86,10 +86,15 @@ NO_RUNTIME = {"py_do", "py_field",
 SKIP = {"get"}
 
 
-def run(source: str) -> tuple:
+def run(source: str, effect: str | None = None) -> tuple:
+    """Run the case under the narrowest budget it needs. From 5.0 a run
+    with no --allow gets io, so a builtin that reads a file or calls
+    Python has to be granted that effect or the refusal, not the
+    failure, is what comes back."""
     SCRATCH.write_text(source, encoding="utf-8")
+    allow = "io" + (f",{effect}" if effect else "")
     done = subprocess.run(
-        [sys.executable, str(VELARIS), str(SCRATCH)],
+        [sys.executable, str(VELARIS), str(SCRATCH), "--allow", allow],
         capture_output=True, text=True, timeout=300, cwd=HERE)
     return done.returncode, (done.stdout or "") + (done.stderr or "")
 
@@ -193,7 +198,7 @@ def main() -> int:
                   f"{indent}    fail why {{\n"
                   f"{indent}        print(\"caught\")\n"
                   f"{indent}    }}\n{indent}}}\n{closer}}}\n")
-        code, out = run(caught)
+        code, out = run(caught, effect)
         if "Traceback" in out:
             print(f"  RAW CRASH    {name}: a failure escaped as a "
                   f"traceback")

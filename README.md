@@ -29,13 +29,20 @@ says about itself.
 
 ```
 pip install velaris-lang
-velaris agent_output.vel --allow io
+velaris agent_output.vel
 ```
 
 That program cannot open a socket, read a file, call Python, or ask the
 clock. Not "shouldn't" — the runtime refuses, and a refusal cannot be
 caught and carried past. You do not have to read the code, understand
 it, or trust the compiler's analysis of it.
+
+Since **5.0** that is what a run with no `--allow` gets: `io`, the
+console. It used to be all seven effects, which meant the answer to
+"what may this program do?" was "everything" until an operator said
+otherwise. Widen it by naming what the program needs
+(`--allow io,fs:read:./data`); `--allow all` grants every effect and
+writes one line to stderr saying so.
 
 `--allow io,ffi:math,json` grants Python for those modules only; a call
 that reaches any other module — named, or reached through an attribute of
@@ -152,8 +159,9 @@ its host hands it. Velaris is a small language a model learns from a
 3,700-word card, in which functions declare their effects, the runtime
 enforces the operator's budget at each operation, and contracts are
 checked by the Z3 theorem prover; it does not track data flow, which
-CaMeL and TACIT both do, and its command line grants every effect when
-no budget is given, where a WASI module given nothing reaches nothing.
+CaMeL and TACIT both do. Until 5.0 its command line also granted every
+effect when no budget was given, where a WASI module given nothing
+reaches nothing; from 5.0 a run with no budget gets `io` alone.
 The capability
 format is published separately, under CC0, as
 [velaris-spec](https://github.com/gowrishankar-infra/velaris-spec),
@@ -238,7 +246,7 @@ variables — the compiler tells you to pass them in instead.
 ## Where it plugs in
 
 ```
-velaris script.vel --allow io        the command
+velaris script.vel                    the command (io unless you say more)
 import velaris                        a Python library
 velaris mcp-install                   tools inside your assistant
 velaris.mcpb                          double-click install for Claude Desktop
@@ -308,7 +316,7 @@ a rule, and it is not one a sandbox can produce.
 velaris card > card.md          # ~3,700 words: paste into any model
 velaris audit script.vel        # what it can touch, before you run it
 velaris attest script.vel --output script.intoto.json   # the same, bound to its bytes
-velaris script.vel --allow io   # it cannot touch anything else
+velaris script.vel              # io, and nothing else, unless you say more
 ```
 
 `velaris audit` is written for the reviewer: what the program reaches,
@@ -325,8 +333,9 @@ compiles and its promises prove.
 ## Running code you did not write
 
 ```
-velaris agent_output.vel --allow io      # it cannot touch anything else
-velaris agent_output.vel --deny net,ffi  # everything except these
+velaris agent_output.vel                 # io: it may print, nothing else
+velaris agent_output.vel --allow io,fs:read:./data   # and read that folder
+velaris agent_output.vel --allow all --deny net,ffi  # everything but these
 ```
 
 The runtime refuses any effect outside the budget you grant, whatever
@@ -337,10 +346,12 @@ real guard for running a program you have not read.
 ## Checking everything at once
 
 ```
-velaris examples/stress.vel     # 33 checks across the whole language
-velaris examples/edges.vel      # 20 boundary, property and round-trip checks
+velaris examples/stress.vel --allow clock,env,ffi:datetime,math,sqlite3,io,net:raw.githubusercontent.com
+                                # 33 checks across the whole language
+velaris examples/edges.vel --allow ffi:datetime,io
+                                # 20 boundary, property and round-trip checks
 python check_refusals.py        # 21 wrong programs, each refused correctly
-python check_sandbox.py         # 34 escape attempts, each refused with its code
+python check_sandbox.py         # 38 escape attempts, each refused with its code
 python check_pool.py            # a pool must leak nothing between programs
 python check_platform.py        # the reference platform refuses what it says it does
 python check_ratchet.py         # every widening fails, nothing else does
@@ -377,11 +388,12 @@ prover settles only while running.
 
 `examples/ledger.vel` — an expense tracker: records, integer cents,
 file persistence, sorted reports.
-`examples/wordcount.vel` — text analysis: `velaris examples/wordcount.vel
-<file> [n]` counts word frequencies and prints a ranked histogram.
+`examples/wordcount.vel` — text analysis:
+`velaris examples/wordcount.vel --allow fs:read,io <file> [n]` counts
+word frequencies and prints a ranked histogram.
 `examples/linkcheck.vel` — a link checker you would actually run:
-`velaris examples/linkcheck.vel <url> ...`, non-zero exit when
-something is broken.
+`velaris examples/linkcheck.vel --allow io,net <url> ...`, non-zero exit
+when something is broken.
 `examples/fetcher.vel` — an HTTP tool: checks a status, then summarises
 a page, with every network call declared and every failure handled.
 
@@ -459,7 +471,8 @@ both export `distance` can be used in the same file.
 
 ```
 velaris build myprogram.vel      # one executable, ~90 MB
-./myprogram alpha beta           # runs anywhere, nothing installed
+./myprogram alpha beta           # runs anywhere, nothing installed;
+                                 # it takes --allow like the compiler
 
 velaris build myprogram.vel --for-everyone   # a workflow that builds
                                              # Windows, Linux and macOS

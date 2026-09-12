@@ -49,9 +49,24 @@ def case(id, level, kind, description, source, input, expect, *, spec=(),
 
 # ---- level 1: the budget grammar and the effect surface ---------------------
 
-def level1() -> list:
-    out = []
+# A denial with no grants narrows whatever budget the runtime gives a
+# run that asked for none, and velaris-spec 4.6 leaves that to the
+# runtime - it is io for this one from 5.0, and was all seven before.
+# So such a case says something about this implementation, not about
+# the format, and the corpus leaves it out.
+DENY_WITHOUT_GRANTS = ("a denial with no grants narrows the runtime's "
+                       "default budget, which velaris-spec 4.6 leaves "
+                       "to the runtime")
+
+
+def level1() -> tuple:
+    out, excluded = [], []
     for bid, what, allow, deny, want in check_library.BUDGETS:
+        if allow is None and deny is not None and want is not None:
+            excluded.append({"from": f"check_library.py BUDGETS {bid}",
+                             "description": what,
+                             "reason": DENY_WITHOUT_GRANTS})
+            continue
         given = {}
         if allow is not None:
             given["allow"] = allow
@@ -76,7 +91,7 @@ def level1() -> list:
             f"check_library.py AUDITS {a['id']}",
             {"files": files, "entry": next(iter(files))}, a["expect"],
             spec=["3.2", "8"]))
-    return out
+    return out, excluded
 
 
 # ---- level 2: enforcement ---------------------------------------------------
@@ -172,8 +187,9 @@ def level3() -> list:
 
 def corpus() -> dict:
     """{relative path: text} - every file the corpus holds."""
-    cases = level1()
-    run_cases, excluded = level2()
+    cases, excluded = level1()
+    run_cases, more = level2()
+    excluded += more
     cases += run_cases + level3()
     files, seen = {}, set()
     for c in cases:

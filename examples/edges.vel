@@ -1,6 +1,6 @@
 // The second stress test: the places languages actually break.
 //
-// velaris examples/edges.vel
+// velaris examples/edges.vel --allow ffi:datetime,io
 //
 // Boundaries (empty, zero, one, negative, the integer limits),
 // properties checked over many generated values rather than one

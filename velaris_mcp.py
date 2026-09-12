@@ -133,8 +133,10 @@ def configure(argv: list) -> str | None:
             continue
         return f"unknown argument '{a}'; {USAGE}"
     try:
-        CEILING = velaris.Budget.parse(opts.get("--max-allow",
-                                                DEFAULT_CEILING))
+        asked = opts.get("--max-allow", DEFAULT_CEILING)
+        if asked.strip() == velaris.ALLOW_ALL:
+            velaris.warn_allow_all("velaris mcp")
+        CEILING = velaris.Budget.parse(velaris.expand_allow(asked))
     except velaris.BudgetError as e:
         return f"--max-allow: {e}"
     try:

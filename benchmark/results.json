@@ -9,7 +9,7 @@
   "python_memory_cap": "job object",
   "quick": false,
   "timeout_s": 5,
-  "velaris": "4.4.0",
+  "velaris": "5.0.0",
   "velaris_memory_cap": "enforced"
  },
  "programs": [
@@ -93,7 +93,7 @@
       "problems": [
        {
         "code": "E310",
-        "message": "'write_file' needs the 'fs' effect, which this run does not allow"
+        "message": "'write_file' needs the 'fs' effect, which this run does not allow (it allows: io)"
        }
       ],
       "ran": true,
@@ -187,7 +187,7 @@
       "problems": [
        {
         "code": "E310",
-        "message": "'write_file' needs the 'fs' effect, which this run does not allow"
+        "message": "'write_file' needs the 'fs' effect, which this run does not allow (it allows: io)"
        }
       ],
       "ran": true,
@@ -281,7 +281,7 @@
       "problems": [
        {
         "code": "E310",
-        "message": "'write_file' needs the 'fs' effect, which this run does not allow"
+        "message": "'write_file' needs the 'fs' effect, which this run does not allow (it allows: io)"
        }
       ],
       "ran": true,
@@ -375,7 +375,7 @@
       "problems": [
        {
         "code": "E310",
-        "message": "'write_file' needs the 'fs' effect, which this run does not allow"
+        "message": "'write_file' needs the 'fs' effect, which this run does not allow (it allows: io)"
        }
       ],
       "ran": true,
@@ -469,7 +469,7 @@
       "problems": [
        {
         "code": "E310",
-        "message": "'write_file' needs the 'fs' effect, which this run does not allow"
+        "message": "'write_file' needs the 'fs' effect, which this run does not allow (it allows: io)"
        }
       ],
       "ran": true,
@@ -563,7 +563,7 @@
       "problems": [
        {
         "code": "E310",
-        "message": "'write_file' needs the 'fs' effect, which this run does not allow"
+        "message": "'write_file' needs the 'fs' effect, which this run does not allow (it allows: io)"
        }
       ],
       "ran": true,
@@ -657,7 +657,7 @@
       "problems": [
        {
         "code": "E310",
-        "message": "'fetch' needs the 'net' effect, which this run does not allow"
+        "message": "'fetch' needs the 'net' effect, which this run does not allow (it allows: io)"
        }
       ],
       "ran": true,
@@ -751,7 +751,7 @@
       "problems": [
        {
         "code": "E310",
-        "message": "'post' needs the 'net' effect, which this run does not allow"
+        "message": "'post' needs the 'net' effect, which this run does not allow (it allows: io)"
        }
       ],
       "ran": true,
@@ -845,7 +845,7 @@
       "problems": [
        {
         "code": "E310",
-        "message": "'fetch' needs the 'net' effect, which this run does not allow"
+        "message": "'fetch' needs the 'net' effect, which this run does not allow (it allows: io)"
        }
       ],
       "ran": true,
@@ -939,7 +939,7 @@
       "problems": [
        {
         "code": "E310",
-        "message": "'post' needs the 'net' effect, which this run does not allow"
+        "message": "'post' needs the 'net' effect, which this run does not allow (it allows: io)"
        }
       ],
       "ran": true,
@@ -1033,7 +1033,7 @@
       "problems": [
        {
         "code": "E310",
-        "message": "'fetch_status' needs the 'net' effect, which this run does not allow"
+        "message": "'fetch_status' needs the 'net' effect, which this run does not allow (it allows: io)"
        }
       ],
       "ran": true,
@@ -1127,7 +1127,7 @@
       "problems": [
        {
         "code": "E310",
-        "message": "'request' needs the 'net' effect, which this run does not allow"
+        "message": "'request' needs the 'net' effect, which this run does not allow (it allows: io)"
        }
       ],
       "ran": true,
@@ -4557,7 +4557,7 @@
       "problems": [
        {
         "code": "E310",
-        "message": "'py' needs the 'ffi' effect, which this run does not allow"
+        "message": "'py' needs the 'ffi' effect, which this run does not allow (it allows: io)"
        }
       ],
       "ran": true,
@@ -4653,7 +4653,7 @@
       "problems": [
        {
         "code": "E310",
-        "message": "'py_int' needs the 'ffi' effect, which this run does not allow"
+        "message": "'py_int' needs the 'ffi' effect, which this run does not allow (it allows: io)"
        }
       ],
       "ran": true,
@@ -4836,7 +4836,7 @@
       "problems": [
        {
         "code": "E310",
-        "message": "'py_json' needs the 'ffi' effect, which this run does not allow"
+        "message": "'py_json' needs the 'ffi' effect, which this run does not allow (it allows: io)"
        }
       ],
       "ran": true,
@@ -4932,7 +4932,7 @@
       "problems": [
        {
         "code": "E310",
-        "message": "'py_new' needs the 'ffi' effect, which this run does not allow"
+        "message": "'py_new' needs the 'ffi' effect, which this run does not allow (it allows: io)"
        }
       ],
       "ran": true,
@@ -5028,7 +5028,7 @@
       "problems": [
        {
         "code": "E310",
-        "message": "'py_json' needs the 'ffi' effect, which this run does not allow"
+        "message": "'py_json' needs the 'ffi' effect, which this run does not allow (it allows: io)"
        }
       ],
       "ran": true,
@@ -5828,7 +5828,7 @@
       "problems": [
        {
         "code": "E310",
-        "message": "'env' needs the 'env' effect, which this run does not allow"
+        "message": "'env' needs the 'env' effect, which this run does not allow (it allows: io)"
        }
       ],
       "ran": true,

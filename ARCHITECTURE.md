@@ -80,6 +80,7 @@ prover could not settle.
 | `check_ratchet.py` | does every widening of the capability surface fail, against the declared baseline and not the previous commit, and does every change that does not widen pass |
 | `velaris test examples/std_test.vel` | does the standard library behave |
 | `velaris conformance` | does this implementation pass velaris-spec's corpus, at L1, L2 and L3 |
+| `velaris migrate --to 5.0` | the narrowest budget each program needs, now that a run with no `--allow` gets `io` |
 | `build_conformance.py --check` | is velaris-spec's corpus still what these suites' tables say |
 
 Conformance to [velaris-spec](https://github.com/gowrishankar-infra/velaris-spec),

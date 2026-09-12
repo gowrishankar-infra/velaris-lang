@@ -3,6 +3,10 @@
 #   docker build -t velaris .
 #   docker run --rm -v "$PWD:/work" velaris check /work/main.vel
 #   docker run --rm -v "$PWD:/work" velaris /work/main.vel
+#   docker run --rm -v "$PWD:/work" velaris /work/main.vel --allow io,fs:read:/work
+#
+# A run with no --allow gets io - the console - and every other effect
+# is refused (5.0). Name what the program needs, narrowest first.
 #
 # The image carries the prover and the native backend, so promises are
 # proven rather than checked while running.

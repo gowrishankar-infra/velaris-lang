@@ -25,7 +25,7 @@ write instead.
 
 | Party | Trusted? | What that means |
 |---|---|---|
-| The operator | yes | Sets the budget (`--allow`, `--deny`, `timeout`, `max_memory_mb`) and decides what to do with the output; on the doors, sets the ceilings no caller may exceed (`--max-allow`, `--max-timeout`, `--max-memory-mb`). Everything below depends on the budget being narrower than "everything". |
+| The operator | yes | Sets the budget (`--allow`, `--deny`, `timeout`, `max_memory_mb`) and decides what to do with the output; on the doors, sets the ceilings no caller may exceed (`--max-allow`, `--max-timeout`, `--max-memory-mb`). Everything below depends on the budget being narrower than "everything", and from 5.0 an operator who sets nothing gets `io` rather than everything - the widening is the deliberate act, not the narrowing. |
 | The program | no | Written by a model or a stranger. Its `uses` clauses, its contracts and its comments are claims the compiler checks; the runtime enforces the operator's budget regardless of them. |
 | The compiler and runtime (`velaris.py`) | yes | One file, in the same process as the program it runs, or in a child process when a time or memory limit is set - a fresh one per run, or a pooled worker under one fixed budget (3.1). A defect here is a defect in the guard. The suites below exist because of that. |
 | The host Python and operating system | yes | The interpreter runs on CPython; the memory cap is the OS's address-space limit; the timeout kills a process. None of these are hardened by Velaris. |
@@ -48,7 +48,7 @@ on.
 
 | Threat | Mechanism | Tested by |
 |---|---|---|
-| A program that reads or writes files, reaches the network, asks the clock, draws randomness, or calls Python when the operator did not allow it | The effect budget: `--allow io` refuses `fs`, `net`, `clock`, `rand` and `ffi` at the call, whatever the source declares, and the refusal cannot be caught | `check_sandbox.py` - 34 escape attempts refused, each with the code it must carry (from 4.1), 16 honest programs still run; `velaris conformance` holds the 28 of them that need no Python host to velaris-spec's corpus, which any implementation can run |
+| A program that reads or writes files, reaches the network, asks the clock, draws randomness, or calls Python when the operator did not allow it | The effect budget: `--allow io` - and, from 5.0, no `--allow` at all - refuses `fs`, `net`, `env`, `clock`, `rand` and `ffi` at the call, whatever the source declares, and the refusal cannot be caught. The refusal names the effect, what the run does allow, and the flag that would grant it | `check_sandbox.py` - 38 escape attempts refused, each with the code it must carry (from 4.1), 17 honest programs still run, four of them added in 5.0 for the default budget; `velaris conformance` holds the 37 of them that need no Python host and no default to velaris-spec's corpus, which any implementation can run |
 | A program that reaches a Python module outside the ones the operator named | The module allow-list: `--allow io,ffi:math` refuses `ffi:os` with E311, through `py`, `py_json`, `py_new`, a submodule path, and the bounded child process. From 3.3 the whole dotted path a call names is checked, not only its module: the attribute chain is walked step by step and any object owned by a module outside the grants is refused, naming the module actually reached, so `py("json", "codecs.encode", ...)` under `ffi:json` is E311 for `codecs`. An object whose owning module cannot be determined is refused rather than allowed | `check_sandbox.py` - the module list, a submodule path, codecs through json, os.system through os, importlib to another module, a builtins type reached through a value, a `__globals__`/`__class__` traversal, and a foreign object exposed through a handle, all refused; a deep attribute inside the granted module (`json.decoder.JSONDecoder`) and a two-module grant still run |
 | A program that reads or writes a file outside the directory the operator named, or writes when only reading was granted | Scoped fs grants (3.0): `fs:read:./data`, `fs:write:./out`. Every path is resolved with `realpath` before comparison, so `..` and symlinks cannot leave a prefix; E313 names the path and cannot be caught | `check_sandbox.py` - a read outside the prefix, a write under a read-only grant, a `..` escape, a symlink escape (where the system will make a link), and an existence check a write grant allows (4.1); `check_library.py` - the same through `velaris.run` and through the HTTP door's ceiling |
 | A program that reaches a host, or a port, the operator did not name | Scoped net grants (3.0): `net:api.example.com:443`, `net:*.example.com` (one label). The URL's host and port are checked before any connection; E314 cannot be caught. A redirect to an ungranted host fails the request as a catchable failure naming the target | `check_sandbox.py` - a host not in the list, a port not in the list, a wildcard that must not match its parent domain, a redirect to an ungranted host; `check_fallible.py` - the redirect failure formats and is caught |
@@ -74,6 +74,20 @@ during) and plain Python 28 (all while running). The two misses are
 named below.
 
 ## What it explicitly does NOT defend against
+
+**No longer here: the permissive default. Fixed in 5.0, 2026-09-12.**
+Until 5.0 a run given no budget - `velaris program.vel`, or
+`velaris.run(source)` with no `allow` - got all seven effects, and this
+repository said so plainly: the README's related-work paragraph and the
+paper both conceded that Velaris's command line granted every effect
+when no budget was given, where a WASI module given nothing reaches
+nothing. That was true until 5.0. It is not true now. The default is
+`io` - the console, and nothing else - in the command line, the
+library, `Pool` and both doors, and `--allow all` is the one way to ask
+for what a run used to get, which writes a line to stderr when it is
+used. The old text is not deleted anywhere it appeared; it is dated.
+
+What follows is what is still not defended.
 
 - **Anything a granted `ffi` module can do.** `ffi:os` is the whole
   operating system as the current user. The allow-list narrows which

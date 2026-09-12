@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// npx velaris hello.vel
+// npx velaris hello.vel            (it gets io; --allow to widen)
 //
 // Velaris's compiler is one Python file. This hands your arguments to
 // it, and if it is not installed, says exactly how to fix that rather
@@ -54,6 +54,7 @@ const INTRODUCED = {
   conformance: "4.1.0",
   attest: "4.2.0",
   mcp: "4.3.3",
+  migrate: "5.0.0",
 };
 
 // The two flags the compiler takes before any command, each with a

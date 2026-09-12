@@ -1,5 +1,167 @@
 # Velaris changelog
 
+## 5.0 - The default is io, not everything
+
+A major version, and a breaking one. Until now, `velaris program.vel`
+with no `--allow` granted all seven effects: the program could read
+and write any file the OS user could reach, open any socket, read
+every environment variable and call any Python module. A capability
+language whose answer to "what may this program do if you say nothing"
+is "everything" has the one thing it exists for backwards, and this
+repository said so in writing - THREAT_MODEL.md conceded it, the
+README's related-work paragraph conceded it against WASI, whose
+modules reach nothing unless the host hands them something, and
+velaris-spec's PRIOR_ART.md recorded that Boruna's default policy
+grants nothing where Velaris's granted seven effects.
+
+From 5.0 a run that asks for nothing gets `io`.
+
+**Why `io` and not nothing.** Granting nothing is the stricter answer,
+and it is the one Boruna and WASI give. It was considered and not
+taken, for two reasons. A program refused under a budget that grants
+nothing cannot say why it stopped, and cannot print the diagnosis of
+its own refusal - the refusal itself reaches the operator through the
+runtime's standard error, but nothing the program wanted to tell you
+first does. And `io` is the effect no example, tutorial, README
+snippet or notebook cell in this repository can do without: a default
+of nothing would have made every one of them fail on upgrade with a
+refusal about `print`, which teaches the wrong lesson about what a
+budget is for. `io` is the console - `print`, `read_line`, `args` -
+and it touches no file, no socket, no environment variable and no
+Python module. The gap between this and granting nothing is one
+effect, and THREAT_MODEL.md has always listed what `io` still
+includes. It is written down here so the choice is on the record
+rather than assumed.
+
+### What a 4.x user has to change
+
+**Every command, script, CI step, notebook cell and library call that
+runs a program needing more than `io`, and did not say so.** It will
+now stop with E310 at the first operation outside `io`, naming the
+effect, what the run does allow, and the flag that would grant it:
+
+```
+error[E310] 'read_file' needs the 'fs' effect, which this run does not
+allow (it allows: io)
+  how to fix (pick one):
+    1. allow it: velaris <file> --allow io,fs
+    2. a run with no --allow gets io (5.0); --allow all grants every effect
+    3. or use a program that does not need it
+```
+
+Item by item:
+
+- **`velaris program.vel`** grants `io`. It granted all seven.
+- **`velaris.run(source)` with no `allow`** grants `io`. It granted
+  all seven. So does **`velaris.run(source, timeout=...)`**, whose
+  child process is started with the same budget.
+- **`velaris.Pool(...)` with no `allow`** grants `io`. It granted all
+  seven. `pool.allow` reads `"io"`.
+- **`velaris test program.vel`** runs its test functions under a
+  budget, `io` unless `--allow` says more. It ran them under all seven.
+- **An executable from `velaris build`** grants `io`, and takes
+  `--allow` the way the compiler does: `./myprogram --allow io,fs:read`.
+  An executable built by 4.x is not affected - it carries the compiler
+  it was built with - but one rebuilt on 5.0 is.
+- **`velaris trace program.vel`** is the run it traces, so it takes the
+  same budget and the same default.
+- **`--deny` narrows what `--allow` gave.** `velaris program.vel
+  --deny net` leaves `io`, where it left the six effects other than
+  `net`. Writing `--allow all --deny net,ffi` is how to get the old
+  meaning, and it says what it is doing.
+- **The two doors are unchanged.** The MCP server's ceiling has been
+  `io` since 3.4 and the HTTP door's since 4.0. 5.0 is the release
+  where every other place a budget comes from agrees with them.
+
+**`--allow all` is the explicit way to ask for everything.** It grants
+the seven effects and writes one line to standard error:
+
+```
+velaris: --allow all grants every effect (io, env, fs, net, clock,
+rand, ffi); nothing this run does will be refused by the budget
+```
+
+It is an operator's word on a command line - `velaris`, `velaris
+serve --max-allow`, `velaris mcp --max-allow`, and `allow="all"` in
+the library - and deliberately not part of the budget grammar: a
+budget a caller sends to the HTTP door or the MCP server cannot
+contain it, and `Budget.parse("all")` is refused as it always was.
+
+**`velaris migrate --to 5.0 [path] [--write] [--json]`** does the
+work. It reads a program or a tree, derives the narrowest budget each
+program needs from that program's own audit - the same grants
+`velaris audit` puts in `safe_command` - and prints the command to run
+it under 5.0:
+
+```
+examples/wordcount.vel
+    uses:  fs, io
+    run:   velaris examples/wordcount.vel --allow fs:read,io
+```
+
+It changes nothing unless `--write` is given, and then only lines in
+shell scripts and CI files it can parse without guessing: one command
+on the line, a `.vel` path that resolves to a program it audited, no
+budget flag already there, and nothing - a pipe, a chain, a
+substitution, a redirection - that would make the end of the command
+the wrong place for a flag. Everything else is listed as left alone,
+with the budget to add by hand. A program that does not compile is
+reported as such rather than guessed at.
+
+### What is not changed
+
+The budget grammar, every refusal code, the audit and capability
+formats, the doors' ceilings and every schema. A budget that parsed
+under 4.x parses under 5.0 and grants the same thing. A program's
+source is untouched: nothing about `uses`, contracts, proofs or
+failure moves. This is a change to what an operator gets when they
+say nothing, and to nothing else.
+
+### The record
+
+- **STABILITY.md** lists 5.0 under "Breaks we have made", with the
+  reason and what a 4.x user has to change.
+- **THREAT_MODEL.md** no longer carries the permissive default among
+  the things it does not defend against. The concession is dated
+  rather than deleted: it says what was true until 5.0, and that the
+  README's and the paper's versions of it were true until 5.0 too.
+- **velaris-spec 0.6.0** restates section 4.6 (what the reference
+  grants when no budget is given) and section 4.4 (a denial narrows
+  the runtime's default budget, which the format does not fix). One
+  conformance case changes with it:
+  `L1-budget-deny-from-all-seven` becomes
+  `L1-budget-deny-from-grants-given`, which writes the grants its
+  denial applies to; `L2-deny-one` and `L2-deny-several` gain theirs
+  too. The corpus is still 444 cases, and every one of them now names
+  its own budget rather than leaving an implementation's default to do
+  the work.
+- **velaris-spec's PRIOR_ART.md** corrects the Boruna and WASI
+  entries: Boruna is still the stricter of the two, by one effect
+  rather than seven. The paper's related-work paragraph says the same.
+- **SPEC.md 7.1** states the default, which it did not.
+
+### Tests
+
+`check_sandbox.py` gains five cases: a program that writes a file and
+one that reaches the network, each refused with no `--allow` at all;
+the refusal's own text, which must name the effect, what the run
+allows and the flag; `--allow all`, which must run the same program
+and print its warning; and `--deny` with no `--allow`, which must
+narrow the default rather than widen it. `check_library.py` gains
+fourteen: `run()` with no `allow` refused and its message checked,
+`run(allow="all")` and the seven names spelled out, a bounded run's
+child, a pool made with no `allow`, and one that compares the budget
+the command line, the library, the pool and both doors start from and
+fails unless all five are `io`.
+
+Every suite and both fresh-venv legs pass: `run_tests.py`,
+`check_library.py`, `check_sandbox.py`, `check_money.py`,
+`check_termination.py`, `check_pool.py`, `check_ratchet.py`,
+`check_platform.py`, `check_refusals.py`, `check_fallible.py`,
+`velaris conformance` at L1, L2 and L3, `fuzz_native.py 30`,
+`benchmark --quick --check`, `velaris test examples/std_test.vel`,
+`velaris fmt --check` and `velaris capabilities check`.
+
 ## 4.4 - A platform that lets its customers write code it can audit
 
 A minor version. Every program that compiled under 4.3.4 compiles, runs

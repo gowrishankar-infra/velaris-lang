@@ -3,12 +3,15 @@
 Run code you did not write.
 
 ```
-npx velaris-lang script.vel --allow io
+npx velaris-lang script.vel
 ```
 
 That program cannot read a file, reach the network or call Python -
 whatever its source says about itself - and a refusal cannot be caught
-and carried past.
+and carried past. A run with no `--allow` gets `io` (5.0), so that is
+the default rather than something you have to remember; widen it by
+naming what the program needs, and `--allow all` grants every effect
+and says so on stderr.
 
 ```javascript
 import { audit, run } from "velaris-lang";

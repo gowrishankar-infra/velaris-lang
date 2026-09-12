@@ -111,6 +111,30 @@ HOW THE PACKAGE WAS MADE AND CHECKED (2026-09-11)
   packages the paper loads are standard ones. If arXiv's form suggests
   a processor other than pdflatex, change it to pdflatex.
 
+REBUILT 2026-09-12 (velaris-lang 5.0.0)
+  velaris-lang 5.0.0 made `io` the budget a run gets when nobody writes
+  one, where every version this paper measured granted all seven
+  effects. Nothing the paper measures changes - the benchmark always
+  passed an explicit budget, and rerunning it at 5.0.0 moved no verdict
+  and no number in Table 1 - but three passages in velaris.md said the
+  old thing and now say what changed and when: the related-work
+  paragraph on WASI, the one on Boruna, and the reproducibility
+  section's list of releases that postdate the paper. The paper still
+  describes v4.2.1 and velaris-spec v0.5.1, and the measured numbers
+  are unchanged.
+
+  velaris.tex is pandoc output and was regenerated, not edited, with
+  pandoc 3.11 and the same command as step 1 above. It differs from the
+  previous one by those three passages alone. velaris.bbl is unchanged:
+  no citation was added or removed.
+
+  NOT YET RE-CHECKED as steps 2 and 3: the three passages are longer
+  than what they replace by about twelve lines of body text, so the
+  page count needs confirming before upload. Run pdflatex, bibtex,
+  pdflatex, pdflatex with the .bib beside it, then velaris.tex and
+  velaris.bbl alone in an empty folder, pdflatex twice, no bibtex; if
+  the result is not 11 pages, change the Comments field above to match.
+
 REBUILT 2026-09-12 (velaris-lang 4.3.4)
   velaris.md gained a paragraph at the top of the reproducibility
   section saying which two tags the paper describes (v4.2.1 and

@@ -83,23 +83,30 @@ def _fetch(url) -> str:
 
 
 def escape(id, name, source, *, allow=None, deny=None, refused,
-           creates=None, stdout=(), requires=(), spec=(),
+           creates=None, stdout=(), stderr=(), requires=(), spec=(),
            not_in_corpus=None):
     """A program that must be refused with `refused`, print none of
     MARKERS, create nothing at `creates`, and print each of `stdout`
-    before the refusal."""
+    before the refusal.
+
+    `stderr` holds words the refusal itself must carry. It is about
+    this implementation's messages, which STABILITY.md does not hold
+    stable and the corpus never compares, so a case using it says so
+    with `not_in_corpus`."""
     return dict(id=id, name=name, source=source.lstrip(), allow=allow,
                 deny=deny, args=[], refused=refused, creates=creates,
-                stdout=list(stdout), requires=list(requires),
+                stdout=list(stdout), stderr=list(stderr),
+                requires=list(requires),
                 spec=list(spec), not_in_corpus=not_in_corpus)
 
 
 def honest(id, name, source, *, allow=None, deny=None, args=(), stdout=(),
-           requires=(), spec=(), not_in_corpus=None):
+           stderr=(), requires=(), spec=(), not_in_corpus=None):
     """A program that must run to its end and print each of `stdout`."""
     return dict(id=id, name=name, source=source.lstrip(), allow=allow,
                 deny=deny, args=list(args), refused=None, creates=None,
-                stdout=list(stdout), requires=list(requires),
+                stdout=list(stdout), stderr=list(stderr),
+                requires=list(requires),
                 spec=list(spec), not_in_corpus=not_in_corpus)
 
 
@@ -213,13 +220,63 @@ fn main() uses io, fs {
     print("CARRIED ON")
 }
 ''', allow="io", refused="E310", spec=["6 G3"]),
+    # ---- the default budget (5.0). A run with no --allow gets io;
+    # before 5.0 it got all seven effects and none of these was refused.
+    escape("default-refuses-fs", "a program that writes a file, with no "
+           "--allow at all", '''
+fn main() uses io, fs {
+    write_file("{ROOT}/wrote.txt", "escaped")
+    print("WROTE IT")
+}
+''', refused="E310", creates="{ROOT}/wrote.txt",
+        not_in_corpus="a run given no budget is outside the format "
+                      "(velaris-spec 4.6); what it grants is the "
+                      "reference's choice, which from 5.0 is io"),
+    escape("default-refusal-names-the-effect-and-the-flag", "the refusal "
+           "under the default says which effect and how to grant it", '''
+fn main() uses io, fs {
+    write_file("{ROOT}/wrote.txt", "escaped")
+    print("WROTE IT")
+}
+''', refused="E310", creates="{ROOT}/wrote.txt",
+        stderr=["needs the 'fs' effect", "it allows: io",
+                "--allow io,fs"],
+        not_in_corpus="about the wording of this implementation's "
+                      "messages, which STABILITY.md does not hold "
+                      "stable and the corpus never compares"),
+    escape("default-refuses-net", "a program that reaches the network, "
+           "with no --allow at all", '''
+fn main() uses io, net {
+    check fetch_status("http://127.0.0.1:{PORT_A}/") {
+        ok code {
+            print("REACHED IT")
+        }
+        fail why {
+            print("SWALLOWED THE REFUSAL")
+        }
+    }
+}
+''', refused="E310",
+        not_in_corpus="a run given no budget is outside the format "
+                      "(velaris-spec 4.6); what it grants is the "
+                      "reference's choice, which from 5.0 is io"),
     escape("deny-one", "denying one effect while allowing the rest", '''
 fn main() uses io, fs {
     write_file("{ROOT}/wrote.txt", "escaped")
     print("WROTE IT")
 }
-''', deny="fs", refused="E310", creates="{ROOT}/wrote.txt",
-        spec=["4.4", "6 G2"]),
+''', allow="io,fs", deny="fs", refused="E310",
+        creates="{ROOT}/wrote.txt", spec=["4.4", "6 G2"]),
+    escape("deny-narrows-the-default", "--deny narrows what the default "
+           "granted; it does not widen it back to every effect", '''
+fn main() uses io, fs {
+    write_file("{ROOT}/wrote.txt", "escaped")
+    print("WROTE IT")
+}
+''', deny="net", refused="E310", creates="{ROOT}/wrote.txt",
+        not_in_corpus="a denial with no grants narrows the runtime's "
+                      "default budget (velaris-spec 4.4, 4.6), which "
+                      "the format leaves to the runtime"),
     escape("ffi-module-outside-list",
            "reaching a module outside the ffi allow-list", '''
 fn main() uses io, ffi {
@@ -285,7 +342,8 @@ fn main() uses io, net {
         }
     }
 }
-''', deny="fs,net,ffi", refused="E310", spec=["4.4", "6 G2"]),
+''', allow="io,fs,net,ffi", deny="fs,net,ffi", refused="E310",
+        spec=["4.4", "6 G2"]),
     # 3.3: an ffi:M grant is bounded to the module a call actually
     # reaches, not merely the one it names. The attribute chain is checked
     # step by step; an object owned by a module outside the grants is
@@ -500,16 +558,28 @@ fn main() uses io, ffi {
     }
 }
 ''', allow="io,ffi:math", stdout=["root ok"], not_in_corpus=PYTHON_HOST),
-    honest("no-budget-given", "everything when nothing is restricted", '''
+    # 5.0: a run with no --allow gets io - print and read a line, and
+    # nothing else. Before 5.0 it got all seven effects, and this case
+    # asserted that it did.
+    honest("default-budget-is-io", "a run with no --allow may print", '''
+fn main() uses io {
+    print("all fine")
+}
+''', stdout=["all fine"],
+        not_in_corpus="a run given no budget is outside the format "
+                      "(velaris-spec 4.6); what it grants is the "
+                      "reference's choice, which from 5.0 is io"),
+    honest("allow-all-still-grants-everything", "--allow all grants what "
+           "a run with no budget used to get", '''
 fn main() uses io, clock, rand {
     if now() > 0 and random(6) >= 0 {
         print("all fine")
     }
 }
-''', stdout=["all fine"],
-        not_in_corpus="a run given no budget is outside the format "
-                      "(velaris-spec 4.6); what it grants is the "
-                      "reference's choice, not a rule"),
+''', allow="all", stdout=["all fine"],
+        stderr=["--allow all grants every effect"],
+        not_in_corpus="`all` is this command line's shorthand, not part "
+                      "of the budget grammar the corpus tests"),
     # 3.3: the reach check must not break honest deep access inside a
     # granted module, and must let a grant of two modules use both.
     honest("ffi-deep-attribute-inside-grant",
@@ -566,7 +636,7 @@ fn main() uses io {
 fn main() uses io {
     print(format("args: {}", args()))
 }
-''', deny="fs,net", args=["only"], stdout=["args: [only]"],
+''', allow="io", deny="fs,net", args=["only"], stdout=["args: [only]"],
         not_in_corpus="about this command line's flags: the corpus gives "
                       "a run its budget and its arguments separately"),
 
@@ -770,6 +840,7 @@ def main() -> int:
         shouted = [w for w in MARKERS if w in out]
         missing = [s for s in case["stdout"]
                    if fill(s, values) not in out]
+        missing += [s for s in case["stderr"] if fill(s, values) not in err]
         if escaped:
             print(f"  ESCAPED      {case['name']} (it created the file)")
             failed += 1
@@ -796,6 +867,7 @@ def main() -> int:
     for case in HONEST:
         code, out, err = run(case, values, root)
         missing = [s for s in case["stdout"] if fill(s, values) not in out]
+        missing += [s for s in case["stderr"] if fill(s, values) not in err]
         if code == 0 and not missing:
             print(f"  ok runs      {case['name']}")
             passed += 1

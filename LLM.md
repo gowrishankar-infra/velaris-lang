@@ -20,7 +20,12 @@ effects it may perform, whether it can fail, and promises a theorem
 prover checks before the program runs.
 
 Files end in `.vel`. Execution starts at `main`. Run with
-`velaris program.vel`. Check without running: `velaris check program.vel`.
+`velaris program.vel`, which grants `io` - print, read a line, read
+the arguments - and refuses every other effect at run time. A program
+that needs a file, a host, the clock, randomness, the environment or
+Python has to be run with `--allow` naming it: `velaris program.vel
+--allow io,fs:read:./data`. Check without running:
+`velaris check program.vel`.
 
 ## The whole syntax
 
@@ -404,9 +409,15 @@ now() uses clock                   random(n) uses rand
 ## Running and inspecting
 
 ```
-velaris program.vel                      run it
-velaris program.vel --allow io           refuse every other effect (E310)
-velaris program.vel --deny net,ffi       allow everything but these
+velaris program.vel                      run it; since 5.0 it gets io -
+                                         print, read_line, args - and
+                                         every other effect is refused
+                                         (E310), whatever the source says
+velaris program.vel --allow io,fs:read:./data
+                                         grant exactly this and no more
+velaris program.vel --allow all          every effect; one line to stderr
+velaris program.vel --allow all --deny net,ffi
+                                         everything but these
 velaris program.vel --allow io,ffi:math,json
                                          ffi for THOSE modules only (E311
                                          for any other); plain ffi grants

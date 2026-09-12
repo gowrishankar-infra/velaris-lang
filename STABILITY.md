@@ -10,9 +10,12 @@ A change to any of these is a breaking change, and ships only in a
 major version.
 
 - **The language**: its syntax and semantics as [SPEC.md](SPEC.md)
-  states them. A program that compiles and runs under 4.x compiles,
-  runs and means the same under every later 4.x, with the one
-  exception under *The prover's reach* below.
+  states them. A program that compiles and runs under 5.x compiles,
+  runs and means the same under every later 5.x, with the one
+  exception under *The prover's reach* below. What a run is *allowed*
+  to do is the operator's budget, not the language, and the budget a
+  run gets when nobody writes one changed in 5.0 - see *Breaks we have
+  made*.
 - **The error codes** in `velaris.ERROR_TABLE`, and what each means.
   The [errors page](https://gowrishankar-infra.github.io/velaris-lang/errors.html)
   is built from that table.
@@ -39,6 +42,8 @@ major version.
 - **The command line**: the command names, the flags documented for
   them (`velaris` with no arguments prints them, and README and
   EMBEDDING.md describe them), and the exit codes those documents give.
+  The budget a command line with no `--allow` installs is part of this,
+  and 5.0 changed it.
 
 ## What it does not cover
 
@@ -82,7 +87,7 @@ it now shows false (E700), a call it shows can break a `requires`
 shows can be zero (E706). Each such program could already fail while
 running, with the matching runtime error, for the input the prover
 names. This is the one way a program that compiled under 4.x can be
-refused by a later 4.x, and the CHANGELOG names each release that does
+refused by a later 5.x, and the CHANGELOG names each release that does
 it. 4.3 widened it once: a division whose divisor mentions a loop's
 values is translated when the loop's condition and invariants show the
 divisor positive. 4.3.1 widened it again, not by translating more but
@@ -99,8 +104,8 @@ function named like one of those is still never reached.
 
 ## Breaks we have made
 
-The README has promised semantic versioning since 2.2. 2.0, 3.0 and
-4.0 broke things in major versions, as promised; the rest below did
+The README has promised semantic versioning since 2.2. 2.0, 3.0, 4.0
+and 5.0 broke things in major versions, as promised; the rest below did
 not. None of them is being undone - the versions are published - and
 this section exists so the record is whole and so the rules above are
 applied from 4.0 on.
@@ -172,3 +177,31 @@ exceed the operator's `--max-timeout` and `--max-memory-mb`, 30 seconds
 and 512 MB by default, and must be numbers; and `velaris serve
 --max-memory-mb`, which on Linux and macOS capped the door's own
 process, is now the most each run may have.
+
+**5.0 (major), 2026-09-12.** A run given no budget gets `io` - the
+console, and nothing else - where it got all seven effects.
+`velaris file.vel`, `velaris.run(source)` with no `allow`, and
+`velaris.Pool(...)` with no `allow` are all affected; the two doors
+were already `io` (the MCP server in 3.4, the HTTP door in 4.0), and
+this is the release that makes every place a budget comes from answer
+the same way. `--deny` now narrows what `--allow` gave rather than
+starting from all seven, so `--deny net` alone leaves `io` where it
+left six effects. **The reason**: the one question a capability
+language has to get right is what an operator gets when they say
+nothing, and until 5.0 the answer was "everything". Every claim this
+project makes about running code you have not read depended on the
+operator having written a budget, and THREAT_MODEL.md, the README's
+related-work paragraph and the paper all conceded the point against
+WASI, whose modules reach nothing unless handed something. Prior art
+made it plain: Boruna's default policy grants nothing.
+
+A 4.x user has to change: every command, script, CI step, notebook
+cell and library call that runs a program needing more than `io` and
+did not say so. `velaris migrate --to 5.0 [path]` reads a program or a
+tree, works out the narrowest budget each program needs from its own
+audit, and prints the command to run it under 5.0; `--write` updates
+the shell scripts and CI files it can parse and names the lines it
+left alone. `--allow all` is the explicit way to ask for what a run
+used to get, and writes one line to standard error when it is used.
+The refusal a program now meets names the effect, what the run does
+allow, and the flag that would grant it.

@@ -105,7 +105,7 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 </style></head><body>
 <nav><div class="in"><a class="brand" href="index.html">
 <span class="dot"></span>Velaris</a><a href="index.html" class="">Home</a><a href="tutorial.html" class="here">Tutorial</a><a href="spec.html" class="">Reference</a><a href="library.html" class="">Library</a><a href="errors.html" class="">Errors</a><a href="floats.html" class="">Floats</a><a href="playground.html" class="">Playground</a>
-<span class="ver">v4.4.0</span></div></nav>
+<span class="ver">v5.0.0</span></div></nav>
 <main class=""><h1>Velaris in an hour</h1>
 <br>
 <p>Velaris is a language where a function&#x27;s first line tells you</p>
@@ -345,7 +345,10 @@ import &quot;lib/geo.vel&quot; as geo         // geo.distance(a, b)
 <h2>10. The tools</h2>
 <br>
 <pre><code>
-velaris program.vel          run it
+velaris program.vel          run it, with io and nothing else
+velaris program.vel --allow io,fs:read:./data   grant exactly that
+velaris program.vel --allow all                every effect (it says so)
+velaris migrate --to 5.0 .   the budget each program here needs
 velaris check program.vel    compile it without running
 velaris explain program.vel  what each function does, needs and promises
 velaris explain .            the same for a whole project

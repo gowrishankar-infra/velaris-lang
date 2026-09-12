@@ -92,7 +92,7 @@ New in v1.9: a REPL - try Velaris line by line.
 
 New in v1.8: a real install.
     pip install .          (from a clone; add [full] for proofs + native)
-    velaris program.vel    (the command, anywhere)
+    velaris program.vel    (the command, anywhere; it gets io - 5.0)
     import "std.vel" now finds the shipped standard library from any
     folder - imports check relative-to-your-file first, then stdlib.
 
@@ -138,10 +138,15 @@ New in v1.0: the testers' release.
     * --version prints the version.
 
 Usage:
-  velaris program.vel                      run a program (after pip install)
+  velaris program.vel                      run a program (after pip install);
+                                           it gets io - print and read_line -
+                                           and every other effect is refused
   velaris repl                             interactive session
-  velaris <file> --allow io                refuse every other effect
-  velaris <file> --deny net,ffi            allow everything but these
+  velaris <file> --allow io,fs:read:./data grant exactly this, nothing else
+  velaris <file> --allow all               every effect; says so on stderr
+  velaris <file> --allow all --deny net    every effect but these
+  velaris migrate --to 5.0 [path]          the budget each program needs, and
+        [--write]                          the command to run it under 5.0
   velaris fmt program.vel                  format to the canonical style
   velaris check program.vel                compile only, do not run
   velaris check f.vel --strict             refuse any promise left to runtime
@@ -194,7 +199,7 @@ Usage:
   velaris verify                           the same check, older spelling
   velaris lsp                              language server (for editors)
   velaris version                          print the version
-  python velaris.py program.vel            run a program
+  python velaris.py program.vel            run a program (it gets io)
   python velaris.py program.vel --json     errors as machine-readable JSON
   python velaris.py program.vel --time     show how long the run took
   python velaris.py program.vel --no-native  force the interpreter
@@ -279,14 +284,14 @@ Design rules:
   * Errors are friendly for humans AND structured (JSON) for AI agents.
 
 Usage:
-  python3 velaris.py program.vel          # run a program
+  python3 velaris.py program.vel          # run a program (it gets io)
   python3 velaris.py program.vel --json   # errors come out as JSON too
 """
 
 import json
 import os
 
-VERSION = "4.4.0"
+VERSION = "5.0.0"
 import re
 import sys
 from dataclasses import dataclass, field
@@ -1413,7 +1418,16 @@ FALLIBLE_BUILTINS = {"to_int", "read_file", "fetch", "post",
 PROGRAM_ARGS: list = []    # filled by the CLI: velaris prog.vel a b c
 
 ALL_EFFECTS = ("io", "env", "fs", "net", "clock", "rand", "ffi")
-EFFECT_BUDGET: set = set(ALL_EFFECTS)   # everything, unless you say less
+
+# The default budget, since 5.0: the console and nothing else. A run
+# given no budget used to get all seven effects, which made the one
+# thing a capability language must get right - what an operator gets
+# when they say nothing - the widest answer instead of the narrowest.
+# io rather than nothing so that a refused program can still say why it
+# stopped; CHANGELOG 5.0 says why that trade was made.
+DEFAULT_ALLOW = "io"
+ALLOW_ALL = "all"                       # the CLI shorthand for every effect
+EFFECT_BUDGET: set = {DEFAULT_ALLOW}    # io, unless you say otherwise
 FFI_MODULES: set | None = None          # None = any module; a set = only
                                         # these top-level packages
 
@@ -1424,6 +1438,31 @@ OP_LIMITS: dict = {"fs": None, "net": None}   # None = unlimited
 OP_COUNTS: dict = {"fs": 0, "net": 0}
 EFFECT_USES: dict = {}     # effect -> how many builtin calls the budget let
                            # through this run; what the doors log (3.4)
+
+
+def expand_allow(spec: str) -> str:
+    """`all`, written on its own, as the seven effects; anything else
+    unchanged.
+
+    `all` is an operator's shorthand on a command line (`--allow all`,
+    `--max-allow all`), not part of the budget grammar of SPEC.md 7.1 -
+    so a caller sending a budget over the HTTP door or the MCP server
+    cannot write it, and `Budget.parse` never sees it. It exists because
+    5.0 made `io` the default: there has to be a way to ask for what a
+    run used to get, and it has to be written down when it is used.
+    """
+    return ",".join(ALL_EFFECTS) if spec.strip() == ALLOW_ALL else spec
+
+
+def warn_allow_all(where: str = "velaris") -> None:
+    """One line to stderr when an operator asks for every effect.
+
+    Not a refusal and not advice: a record, where whoever is watching
+    the terminal or the log can see it.
+    """
+    print(f"{where}: --allow all grants every effect "
+          f"({', '.join(ALL_EFFECTS)}); nothing this run does will be "
+          f"refused by the budget", file=sys.stderr)
 
 
 class BudgetError(ValueError):
@@ -1571,6 +1610,16 @@ class Budget:
                 b.modules = None           # every module; the wider grant
             elif item in ALL_EFFECTS:
                 b.effects.add(item)
+            elif item == ALLOW_ALL:
+                # `all` is the command line's shorthand and is expanded
+                # before a budget is parsed (expand_allow), so reaching
+                # here means it was written among other grants, or sent
+                # by a caller over a door, where it is not a grant
+                raise BudgetError(
+                    f"'{ALLOW_ALL}' is not an effect. On a command line "
+                    f"write it on its own - --allow {ALLOW_ALL} - which "
+                    f"grants {', '.join(ALL_EFFECTS)}; in a budget "
+                    f"alongside other grants, name the effects you want")
             else:
                 raise BudgetError(
                     f"'{item}' is not an effect. They are: "
@@ -1710,6 +1759,19 @@ class Budget:
         g["OP_LIMITS"] = dict(self.limits)
         g["OP_COUNTS"] = {"fs": 0, "net": 0}
         g["EFFECT_USES"] = {}
+
+    @classmethod
+    def current(cls) -> "Budget":
+        """The budget this run is under, read back from what install()
+        wrote. Nothing new is stored for it, so a pool worker has one
+        less piece of state to put back between programs."""
+        b = cls()
+        b.effects = set(EFFECT_BUDGET)
+        b.modules = FFI_MODULES
+        b.fs = None if FS_GRANTS is None else list(FS_GRANTS)
+        b.net = None if NET_GRANTS is None else list(NET_GRANTS)
+        b.limits = dict(OP_LIMITS)
+        return b
 
     @staticmethod
     def snapshot() -> dict:
@@ -1860,6 +1922,44 @@ def parse_budget(spec: str) -> tuple:
     want those two; the scoped grants live on Budget.parse(spec)."""
     b = Budget.parse(spec)
     return b.effects, b.modules
+
+
+def _flag_value(argv: list, flag: str) -> str | None:
+    """The word after `flag`, or None when the flag is absent; a flag
+    written last, with nothing after it, is a budget error rather than
+    an IndexError."""
+    if flag not in argv:
+        return None
+    i = argv.index(flag)
+    if i + 1 >= len(argv):
+        raise BudgetError(f"{flag} needs a value after it")
+    return argv[i + 1]
+
+
+def cli_budget(argv: list) -> "Budget":
+    """The budget a command line asks for: --allow, then --deny.
+
+    Since 5.0, no --allow means `io` - the console and nothing else -
+    where it used to mean all seven effects. --deny narrows whatever
+    --allow gave, so `--deny net` no longer grants fs and ffi by the
+    back door; `--allow all` is the one way to ask for everything, and
+    says so on stderr when it is used.
+    """
+    asked = _flag_value(argv, "--allow")
+    if asked is None:
+        asked = DEFAULT_ALLOW
+    elif asked.strip() == ALLOW_ALL:
+        warn_allow_all()
+    budget = Budget.parse(expand_allow(asked))
+    denied = _flag_value(argv, "--deny")
+    if denied is not None:
+        names = [n.strip() for n in denied.split(",") if n.strip()]
+        for name in names:
+            if name not in ALL_EFFECTS:
+                raise BudgetError(f"'{name}' is not an effect. They are: "
+                                  f"{', '.join(ALL_EFFECTS)}")
+        budget.deny(names)
+    return budget
 
 
 def allow_path(kind: str, path: str, what: str, line: int) -> str:
@@ -2105,10 +2205,18 @@ def spend(effect: str, what: str, line: int) -> None:
     if effect in EFFECT_BUDGET:
         EFFECT_USES[effect] = EFFECT_USES.get(effect, 0) + 1
         return
+    # Since 5.0 a run with no --allow gets io, so this is the first
+    # thing many people meet after upgrading. It has to name the effect,
+    # say what the run does allow, and give the flag that grants it -
+    # the whole flag, with what was already granted kept.
+    have = Budget.current().spec()
+    wider = f"{have},{effect}" if have else effect
     raise VelarisError("E310",
         f"'{what}' needs the '{effect}' effect, which this run does not "
-        f"allow", line,
-        fixes=[f"allow it: velaris <file> --allow {effect}",
+        f"allow (it allows: {have or 'nothing'})", line,
+        fixes=[f"allow it: velaris <file> --allow {wider}",
+               f"a run with no --allow gets {DEFAULT_ALLOW} (5.0); "
+               f"--allow all grants every effect",
                "or use a program that does not need it"])
 
 INT_MIN, INT_MAX = -(2 ** 63), 2 ** 63 - 1
@@ -8782,7 +8890,10 @@ def serve_main(argv: list) -> int:
     # without --max-allow granted every effect, ffi included, to anyone
     # holding the token.
     try:
-        ceiling = Budget.parse(opts.get("--max-allow", "io"))
+        _asked_ceiling = opts.get("--max-allow", DEFAULT_ALLOW)
+        if _asked_ceiling.strip() == ALLOW_ALL:
+            warn_allow_all("velaris serve")
+        ceiling = Budget.parse(expand_allow(_asked_ceiling))
     except BudgetError as e:
         return refuse(f"--max-allow: {e}")
     max_allow = ceiling.effects
@@ -9084,6 +9195,248 @@ def serve_main(argv: list) -> int:
         httpd.server_close()
         pools.close()                     # no worker outlives the door
         log.close()
+    return 0
+
+
+MIGRATE_TO = ("5.0", "5", "5.0.0")
+
+# A line in a shell script or a CI file that runs a Velaris program:
+# the command, the .vel path, and whatever follows it. `velaris`,
+# `velaris run`, `python velaris.py` and `npx velaris-lang` all count.
+_RUNNER = r"(?:(?:python[0-9.]*\s+)?[\w./\\-]*velaris(?:\.py|-lang)?)"
+MIGRATE_LINE = re.compile(
+    r"^(?P<head>\s*(?:-\s+)?(?:run:\s*)?)"
+    r"(?P<cmd>" + _RUNNER + r"(?:\s+run)?)"
+    r"(?P<mid>\s+)"
+    r"(?P<file>[\w./\\-]+\.vel)"
+    r"(?P<tail>.*)$")
+
+# what stops a line being rewritten: another command after this one, a
+# substitution, or output sent somewhere. The flag would still parse,
+# but where it belongs on such a line is a guess, and this command does
+# not guess.
+MIGRATE_UNSURE = ("|", "&", ";", "`", "$(", ">>", "<")
+
+
+def migrate_needs(path: str) -> dict:
+    """What one program needs to keep running under 5.0.
+
+    The narrowest budget its own audit can write - the same grants
+    `safe_command` carries - or why it could not be worked out.
+    """
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            source = fh.read()
+    except OSError as e:
+        return {"path": path, "ok": False, "why": str(e), "allow": None}
+    try:
+        report = audit(source, path=path)
+    except Exception as e:                 # a file that does not parse
+        return {"path": path, "ok": False, "why": str(e), "allow": None}
+    if not report.ok:
+        first = report.problems[0] if report.problems else None
+        return {"path": path, "ok": False, "allow": None,
+                "why": (f"does not compile: [{first.code}] {first.message}"
+                        if first else "does not compile")}
+    grants = _safe_grants(report.effects, report.ffi_modules,
+                          {"read": sorted(report.fs_paths["read"]),
+                           "write": sorted(report.fs_paths["write"]),
+                           "read_any": report.fs_paths["read_any"],
+                           "write_any": report.fs_paths["write_any"]},
+                          {"hosts": sorted(report.net_hosts["hosts"]),
+                           "any": report.net_hosts["any"]})
+    return {"path": path, "ok": True, "allow": ",".join(grants),
+            "effects": list(report.effects),
+            # io alone, or no effect at all, is what 5.0 grants already
+            "enough": set(report.effects) <= {DEFAULT_ALLOW},
+            "warnings": list(report.warnings), "why": None}
+
+
+def _migrate_rewrite(text: str, needs: dict, root: str) -> tuple:
+    """One shell script or CI file with `--allow` added to every line
+    that runs a program this migration worked out a budget for.
+
+    Returns (new text, [what changed], [what was left alone and why]).
+    A line is rewritten only when all of it is understood: one command,
+    a .vel path that resolves to a program in `needs`, no budget flag
+    already on it, and nothing that would make the end of the command
+    the wrong place for a flag.
+    """
+    changed, skipped, out = [], [], []
+    for n, line in enumerate(text.split("\n"), 1):
+        m = MIGRATE_LINE.match(line)
+        if not m:
+            out.append(line)
+            continue
+        out.append(line)
+        if "--allow" in line or "--deny" in line:
+            continue                        # already says what it needs
+        target = m.group("file").replace("\\", "/")
+        found = None
+        for cand in (os.path.normpath(os.path.join(root, target)),
+                     os.path.normpath(target)):
+            found = needs.get(os.path.normcase(os.path.abspath(cand)))
+            if found is not None:
+                break
+        if found is None:
+            skipped.append((n, line.strip(),
+                            f"no program of this checkout at {target}"))
+            continue
+        if not found["ok"]:
+            skipped.append((n, line.strip(), f"{target}: {found['why']}"))
+            continue
+        if found["enough"]:
+            continue                        # io, which 5.0 grants anyway
+        if any(c in line for c in MIGRATE_UNSURE):
+            skipped.append((n, line.strip(),
+                            "more than one command on the line, or its "
+                            "input or output moved: add --allow "
+                            + found["allow"] + " by hand"))
+            continue
+        # after the file name, before the program's own arguments, which
+        # is where the command line reads flags and where a reader of
+        # the script looks for them
+        out[-1] = (m.group("head") + m.group("cmd") + m.group("mid")
+                   + m.group("file") + f" --allow {found['allow']}"
+                   + m.group("tail"))
+        changed.append((n, target, found["allow"]))
+    return "\n".join(out), changed, skipped
+
+
+MIGRATE_WRITABLE = (".sh", ".bash", ".yml", ".yaml")
+
+
+def migrate_main(argv: list) -> int:
+    """velaris migrate --to 5.0 [path] [--write] [--json]
+
+    What every program under `path` needs to keep running under 5.0,
+    where a run with no --allow gets `io` instead of all seven effects
+    (STABILITY.md, "Breaks we have made"). It reads; it writes nothing
+    unless --write is given, and then only shell scripts and CI files
+    it can parse with no guessing, and it says what it left alone.
+    """
+    if "--to" not in argv:
+        print("usage: velaris migrate --to 5.0 [path] [--write] [--json]",
+              file=sys.stderr)
+        return 2
+    at = argv.index("--to")
+    want = argv[at + 1] if at + 1 < len(argv) else ""
+    if want not in MIGRATE_TO:
+        print(f"velaris migrate knows how to migrate to 5.0, not "
+              f"{want or '(nothing)'}", file=sys.stderr)
+        return 2
+    flags = {"--write", "--json"}
+    rest = [a for i, a in enumerate(argv)
+            if i not in (at, at + 1) and a not in flags]
+    write, as_json = "--write" in argv, "--json" in argv
+    unknown = [a for a in rest if a.startswith("-")]
+    if unknown:
+        print(f"velaris migrate: unknown argument '{unknown[0]}'",
+              file=sys.stderr)
+        return 2
+    target = rest[0] if rest else "."
+
+    if os.path.isdir(target):
+        root = target
+        programs = [os.path.join(target, f.replace("/", os.sep))
+                    for f in _capability_files(target)]
+    elif os.path.exists(target):
+        root = os.path.dirname(target) or "."
+        programs = [target]
+    else:
+        print(f"no such file or folder: {target}", file=sys.stderr)
+        return 1
+
+    rows = [migrate_needs(p) for p in sorted(programs)]
+    by_path = {os.path.normcase(os.path.abspath(r["path"])): r
+               for r in rows}
+
+    wrote, untouched = [], []
+    if write:
+        for dp, dirs, files in os.walk(root):
+            dirs[:] = sorted(d for d in dirs if d != ".git")
+            for f in sorted(files):
+                if not f.endswith(MIGRATE_WRITABLE):
+                    continue
+                full = os.path.join(dp, f)
+                try:
+                    with open(full, "r", encoding="utf-8") as fh:
+                        before = fh.read()
+                except (OSError, UnicodeDecodeError) as e:
+                    untouched.append((full, 0, str(e)))
+                    continue
+                after, changed, skipped = _migrate_rewrite(
+                    before, by_path, root)
+                untouched += [(full, n, why) for n, _, why in skipped]
+                if changed and after != before:
+                    with open(full, "w", encoding="utf-8",
+                              newline="") as fh:
+                        fh.write(after)
+                    wrote.append((full, changed))
+
+    def command_for(r: dict) -> str:
+        shown = r["path"].replace(os.sep, "/")
+        return (f"velaris {shown}" if r["enough"]
+                else f"velaris {shown} --allow {r['allow']}")
+
+    if as_json:
+        print(json.dumps({
+            "schema": "velaris.migrate/1", "velaris_version": VERSION,
+            "to": "5.0", "root": root.replace(os.sep, "/"),
+            "programs": [
+                {"path": r["path"].replace(os.sep, "/"), "ok": r["ok"],
+                 "allow": r["allow"], "why": r["why"],
+                 "command": command_for(r) if r["ok"] else None}
+                for r in rows],
+            "written": [{"file": f.replace(os.sep, "/"),
+                         "lines": [{"line": n, "program": p, "allow": a}
+                                   for n, p, a in ch]}
+                        for f, ch in wrote],
+            "not_written": [{"file": f.replace(os.sep, "/"), "line": n,
+                             "why": why} for f, n, why in untouched],
+        }, indent=2))
+        return 0
+
+    print(f"velaris migrate --to 5.0   ({len(rows)} program(s) under "
+          f"{root.replace(os.sep, '/')})")
+    print("a run with no --allow gets io from 5.0; before, it got all "
+          "seven effects.")
+    print("=" * 68)
+    needs_more = [r for r in rows if r["ok"] and not r["enough"]]
+    fine = [r for r in rows if r["ok"] and r["enough"]]
+    broken = [r for r in rows if not r["ok"]]
+    for r in needs_more:
+        print(f"\n{r['path'].replace(os.sep, '/')}")
+        print(f"    uses:  {', '.join(r['effects'])}")
+        print(f"    run:   {command_for(r)}")
+        for w in r["warnings"]:
+            print(f"    note:  {w}")
+    if fine:
+        print(f"\n{len(fine)} program(s) need nothing: they use io or no "
+              f"effect at all, which 5.0 grants.")
+    if broken:
+        print(f"\n{len(broken)} file(s) the budget could not be worked "
+              f"out for:")
+        for r in broken:
+            print(f"    {r['path'].replace(os.sep, '/')}: {r['why']}")
+    if write:
+        print()
+        if wrote:
+            for f, changed in wrote:
+                print(f"wrote {f.replace(os.sep, '/')}")
+                for n, p, a in changed:
+                    print(f"    line {n}: {p} --allow {a}")
+        else:
+            print("wrote nothing: no line in a shell script or CI file "
+                  "needed a budget added.")
+        if untouched:
+            print(f"\nleft alone ({len(untouched)}), for you to read:")
+            for f, n, why in untouched:
+                where = f.replace(os.sep, "/")
+                print(f"    {where}{':' + str(n) if n else ''}: {why}")
+    else:
+        print("\nnothing was changed. --write updates the shell scripts "
+              "and CI files it can parse, and says what it did not.")
     return 0
 
 
@@ -9473,6 +9826,13 @@ def main() -> int:
             print("usage: velaris test program.vel", file=sys.stderr)
             return 1
         target = argv[1]
+        # a test function performs effects like any other, so it runs
+        # under a budget: io unless --allow says more (5.0)
+        try:
+            cli_budget(argv).install()
+        except BudgetError as e:
+            print(str(e), file=sys.stderr)
+            return 2
         try:
             funcs, records = load_program(target)
             errs: list = []
@@ -9724,6 +10084,8 @@ def main() -> int:
               + (f", {n_imp} imported" if n_imp else "")
               + ", no problems found.")
         return 0
+    if argv[:1] == ["migrate"]:
+        return migrate_main(argv[1:])
     if argv[:1] == ["doctor"]:
         return doctor()
     if argv[:1] == ["new"]:
@@ -9742,25 +10104,18 @@ def main() -> int:
         return 1
     filename = sys.argv[1]
     as_json = "--json" in sys.argv
-    if "--allow" in sys.argv or "--deny" in sys.argv:
-        try:
-            budget = Budget.parse(sys.argv[sys.argv.index("--allow") + 1]
-                                  if "--allow" in sys.argv
-                                  else ",".join(ALL_EFFECTS))
-        except BudgetError as e:
-            print(str(e), file=sys.stderr)
-            return 2
-        if "--deny" in sys.argv:
-            names = [n.strip() for n in
-                     sys.argv[sys.argv.index("--deny") + 1].split(",")
-                     if n.strip()]
-            for name in names:
-                if name not in ALL_EFFECTS:
-                    print(f"'{name}' is not an effect. They are: "
-                          f"{', '.join(ALL_EFFECTS)}", file=sys.stderr)
-                    return 2
-            budget.deny(names)
-        budget.install()
+    # A budget is always installed, and without --allow it is io (5.0).
+    # Before 5.0 this whole block was skipped when neither flag was
+    # given, and the run kept the module-level budget - all seven
+    # effects. --deny now narrows whatever --allow gave, which with no
+    # --allow is io, so no flag combination gets back to everything
+    # except by asking for it: --allow all.
+    try:
+        budget = cli_budget(sys.argv)
+    except BudgetError as e:
+        print(str(e), file=sys.stderr)
+        return 2
+    budget.install()
     # args() is the program's arguments - never the flags this command
     # took for itself. Until 2.62 `--allow io` leaked in as two words.
     FLAGS = {"--json", "--no-native", "--time", "--check", "--no-cache"}
@@ -10254,6 +10609,11 @@ def run(source: str, *, path: str | None = None,
     about itself. A refused effect stops the program and is reported in
     refused_effect; it cannot be caught by the program.
 
+    allow=None is the same io: the console and nothing else. That is a
+    change in 5.0, where it used to grant all seven effects. To ask for
+    every effect, say so - allow="all", which writes one line to stderr,
+    or allow=set(velaris.ALL_EFFECTS).
+
     timeout (seconds) and max_memory_mb bound the OTHER two things a
     program can do to the machine that runs it: spin forever, or eat
     memory. With either set, the program runs in a separate process
@@ -10349,10 +10709,26 @@ def _run_in_process(source, *, path, budget, args, stdin,
 
 def _budget_from(allow, deny) -> "Budget":
     """The library's allow= / deny= as a Budget; a bad grant is a
-    ValueError before anything runs."""
+    ValueError before anything runs.
+
+    allow=None is `io` since 5.0 - the same default the command line
+    has - where it used to be all seven effects. run(), a bounded run
+    and Pool all come through here, so they all have it. The way to ask
+    for everything is to say so: allow="all", or the seven names.
+    """
+    if allow is not None and not isinstance(allow, str):
+        if {str(a).strip() for a in allow} == {ALLOW_ALL}:
+            allow = ALLOW_ALL          # allow={"all"}, a set of one
+    if isinstance(allow, str):
+        asked = expand_allow(allow)
+        if allow.strip() == ALLOW_ALL:
+            warn_allow_all("velaris.run")
+    elif allow is None:
+        asked = DEFAULT_ALLOW
+    else:
+        asked = ",".join(sorted(allow))
     try:
-        budget = Budget.parse(",".join(sorted(ALL_EFFECTS)) if allow is None
-                              else ",".join(sorted(allow)))
+        budget = Budget.parse(asked)
     except BudgetError as e:
         raise ValueError(str(e))
     unknown = set(deny or ()) - set(ALL_EFFECTS)
@@ -10982,7 +11358,8 @@ class Pool:
 
     * THE BUDGET IS THE POOL'S, NOT THE PROGRAM'S. It is parsed once,
       here, and installed by each worker at startup; `run` on a pool
-      takes no allow argument. A caller who needs a different budget
+      takes no allow argument. allow=None is `io` from 5.0, as it is
+      everywhere else, where it used to be all seven effects. A caller who needs a different budget
       makes a different pool. Nothing a program does can widen it: the
       budget is re-asserted from this object before every program,
       which also puts the per-run operation counts (@N) back to zero,

@@ -105,7 +105,7 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 </style></head><body>
 <nav><div class="in"><a class="brand" href="index.html">
 <span class="dot"></span>Velaris</a><a href="index.html" class="">Home</a><a href="tutorial.html" class="">Tutorial</a><a href="spec.html" class="here">Reference</a><a href="library.html" class="">Library</a><a href="errors.html" class="">Errors</a><a href="floats.html" class="">Floats</a><a href="playground.html" class="">Playground</a>
-<span class="ver">v4.4.0</span></div></nav>
+<span class="ver">v5.0.0</span></div></nav>
 <main class="wide"><h1>The Velaris language reference</h1>
 <br>
 <p>This is the specification: what Velaris means, precisely. It is not a</p>
@@ -325,6 +325,16 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 <p>or <code>allow=</code> in the library, and enforced by the runtime at the moment</p>
 <p>an effect is attempted, whatever the source declares. A refusal stops</p>
 <p>the program and cannot be caught.</p>
+<br>
+<p>An operator who writes no budget gets <code>io</code> - the console, and nothing</p>
+<p>else. That is the default in 5.0 for <code>velaris file.vel</code>,</p>
+<p><code>velaris.run(source)</code> with no <code>allow</code>, <code>velaris.Pool(...)</code> with no</p>
+<p><code>allow</code>, and the ceilings of both doors. Before 5.0 the first three</p>
+<p>granted all seven effects. <code>--deny</code> narrows whatever <code>--allow</code> gave,</p>
+<p>so a denial alone narrows <code>io</code>; <code>--allow all</code> is a command-line</p>
+<p>shorthand for the seven effects, written by the operator and never</p>
+<p>read from a caller&#x27;s budget, and it writes one line to standard error</p>
+<p>when it is used.</p>
 <br>
 <p>A grant names an effect, and may narrow it:</p>
 <br>

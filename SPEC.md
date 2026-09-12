@@ -218,6 +218,16 @@ or `allow=` in the library, and enforced by the runtime at the moment
 an effect is attempted, whatever the source declares. A refusal stops
 the program and cannot be caught.
 
+An operator who writes no budget gets `io` - the console, and nothing
+else. That is the default in 5.0 for `velaris file.vel`,
+`velaris.run(source)` with no `allow`, `velaris.Pool(...)` with no
+`allow`, and the ceilings of both doors. Before 5.0 the first three
+granted all seven effects. `--deny` narrows whatever `--allow` gave,
+so a denial alone narrows `io`; `--allow all` is a command-line
+shorthand for the seven effects, written by the operator and never
+read from a caller's budget, and it writes one line to standard error
+when it is used.
+
 A grant names an effect, and may narrow it:
 
 | Grant | Permits |

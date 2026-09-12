@@ -1,5 +1,7 @@
 // v2.25: reaching the outside world, visibly.
 //
+// velaris examples/ffi.vel --allow ffi:base64,builtins,datetime,io
+//
 // Velaris can call Python, which means it can reach every library
 // Python has - but only through a function that says 'uses ffi'. A
 // pure function still cannot do it, and neither can anything it

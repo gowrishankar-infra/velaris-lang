@@ -253,7 +253,10 @@ from contextlib import redirect_stdout, redirect_stderr
 spec = importlib.util.spec_from_file_location("velaris", "/velaris.py")
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
-sys.argv = ["velaris.py", "/prog.vel", "--no-native"]
+# io: what every example here needs, and all a page in a browser can
+# use. It is also the default from 5.0; saying it keeps the page from
+# depending on that.
+sys.argv = ["velaris.py", "/prog.vel", "--allow", "io", "--no-native"]
 o, e = io.StringIO(), io.StringIO()
 try:
     with redirect_stdout(o), redirect_stderr(e):

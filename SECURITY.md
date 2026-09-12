@@ -45,12 +45,14 @@ and the report is treated as a security issue and fixed within a week:
    list read the compiler passed that then fails with E403 or E602
    without a runtime-check warning having been issued.
 
-2. **Escape `--allow io`.** A program run with `velaris program.vel
-   --allow io` (or `velaris.run(source, allow={"io"})`) that reads or
-   writes a file, reaches the network, or calls a Python module -
-   including one outside a named `ffi:` list - and carries on.
-   Reading the environment through `env()` does not count: `io`
-   includes it, and THREAT_MODEL.md says so.
+2. **Escape `io`.** A program run with `velaris program.vel` (which
+   grants `io` and nothing else from 5.0), with `--allow io`, or with
+   `velaris.run(source, allow={"io"})` or `allow=None`, that reads or
+   writes a file, reaches the network, reads the environment, or calls
+   a Python module - including one outside a named `ffi:` list - and
+   carries on. `args()` and `read_line()` do not count: `io` is the
+   console, and THREAT_MODEL.md says so. Since 3.0 `env` is its own
+   effect, so `env()` under `io` alone is a refusal like the rest.
 
 There is no money. There is credit, in the file every reader sees, and
 a fix within the week, recorded in the changelog with what was found

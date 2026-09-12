@@ -237,7 +237,10 @@ standard library is written in Velaris and keeps its own promises:
 ## 10. The tools
 
 ```
-velaris program.vel          run it
+velaris program.vel          run it, with io and nothing else
+velaris program.vel --allow io,fs:read:./data   grant exactly that
+velaris program.vel --allow all                every effect (it says so)
+velaris migrate --to 5.0 .   the budget each program here needs
 velaris check program.vel    compile it without running
 velaris explain program.vel  what each function does, needs and promises
 velaris explain .            the same for a whole project
