@@ -250,7 +250,7 @@ velaris script.vel                    the command (io unless you say more)
 import velaris                        a Python library
 velaris mcp-install                   tools inside your assistant
 velaris.mcpb                          double-click install for Claude Desktop
-uses: gowrishankar-infra/velaris-lang a GitHub Action, findings as SARIF
+uses: gowrishankar-infra/velaris-lang a GitHub Action, findings in the Security tab
 velaris capabilities check            CI fails when the capability surface widens
 velaris serve                         an HTTP door for any language, token required
 npx velaris-lang script.vel           npm, for the JavaScript world
@@ -557,92 +557,146 @@ velaris proofs . --min 80   # fails the build below 80%
 
 ## Using Velaris in CI
 
+The GitHub Action audits the **Velaris programs** in a repository - its
+`.vel` files - and reports what they may touch to GitHub code scanning.
+It does not read Python, JavaScript, Go or anything else: a repository
+with no `.vel` file prints `no .vel files found` and the job is green.
+The case it serves is narrow, and it is the one this language exists
+for - an agent wrote a script, the script is in Velaris, and the
+effects it declared and the promises it did not prove should land in
+the Security tab rather than in a reviewer's head.
+
+Copy this into `.github/workflows/velaris.yml`:
+
 ```yaml
+name: velaris
+on: [push, pull_request]
+
 permissions:
   contents: read
-  security-events: write       # for sarif, the default
-  pull-requests: write         # only for pr-comment
+  security-events: write     # so the findings reach code scanning
 
-steps:
-  - uses: actions/checkout@v5
-  - uses: gowrishankar-infra/velaris-lang@v4.3.3
+jobs:
+  velaris:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: gowrishankar-infra/velaris-lang@v5.0.1
+```
+
+That is the whole workflow. With no `with:` block the Action installs
+Velaris and the prover, checks every `.vel` file in the repository,
+fails the job if one does not compile or carries a promise the prover
+refutes, and uploads its findings as SARIF 2.1.0 with
+`github/codeql-action/upload-sarif`, pinned to a commit. A private
+repository needs code scanning enabled; set `sarif: "false"` if it has
+neither that nor `security-events: write`. On a pull request from a
+fork the job's token cannot upload, so that step is skipped - the file
+is still written, and its path is the `sarif-file` output. The findings
+print to the job log either way.
+
+### What appears in the Security tab
+
+One alert per finding, on the line that caused it, with a link to its
+row on the
+[errors page](https://gowrishankar-infra.github.io/velaris-lang/errors.html).
+These are the rule IDs, and a real message from each:
+
+| rule | level | what an alert says |
+|---|---|---|
+| `E300` | error | `function 'fetch' calls 'read_file' which needs effect 'fs', but 'fetch' declares no effects (it is pure)` |
+| `E520` | error | `'to_int' can fail - that cannot be ignored` |
+| `E700` | error | `promise cannot be kept: 'discount' ensures result >= 0 - proven without running the program: price = 9 gives result = -1` |
+| `E701` | error | `this call can break a promise: 'discount' requires price >= 0, but 'main' can call it with price = -3 - proven without running the program` |
+| `unproven-promise` | warning | `'count_rows': ensures result >= 0 - not proven before running; checked while the program runs` |
+| `contract-coverage` | note | `'total' takes or returns data and promises nothing about it` |
+| `capability-widened` | error | `net is needed by sync.vel, not in the surface of velaris.capabilities (a new effect, net)` |
+| `capability-effect-gained` | error | `'main' now declares net, which it did not in velaris.capabilities: net: calls pull at line 6, which declares net` |
+| `capability-narrowed` | note | `surface: "net" is no longer needed` - the baseline gives more than the code needs; `capabilities init --force` records the narrower surface |
+
+Every code in the compiler's error table is a rule of its own, so a
+parse error (`E1xx`), an unknown function (`E200`) or a type error
+(`E5xx`) arrives the same way; `E3xx` are the effect codes and `E7xx`
+the prover's. Under `check --strict` an unproven promise is an `error`
+rather than a warning, and a loop not shown to end is `E612`. The
+`uses-io`, `uses-fs` and `loop-not-shown-to-end` notes come from
+`velaris audit --sarif`, which the Action does not run; `pr-comment`
+below is where the Action reports those.
+
+Velaris's suggested fixes are sentences, while a SARIF `fix` must hold
+the exact bytes to change, so they travel in each result's
+`properties.fixes` rather than as SARIF fixes with an edit made up to
+fill the slot.
+
+### The budget a repository declares
+
+`velaris capabilities init` records the capability surface a
+repository's `.vel` files need - effects, paths, hosts, Python modules,
+how many file and network operations a run can perform, and each
+function's effects - in `velaris.capabilities`; commit it. From then on
+the Action runs `velaris capabilities check` on every push and fails
+any change that needs more, naming what widened, the file, function and
+line that introduced it, and the edit to the baseline that would accept
+it. Those are the `capability-*` rows above, and they go to code
+scanning beside the check's.
+
+The comparison is always with that file, never with the previous
+commit: capability added across many small commits, none alarming by
+itself, fails at every one of them until someone widens the file, where
+the change shows in review. A pull request that deletes
+`velaris.capabilities` fails too, since that would turn the ratchet
+off; `capabilities: "off"` in the workflow is the way to turn it off,
+where the change is visible. Without the file the ratchet is simply
+off. [EMBEDDING.md](EMBEDDING.md) has the rules; `check_ratchet.py`
+holds them, including a six-commit history that fails only at the
+commit that reaches the network.
+
+### Everything else the Action takes
+
+```yaml
+  - uses: gowrishankar-infra/velaris-lang@v5.0.1
     with:
-      files: "src/*.vel"     # optional; default is every .vel file
-      format: "true"         # optional; also check formatting
-      min-proven: "80"       # optional; fail below this proven share
-      pr-comment: "true"     # optional; audit every changed .vel on the PR
+      files: "src/*.vel"     # default: every .vel file in the repository
+      version: "5.0.1"       # default: the newest on PyPI
+      proofs: "true"         # the default; installs z3-solver
+      format: "true"         # also fail if the code is not canonically formatted
+      min-proven: "80"       # fail below this percent of promises proven
+      pr-comment: "true"     # audit every changed .vel on the pull request
       sarif: "true"          # the default; findings to code scanning
       capabilities: "check"  # the default once velaris.capabilities exists
 ```
 
-**The capability ratchet (4.0).** `velaris capabilities init` records
-the capability surface a repository's `.vel` files need - effects,
-paths, hosts, Python modules, how many file and network operations a
-run can perform, and each function's effects - in
-`velaris.capabilities`; commit it. From then on the action runs
-`velaris capabilities check` and fails any change that needs more,
-naming what widened, the file, function and line that introduced it,
-and the edit to the baseline that would accept it. The comparison is
-always with that file, never with the previous commit: capability
-added across many small commits, none alarming by itself, fails at
-every one of them until someone widens the file, where the change
-shows in review. With `pr-comment` the comment also reviews the pull
-request against its base - surface, proven share, new fallible
-functions, new hosts and paths - with a one-word risk computed from
-those facts. [EMBEDDING.md](EMBEDDING.md) has the rules;
-`check_ratchet.py` holds them, including a six-commit history that
-fails only at the commit that reaches the network.
+With `pr-comment: "true"` on a `pull_request` event the Action posts one
+comment holding the `velaris audit` of every `.vel` file the pull
+request changes - effects and Python modules reached, proven share, the
+safe command, and warnings such as a loop not shown to end - and edits
+that same comment on later runs instead of adding another. The comment
+also carries the ratchet's result and a `velaris review` of the branch
+against its base: surface, proven share, new fallible functions, new
+hosts and paths, and a one-word risk computed from those facts alone.
+It uses the REST API with the job's own `GITHUB_TOKEN`, so the job needs
+`permissions: pull-requests: write`. The audit is posted whether or not
+the checks passed; a file that does not compile is reported as such.
 
-With `sarif` on - the default from 3.4 - the check writes its findings
-as SARIF 2.1.0 and uploads them with `github/codeql-action/upload-sarif`,
-pinned to a commit, so they appear in the repository's Security tab and
-on the lines of a pull request. The job needs
-`permissions: security-events: write`, and a private repository needs
-code scanning enabled; set `sarif: "false"` if it has neither. On a
-pull request from a fork the job's token cannot upload, so the step is
-skipped there; the file is still written, and its path is the action's
-`sarif-file` output. The findings still print to the job log either way.
-
-The same output without the action, for SonarQube
-(`sonar.sarifReportPaths`), Azure DevOps or anything else that reads
-SARIF:
+The same SARIF without the Action, for SonarQube
+(`sonar.sarifReportPaths`), Azure DevOps or anything else that reads it:
 
 ```
 velaris check src/*.vel --sarif > velaris.sarif   # exit 1 as the plain check
 velaris proofs src --sarif > proofs.sarif         # promises left to runtime
 velaris audit src --sarif > audit.sarif           # what each function may touch
+velaris capabilities check --sarif > caps.sarif   # what widened past the baseline
 ```
 
-One run, driver `Velaris` with its version and a rule for every code in
-the compiler's error table, each with a help link to its row on the
-[errors page](https://gowrishankar-infra.github.io/velaris-lang/errors.html),
-plus a rule for each finding that is not an error. Each result has the
-file, the line and Velaris's message. Errors are `error`; a promise left
-to runtime is a `warning` (an `error` under `check --strict`); a function
-that promises nothing about the data it handles, a loop not shown to end,
-and each effect a function may perform (`audit`) are `note`. Velaris's
-suggested fixes are sentences, while a SARIF `fix` must hold the exact
-bytes to change, so they travel in each result's `properties.fixes`
-rather than as SARIF fixes with an edit made up to fill the slot.
+One run, driver `Velaris` with its version, and a rule for every code in
+the error table plus the findings that are not errors. Each result has
+the file, the line and Velaris's message.
 
 Or without installing anything:
 
 ```
 docker run --rm -v "$PWD:/work" velaris check /work/main.vel
 ```
-
-Installs Velaris with the prover and fails the build if anything does
-not compile or a promise cannot be kept.
-
-With `pr-comment: "true"` on a `pull_request` event the action posts
-one comment holding the `velaris audit` of every `.vel` file the pull
-request changes - effects and Python modules reached, proven share,
-the safe command, and any warnings such as a loop not shown to end -
-and edits that same comment on later runs instead of adding another.
-It uses the REST API with the job's own `GITHUB_TOKEN`, so the job
-needs `permissions: pull-requests: write`. The audit is posted whether
-or not the checks passed; a file that does not compile is reported as
-such.
 
 What a reviewer should read before allowing agent-written Velaris to
 run: [THREAT_MODEL.md](THREAT_MODEL.md), [COMPLIANCE.md](COMPLIANCE.md)

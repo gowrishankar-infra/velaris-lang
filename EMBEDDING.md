@@ -693,7 +693,7 @@ permissions:
 
 steps:
   - uses: actions/checkout@v5
-  - uses: gowrishankar-infra/velaris-lang@v4.0.0
+  - uses: gowrishankar-infra/velaris-lang@v5.0.1
     with:
       min-proven: "80"
       pr-comment: "true"
