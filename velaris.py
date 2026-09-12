@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Velaris v2.36 — "The language where you can trust code you didn't write."
+Velaris — "The language where you can trust code you didn't write."
 
 New in v2.36: examples/linkcheck.vel - a tool worth running, not a
     demonstration - and network failures that say what happened
@@ -286,7 +286,7 @@ Usage:
 import json
 import os
 
-VERSION = "4.3.4"
+VERSION = "4.4.0"
 import re
 import sys
 from dataclasses import dataclass, field
@@ -9734,7 +9734,11 @@ def main() -> int:
         print(f"Velaris {VERSION}")
         return 0
     if len(sys.argv) < 2:
-        print(__doc__)
+        # the docstring carries no version of its own, so this cannot go
+        # stale: until 4.4 it opened "Velaris v2.36", which is what a
+        # reader of `velaris` with no arguments was told they were running
+        print((__doc__ or "").replace("Velaris —", f"Velaris {VERSION} —",
+                                      1))
         return 1
     filename = sys.argv[1]
     as_json = "--json" in sys.argv

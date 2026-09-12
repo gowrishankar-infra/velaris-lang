@@ -284,6 +284,24 @@ first. `check_pool.py` asserts each of those, including a program that
 widens its own budget through `ffi` and cannot widen it for the next
 one. The rules are stated in full in [EMBEDDING.md](EMBEDDING.md).
 
+## A platform whose customers write the rules
+
+[`examples/platform/`](examples/platform/) is that pattern as a small
+FastAPI service, in one file. A customer submits Velaris source; the
+service audits it, stores it with its capability surface, and answers
+with what it declares — effects, hosts, paths, modules, the proven
+share, its contracts function by function, and the narrowest budget that
+would run it. It does not run it. A surface wider than the platform
+permits is refused there, naming the grants that would have to be added.
+Running happens on a `velaris.Pool` whose budget is the platform's.
+
+Submit [`examples/discount.vel`](examples/discount.vel) and the answer
+says `"proven_share": 100.0` with `"status": "proven"` on every promise,
+including the two that matter to whoever is taking the payment: the
+discount is never a surcharge, and what is left is never negative. That
+is the sentence a platform can show a customer before offering to enable
+a rule, and it is not one a sandbox can produce.
+
 ## Written by a model, audited by you, run in a box
 
 ```
@@ -324,6 +342,7 @@ velaris examples/edges.vel      # 20 boundary, property and round-trip checks
 python check_refusals.py        # 21 wrong programs, each refused correctly
 python check_sandbox.py         # 34 escape attempts, each refused with its code
 python check_pool.py            # a pool must leak nothing between programs
+python check_platform.py        # the reference platform refuses what it says it does
 python check_ratchet.py         # every widening fails, nothing else does
 velaris conformance             # velaris-spec's 444-case corpus, L1 to L3
 ```

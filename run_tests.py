@@ -153,6 +153,28 @@ def check_versions() -> None:
                   f"the VS Code extension says {c}")
             raise SystemExit(1)
 
+    # the registry manifest carries the version three times - its own and
+    # one per package - and every one of them is published
+    reg = root / "integrations" / "mcp_registry" / "server.json"
+    if reg.exists():
+        doc = _j.loads(reg.read_text(encoding="utf-8"))
+        said = [doc["version"]] + [p["version"] for p in doc["packages"]]
+        if any(v != a for v in said):
+            print(f"VERSION MISMATCH: velaris.py says {a}, "
+                  f"the MCP registry manifest says {said}")
+            raise SystemExit(1)
+
+    # and what the compiler says it is when it is run with no arguments.
+    # Until 4.4 that line was frozen at the version its docstring was
+    # written in, and said 2.36 however old that became.
+    printed = subprocess.run([sys.executable, str(root / "velaris.py")],
+                             capture_output=True, text=True).stdout
+    first = next((ln for ln in printed.splitlines() if ln.strip()), "")
+    if f"Velaris {a}" not in first:
+        print(f"VERSION MISMATCH: velaris.py with no arguments opens "
+              f"{first!r}, not 'Velaris {a}'")
+        raise SystemExit(1)
+
 
 def main() -> int:
     check_versions()

@@ -2,7 +2,7 @@
   "name": "velaris",
   "displayName": "Velaris",
   "description": "Velaris language support: syntax highlighting, and live errors and proofs from the real compiler.",
-  "version": "4.3.4",
+  "version": "4.4.0",
   "publisher": "gowrishankar-infra",
   "engines": {
     "vscode": "^1.75.0"

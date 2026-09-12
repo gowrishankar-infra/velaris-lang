@@ -1,5 +1,73 @@
 # Velaris changelog
 
+## 4.4 - A platform that lets its customers write code it can audit
+
+A minor version. Every program that compiled under 4.3.4 compiles, runs
+and means the same; nothing is added to the language, the capability
+surface or any document format. What is added is an example: the pattern
+a SaaS team would copy to let its own customers write Velaris.
+
+**`examples/platform/` is that pattern in one file.** A small FastAPI
+service, under 200 lines, with three endpoints. `POST /scripts` takes a
+customer's source, audits it, stores it with its capability surface and
+answers with what it declares - the effects it may perform transitively,
+the hosts and paths it names, the Python modules it reaches, the most
+file and network operations one run can make, its proven share, its
+contracts function by function, and the narrowest budget that would run
+it. It does not run it. `GET /scripts/{id}` is that declaration again,
+as a customer would be shown it before enabling anything. `POST
+/scripts/{id}/run` runs it on a `velaris.Pool` whose budget is the
+platform's, and answers with the output, or what the budget refused, or
+which limit stopped it.
+
+**A surface wider than the platform permits is refused at submission.**
+The service holds what the audit derived against one budget constant
+with `Budget.covers`, which names the first thing that does not fit, and
+the refusal carries the grants an operator would have to add. A script
+that reads a file is refused with `would_need_granting: ["fs:read"]`. A
+script that builds its host while running is refused too, because the
+audit cannot read a value the text does not fix and says plain `net`
+rather than guessing - where the same program with the host written out
+is accepted as `net:api.example.com`. The gate compares what a script
+may touch and not how much of it: an audit bounds operations only where
+the text fixes them, and the count is the pool's to hold either way.
+
+**The pool does not depend on the gate having been right.** They are
+separate guards, and the example is written so that is visible: the
+budget is parsed once when the pool is made, `pool.run` takes no `allow`
+argument, each worker installs the budget before the program is read,
+and a refusal cannot be caught. `check_platform.py` puts a script
+straight into the store, past submission entirely, and asserts the run
+is still refused with E310. A bug in a platform's gate is not a bug in
+its containment, and that is the property worth copying.
+
+**The worked example is the proven discount.** Submitting
+`examples/discount.vel` answers `"proven_share": 100.0` with `"status":
+"proven"` on every promise, including the two a platform taking the
+payment cares about: the discount is never a surcharge, and what is left
+after it is never negative, for every basket and every rule the types
+allow. `examples/discount_bad.vel` - the same rule with one guard
+deleted - never reaches storage: submission answers E700 with the basket
+and rule that break it. No sandbox can produce either answer, and it is
+the answer a platform needs before it offers to enable a rule it did not
+write.
+
+**fastapi is a dependency of the example, never of Velaris.** It is not
+in `[project.dependencies]` and the wheel does not ship `examples/`. It
+joins `jsonschema` in the `[test]` extra, which exists so the suites can
+run, and `check_platform.py` skips cleanly when it is absent.
+
+**`velaris` with no arguments reports the version it is.** It prints the
+module docstring, whose first line named a version - and that line had
+said `Velaris v2.36` since the docstring was written, so every reader
+since has been told they were running a compiler two major versions old.
+The docstring now carries no version of its own and the running version
+is filled in when it is printed, which cannot go stale. `run_tests.py`
+checks that line against `VERSION` like every other place a version
+lives, and now checks the MCP registry manifest as well - it carries the
+version three times, its own and one per package, and all three are
+published, and until now nothing held them to the compiler.
+
 ## 4.3.4 - The npm wrapper picks the right Python, and says when it cannot
 
 A patch version. Every program that compiled under 4.3.3 compiles, runs

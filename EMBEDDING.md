@@ -141,6 +141,34 @@ HTTP door each keep one. The CrewAI and LangChain tools stay on plain
 `run`: a crew's tool is not called often enough to need a pool, and one
 process per call is easier to reason about.
 
+## A platform whose customers write Velaris
+
+[`examples/platform/`](examples/platform/) puts `audit` and `Pool`
+together in the shape a SaaS team would copy - a FastAPI service in one
+file, under 200 lines:
+
+```
+POST /scripts           audit the source, store it with its capability
+                        surface, answer with what it declares. No run.
+GET  /scripts/{id}      that declaration, as a customer is shown it
+POST /scripts/{id}/run  on a pool whose budget is the platform's
+```
+
+Two guards, and they are not the same guard. The audit is a read of the
+text, and submission is refused when what a script declares is wider
+than the platform permits - `Budget.covers` names the first thing that
+does not fit, and the response lists the grants an operator would have
+to add. The pool is the enforcement, and does not depend on the gate
+having been right: `check_platform.py` puts a script straight into the
+store, past the gate entirely, and asserts the run is still refused.
+
+Submitting [`examples/discount.vel`](examples/discount.vel) answers with
+`"proven_share": 100.0` and `"status": "proven"` on each of its
+promises. That is what the pattern is for: a platform can tell a
+customer, before enabling a rule it did not write, that the rule can
+never return a negative total. fastapi is a dependency of the example,
+never of Velaris.
+
 ## What `run` guarantees
 
 `allow={"io"}` means the program cannot read a file, reach the
