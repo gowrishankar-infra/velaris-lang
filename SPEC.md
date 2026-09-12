@@ -48,7 +48,7 @@ a typed `let` (E506, E507).
 ## 3. Types
 
     Int  Float  Bool  Text  Handle
-    Money of CUR             (an amount in a currency, §4.4)
+    Money of CUR             (an amount in a currency, §4.3)
     List of T
     Map of K to V            (K is Text or Int)
     fn(T, ...) -> R          (a function value; pure only)
