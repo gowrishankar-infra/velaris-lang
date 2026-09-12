@@ -1301,6 +1301,35 @@ def main() -> int:
         ok(f"{' '.join(flags)} stops the MCP server at start",
            bad.returncode == 2 and flags[0] in bad.stderr, bad.stderr[:120])
 
+    # `velaris mcp` (4.3.3) is an alias for this same server and nothing
+    # else. The MCP registry entry for the npm package tells a client to
+    # start the server with `npx velaris-lang mcp`, which becomes
+    # `velaris mcp`, so if the two spellings ever diverge the registry is
+    # handing clients a launch command that does not do what it says.
+    hello = ('{"jsonrpc":"2.0","id":1,"method":"initialize","params":'
+             '{"protocolVersion":"2024-11-05","capabilities":{},'
+             '"clientInfo":{"name":"check","version":"1"}}}\n')
+    direct = subprocess.run(
+        [sys.executable, str(HERE / "velaris_mcp.py")],
+        input=hello, capture_output=True, text=True, timeout=120)
+    aliased = subprocess.run(
+        [sys.executable, str(HERE / "velaris.py"), "mcp"],
+        input=hello, capture_output=True, text=True, timeout=120)
+    ok("velaris mcp answers initialize exactly as python -m velaris_mcp "
+       "does, so the two spellings are one server",
+       aliased.returncode == direct.returncode
+       and aliased.stdout == direct.stdout
+       and '"serverInfo"' in aliased.stdout,
+       (aliased.stdout or aliased.stderr)[:160])
+    aliased_bad = subprocess.run(
+        [sys.executable, str(HERE / "velaris.py"), "mcp",
+         "--max-timeout", "0"],
+        input="", capture_output=True, text=True, timeout=120)
+    ok("velaris mcp hands the server its flags, and a bad one stops it "
+       "with the server's own message, not a second one",
+       aliased_bad.returncode == 2 and "--max-timeout" in aliased_bad.stderr,
+       aliased_bad.stderr[:160])
+
     print()
     print("a signed manifest of the MCP tools (3.4)")
     print("-" * 62)

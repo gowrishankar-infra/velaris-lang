@@ -533,7 +533,7 @@ permissions:
 
 steps:
   - uses: actions/checkout@v5
-  - uses: gowrishankar-infra/velaris-lang@v4.3.2
+  - uses: gowrishankar-infra/velaris-lang@v4.3.3
     with:
       files: "src/*.vel"     # optional; default is every .vel file
       format: "true"         # optional; also check formatting

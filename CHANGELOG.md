@@ -1,5 +1,48 @@
 # Velaris changelog
 
+## 4.3.3 - velaris mcp, so the npm package can start the server too
+
+A patch version. Every program that compiled under 4.3.2 compiles, runs
+and means the same; nothing is added to the language, the capability
+surface or any document format. One subcommand is added, and it is an
+alias.
+
+**`velaris mcp` starts the MCP server.** Until now the only way in was
+`python -m velaris_mcp`, which an MCP client can only use if it knows
+where the module sits. `velaris mcp` reaches the same server through
+the console script, and because the npm wrapper passes its arguments
+straight to `python -m velaris`, `npx velaris-lang mcp` reaches it too.
+
+It is a thin alias and deliberately nothing more: it hands
+`velaris_mcp.main` the arguments after `mcp` and returns what it
+returns. The flags, the four tools, the `--max-allow` ceiling, the
+timeout and memory ceilings and the invocation log are the server's,
+parsed by the server; there is no second copy of any of them here, and
+an unknown flag produces the server's own usage message. The one place
+the alias is not transparent is `--max-memory-mb`, which for `mcp` -
+as for `serve` - is the most each run may have and not a cap on the
+server process, so it is excluded from the early self-cap the way
+`serve` already was. `check_library.py` pins both halves: that
+`velaris mcp` answers `initialize` byte for byte as `python -m
+velaris_mcp` does, and that a bad flag stops it with the server's
+message.
+
+**The MCP registry entry now declares the npm package.** With
+`velaris mcp` in place, `npx velaris-lang mcp` genuinely starts an MCP
+server, so `integrations/mcp_registry/server.json` declares the npm
+package beside the PyPI one, and `npm/package.json` carries the
+`mcpName` the registry checks for npm ownership. It was left out of
+4.3.2 on purpose, because until this version the npm package could not
+start a server and declaring it would have handed clients a launch
+command that started the language CLI instead.
+
+Worth knowing before you rely on it: the npm package is a wrapper, not
+a copy. It finds a Python that can import `velaris` and calls it, so
+`npx velaris-lang mcp` still needs `pip install velaris-lang`, and if
+the Python it finds holds an older Velaris than the wrapper, the
+subcommand will not be there. That is how the wrapper has always
+chosen a Python and this version does not change it.
+
 ## 4.3.2 - The card's true size, and a registry manifest on the current schema
 
 A patch version. Every program that compiled under 4.3.1 compiles, runs

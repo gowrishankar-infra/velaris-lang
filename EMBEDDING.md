@@ -264,6 +264,13 @@ box without leaving the conversation.
                             "args": ["-m", "velaris_mcp"]}}}
 ```
 
+Three spellings start the same server, and it is the same process
+whichever you use: `python -m velaris_mcp`, `velaris mcp` through the
+console script, and `npx velaris-lang mcp` through the npm wrapper -
+which calls the Python package, so it still needs
+`pip install velaris-lang`. Every flag below is the server's own and is
+taken by all three.
+
 Four tools: `velaris_card`, `velaris_check`, `velaris_audit` and
 `velaris_run` (which takes `allow`, defaulting to `["io"]`).
 

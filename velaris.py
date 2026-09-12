@@ -160,6 +160,10 @@ Usage:
   velaris audit program.vel                what it can touch, before you run it
   velaris audit <files or folders> --sarif what they can touch, as SARIF
   velaris card                             the language, for pasting into a model
+  velaris mcp [--max-allow G]              the MCP server on stdin/stdout,
+        [--max-timeout S]                  the same one python -m velaris_mcp
+        [--max-memory-mb M]                starts; grants at most io, 30 s and
+        [--log-file F] [--log minimal]     512 MB a run unless told otherwise
   velaris mcp-install                      set up the tools in your assistant
   velaris mcp-manifest -o tools.json       the MCP server's tools, hashed
   velaris mcp-verify tools.json            a running server against a signed
@@ -282,7 +286,7 @@ Usage:
 import json
 import os
 
-VERSION = "4.3.2"
+VERSION = "4.3.3"
 import re
 import sys
 from dataclasses import dataclass, field
@@ -9112,11 +9116,12 @@ def main() -> int:
         argv.remove(a)
         sys.argv = [sys.argv[0]] + argv
     if "--max-memory-mb" in argv and argv[:1] not in (
-            ["serve"], ["mcp-verify"], ["mcp-manifest"]):
+            ["serve"], ["mcp"], ["mcp-verify"], ["mcp-manifest"]):
         # before anything else this process does: a cap asked for late
         # is a cap that missed whatever was allocated first. Not for the
-        # door, whose --max-memory-mb is the most each run may have
-        # (4.0), and not for a server command handed to mcp-verify
+        # door or the MCP server, whose --max-memory-mb is the most each
+        # run may have (4.0), and not for a server command handed to
+        # mcp-verify
         at = argv.index("--max-memory-mb") + 1
         if at < len(argv):
             _cap_this_process(argv[at])
@@ -9247,6 +9252,30 @@ def main() -> int:
         return mcp_manifest_main(argv[1:])
     if argv[:1] == ["mcp-verify"]:
         return mcp_verify_main(argv[1:])
+
+    if argv[:1] == ["mcp"]:
+        # The same stdio server `python -m velaris_mcp` starts, reached
+        # through the console script - so `velaris mcp`, and through the
+        # npm wrapper `npx velaris-lang mcp`, start an MCP server without
+        # the client having to know where the module sits. A thin alias
+        # and nothing else: the flags, the tools, the ceilings and the
+        # log are velaris_mcp's, parsed by velaris_mcp, and there is no
+        # second set of them here.
+        here = os.path.dirname(os.path.abspath(__file__))
+        for where in (here, os.path.join(here, "..")):
+            script = os.path.join(where, "velaris_mcp.py")
+            if os.path.exists(script):
+                sys.path.insert(0, where)
+                import velaris_mcp
+                return velaris_mcp.main(argv[1:])
+        try:
+            import velaris_mcp
+            return velaris_mcp.main(argv[1:])
+        except ImportError:
+            print("the MCP server is not alongside this compiler; get it "
+                  "from https://github.com/gowrishankar-infra/velaris-lang",
+                  file=sys.stderr)
+            return 1
 
     if argv[:1] == ["mcp-install"]:
         here = os.path.dirname(os.path.abspath(__file__))
