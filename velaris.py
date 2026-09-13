@@ -296,7 +296,7 @@ Usage:
 import json
 import os
 
-VERSION = "7.1.0"
+VERSION = "7.1.1"
 import re
 import sys
 from dataclasses import dataclass, field
@@ -16473,9 +16473,12 @@ def _md(text) -> str:
 
 def _md_text(text) -> str:
     """The same, for the prose of a comment: no HTML, no @mention, no
-    line break."""
+    line break. The mention is broken with an entity for a zero-width
+    space rather than the character, so the text stays ASCII: 7.1.0 wrote
+    the character, and a console that is not UTF-8 - Windows' cp1252 -
+    stopped printing at it."""
     return (str(text).replace("&", "&amp;").replace("<", "&lt;")
-            .replace(">", "&gt;").replace("@", "@​")
+            .replace(">", "&gt;").replace("@", "@&#8203;")
             .replace("\r", " ").replace("\n", " "))
 
 
@@ -16698,10 +16701,12 @@ def _parse_lockfile(fmt: str, text) -> tuple:
             r"^(-i|--index-url|--extra-index-url)(\s|=|$)", ln)), None)
         if index:
             # pip takes a pin from whichever index has it, so no pin in
-            # this file is known to be PyPI's package
-            return out, [f"it sets a package index "
-                         f"({re.split(r'[\s=]', index)[0]}), so a pin may not "
-                         f"come from PyPI; its pins were not read"]
+            # this file is known to be PyPI's package. (The option is
+            # found outside the f-string: a backslash inside one is a
+            # syntax error before Python 3.12, and 7.1.0 shipped that.)
+            option = re.split(r"[\s=]", index)[0]
+            return out, [f"it sets a package index ({option}), so a pin may "
+                         f"not come from PyPI; its pins were not read"]
         for line in lines:
             m = re.match(r"^([A-Za-z0-9][A-Za-z0-9._-]*)(\[[^\]]*\])?\s*"
                          r"===?\s*([^\s;\\#]+)", line)

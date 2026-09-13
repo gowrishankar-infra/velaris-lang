@@ -1,5 +1,50 @@
 # Velaris changelog
 
+## 7.1.1 - 7.1.0 did not import on Python 3.10 or 3.11
+
+7.1.0, published earlier today, declares `requires-python >= 3.10` and
+does not import on Python 3.10 or 3.11. `velaris.py` held an f-string
+with a backslash inside a replacement field - `re.split(r'[\s=]', ...)`,
+in the lockfile reader added for `deps-diff` - which is a syntax error
+before Python 3.12, so every command, every library call and the MCP
+server fail at import there. CI caught it on all six Python 3.10 legs.
+The release had been verified locally before tagging, but only under
+Python 3.13, and a scan written to look for exactly this construct had
+a quoting mistake and checked nothing. The expression is now computed
+before the f-string, and every Python file in the repository compiles
+under Python 3.10.
+
+The second defect was in `deps-diff`'s pull-request comment. To keep an
+`@name` taken from a lockfile from mentioning anyone, 7.1.0 put a
+zero-width space after the `@` - the character itself. A console that is
+not UTF-8, such as the cp1252 of a Windows runner, cannot encode it, so
+`velaris deps-diff --markdown` failed at the first `@` in a report, and
+`check_deps.py` failed on both Windows Python 3.12 legs. The comment now
+carries the same character as an HTML entity, `&#8203;`, so the text is
+ASCII and GitHub still renders no mention. A comment posted with
+`--comment` was not affected: its body goes to the API as JSON, with
+anything outside ASCII escaped.
+
+Nothing else changed. A 7.1.0 user on Python 3.12 or later has nothing
+to change; on 3.10 or 3.11, 7.1.0 cannot have run, and 7.1.1 is the
+version to install.
+
+**Verified** before pushing. Every Python file in the repository
+compiles under Python 3.10.20, and under that interpreter, with
+`.[test]` installed and no prover, the whole list the 7.1 entry names
+passes with none wrong: `run_tests.py` 97/97, `check_sandbox.py` 57,
+`check_secret.py` 78, `check_pool.py` 39, `check_ratchet.py` 114,
+`check_deps.py` 54, `check_fallible.py` 29, `check_refusals.py` 15 with
+10 skipped for needing the prover, `check_library.py`,
+`check_money.py`, `check_platform.py`, `check_termination.py`,
+`fuzz_native.py 30`, conformance at L1, L2 and L3, the 456-case drift
+test, `benchmark/run.py --quick --check`, `velaris capabilities check .`,
+the formatter, and the docs and playground builds. Under Python 3.13
+with the console forced to cp1252 (`PYTHONIOENCODING=cp1252`),
+`check_deps.py` passes 54/54, and 7.1.0's escaping raises
+`UnicodeEncodeError` where 7.1.1's prints. The benchmark was not rerun:
+neither fix is on a path it takes, and its table is 7.1.0's.
+
 ## 7.1 - What an upgrade gained
 
 A dependency can change what it can do between two versions while its
