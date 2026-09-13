@@ -1,5 +1,5 @@
 name: "Velaris capability audit"
-description: "Report what a repository's Velaris programs may touch and what they leave unproven, as GitHub code scanning alerts. Velaris (.vel) files only."
+description: "Report what a repository's Velaris programs may touch and what they leave unproven, as GitHub code scanning findings."
 # name and description are what the Marketplace listing shows as its title and
 # tagline; the listing renders this repository's README below them. The name has
 # to be unique across the whole Marketplace - "Velaris" alone was already taken
