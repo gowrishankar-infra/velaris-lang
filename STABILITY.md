@@ -249,9 +249,14 @@ refuses any `if` or `while` on a value that carries a secret (E563),
 and refuses a secret to every fallible builtin (E560). Programs that
 compiled under 6.0 are refused, so it is a major version by rule 1.
 
-6.0.0 is not withdrawn. It was published to PyPI, tagged and signed,
-and moving a published version breaks whoever pinned it - the same
-reason 3.4 was not retagged. It is listed here as what it was: a
-release whose central feature had a hole, closed the same day it was
-found. What the rule bought is that the fix arrived as 7.0 rather than
-as 6.0.1, so nobody upgrades into a refusal without reading why.
+6.0.0 is yanked on PyPI, not deleted. It was published, tagged and
+signed, and deleting or moving a published version breaks whoever
+pinned it - the same reason 3.4 was not retagged. A yank does neither:
+an install pinned to `==6.0.0` still resolves and gets the same file,
+and an install that asks for anything looser no longer reaches it. That
+is the distinction that lets a bad release stay honest without breaking
+anyone who committed to it - it is still there, and listed here as what
+it was: a release whose central feature had a hole, closed the same day
+it was found. What the rule bought is that the fix arrived as 7.0
+rather than as 6.0.1, so nobody upgrades into a refusal without reading
+why.
