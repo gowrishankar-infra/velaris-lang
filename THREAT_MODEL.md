@@ -65,14 +65,17 @@ on.
 | Anyone who can reach the HTTP door's port running programs through it | A bearer token on every endpoint but `GET /health` (3.4), from `--token-file`, `VELARIS_TOKEN` or made and printed once; never taken as an argument. Compared in constant time; a missing, wrong or misplaced token is the same 401 on every path, unknown ones included. `VELARIS_TOKEN` is removed from the environment before any worker starts, so a program granted `env` cannot read it. `--no-auth` is refused on any host but `127.0.0.1`/`localhost` and warns on every start; without a token, a request must name a loopback `Host`, carry no foreign `Origin` and post JSON, which keeps a browser page off the door | `check_library.py` - no token, a wrong one, another scheme, a bare `Bearer` and the token in the query string are each 401 with identical bytes; `/card` and an unknown path are 401 too; the token is accepted; a program cannot read `VELARIS_TOKEN`; the made token is printed once and never logged; `--token` in both spellings and a bare value are refused without being repeated; `--no-auth` is refused on `0.0.0.0`, `::1` and another address, and on loopback refuses `text/plain`, a foreign `Host` and a foreign `Origin` |
 | A caller of either door asking for more than the operator allows | `--max-allow` on the MCP server (3.4) and the HTTP door, the same grammar and the same `Budget.covers`; `io` on both when the flag is absent - on the HTTP door from 4.0, where before a door started without it granted every effect, `ffi` included; a request past it at any level is refused with the ceilings named | `check_library.py` - fs and ffi refused under the default on both doors; a narrower path passes while a wider path, unscoped `fs`, another host, a larger count and another module are refused under a scoped ceiling; a ceiling that does not parse stops the server |
 | Capability added to a repository a little at a time - many commits, each harmless on its own, that together reach a new host, path, module or effect | The capability ratchet (4.0): `velaris.capabilities` records the surface the repository declares - every grant its programs need, the most fs and net operations a run can perform, and each function's effects - and `velaris capabilities check` fails when the code needs more. The comparison is with that file, never with the previous commit, so a widening merged once keeps failing until someone edits the file, and forty small steps are reported as their whole sum. The GitHub Action runs it when the file exists, and fails a pull request that deletes it | `check_ratchet.py` - a six-commit history whose sixth commit reaches a new host three calls down, failing only there and naming the file, function, line and call chain; a widening through an import and through the standard library; a path prefix, a count, a host made a wildcard, a computed URL, path and module; an effect added to a function while the program's grants stay the same; and changes that must pass - narrowing, reordering, reformatting, a file with no effects, a literal moved into a variable |
+| A Velaris dependency whose new version can do more than the old one - a new effect, a host or path inside an effect it already had, a Python module, more operations, a function that gained an effect - while the code that calls it stays the same and still compiles | `velaris deps-diff` (7.1) derives both versions' declared capability surfaces and holds the newer to the older with the ratchet's rules, naming what was gained and the file, line and call that introduced it. For a package that is not Velaris it reports install-time scripts added or changed and declared dependencies, and says the surface is unknown - see below for how little that is. The Action's `deps-diff` input runs it on every upgrade a pull request makes in a lockfile | `check_deps.py` - a library gaining net, a host inside net, a count, a module, a function's effect; one that narrows and one only rewritten, both not flagged; a JavaScript package whose new source reaches the network, reported as unknown with no host read off it; install scripts added and changed, including a changed file behind the same command and a registry manifest that hides the tarball's script; a version that does not exist; the SARIF; the pull-request comment edited, not duplicated; and benchmark category 12's four programs |
 | A tool description or schema changed under the client (tool poisoning, OWASP MCP Top 10 MCP03) | A manifest of every MCP tool's name, description hash and input-schema hash, made by the release workflow from the server in the published wheel and signed with sigstore; `velaris mcp-verify` checks the signature and reports every tool that differs, was added, or is missing | `check_library.py` - a server with a changed description, a changed schema and an added tool is reported for each, with exit 1; a manifest without a signature bundle, or with one that does not verify, stops the check (exit 2); the release workflow runs `mcp-verify` with the real signature against the server in the wheel before attaching the manifest |
 | Not knowing what the doors were asked to do | One JSON line per call on both doors (3.4): when, which door, the endpoint or tool, the outcome, the duration, the budget granted, the effects performed, what was refused and by what, and the source's sha256 - never the source or the token. No setting turns it off | `check_library.py` - one line per call on the HTTP door and on the MCP server, with neither the token, a wrong token nor any source in the file |
 
-On the 63-program benchmark (56 dangerous, 7 harmless), Velaris caught
-54 of the 56 - 42 before running and 12 while running - and flagged
-none of the 7. Under the same rules Deno caught 32 (5 before, 27
+On the 67-program benchmark (59 dangerous, 8 harmless), Velaris caught
+57 of the 59 - 45 before running and 12 while running - and flagged
+none of the 8. Under the same rules Deno caught 35 (5 before, 30
 during) and plain Python 28 (all while running). The two misses are
-named below.
+named below. Three of the 59 (category 12, 7.1) are dependency
+upgrades, and Velaris's catch before running there is `velaris
+deps-diff`, whose limits are also below.
 
 ## What it explicitly does NOT defend against
 
@@ -232,6 +235,29 @@ What follows is what is still not defended.
   written in the text has no bound. And the ratchet guards nothing if
   it is not required: a pull request that edits `velaris.capabilities`
   has accepted a widening, and the review of that edit is the control.
+- **What `velaris deps-diff` does not see.** It sees declared surface,
+  not behaviour. For a Velaris library that is the surface the ratchet
+  derives from the text, with every limit of the ratchet above: what a
+  granted `ffi` module does, a path or URL built while running seen
+  only as "any path" or "any host", a function renamed while it gains
+  an effect. For a package that is not Velaris it sees almost nothing.
+  It reads the install-time scripts and the declared dependencies, says
+  whether a script was added or changed - not what the script does -
+  and reports the capability surface as unknown, with exit status 3,
+  which is not a pass. It would not have caught postmark-mcp 1.0.16: by
+  Koi Security's account that release changed only the code that sent
+  the copy, which adds no install script and no dependency, so the
+  report would have been "nothing gained that could be seen, surface
+  unknown". Beyond that: it reads only the lockfile formats it names,
+  and lists any other changed lockfile as not read; an entry resolved
+  from git, a path, or a private registry or index is left out rather
+  than compared with a public package of the same name; a dependency new in
+  the upgrade has no earlier version and is listed, not examined; it
+  compares at most 30 upgrades in one pull request and names the rest;
+  it cannot read a version a registry has removed; it checks downloads
+  against the digests the registry publishes, which a compromised
+  registry would publish too; and in CI it informs and never fails the
+  job, so what it finds is worth what the reading of its comment is.
 - **What an attestation does not say.** `velaris attest` signs
   nothing: an unsigned Statement is a claim anyone could write, and a
   signed one says only that its signer ran this producer on those bytes
@@ -280,12 +306,13 @@ What follows is what is still not defended.
 | The result is wrong and no promise catches it | Require contracts on the functions that matter (`velaris proofs --min 80` in CI) and read the audit's `contract_coverage` list. A program with no promises has proven nothing. |
 | Output is trusted downstream | Never pipe a program's stdout into a shell or an interpreter. Treat output as data. |
 | The HTTP door's token leaks, or the door is reached from a network | Keep the token in a file only the door's user can read (`chmod 600`), outside every path the ceiling grants; do not pass it in a way that ends up in a process list or a log. Bind to `127.0.0.1`; if the door must be reached from elsewhere, put a TLS-terminating proxy in front and keep the network narrow. Give the door the smallest `--max-allow` the callers need - without one it grants `io` only (4.0; before 4.0 it granted everything, `ffi` included). Change the token by restarting the door with a new one. |
+| A dependency upgrade that can do more than the version before | For a Velaris dependency, run `velaris deps-diff` on the upgrade - or set the Action's `deps-diff: "true"` - and read what it reports gained before merging. For anything else, read exit 3 and "unknown" as exactly that: pin exact versions, read the package's own diff, and do not take the absence of a gained install script as evidence of anything. |
 | Capability added to the repository over many commits | Commit `velaris.capabilities` (`velaris capabilities init`) and make `velaris capabilities check` - or the Action's `capabilities: check` - a required check on every pull request. Treat an edit to `velaris.capabilities` as a widening that needs its own reviewer (a CODEOWNERS entry for the file does this), and read what the Action's comment and `velaris review` say changed. |
 | An MCP client lets the model ask for too much | Leave the MCP server at its default `io` ceiling unless a task needs more, then raise it to exactly that (`--max-allow io,fs:read:./data`), not to an effect. |
 | The MCP server's tools are changed after install | Run `velaris mcp-verify` against the signed manifest of the release you installed, after every install or upgrade and in the pipeline that builds the client's environment. |
 | Nobody reads the invocation log | Send it to a file (`--log-file`) that something keeps and watches; `outcome` values `unauthorized`, `ceiling` and `refused` are the ones that mean someone tried more than they were given. |
 | The model wrote something other than Velaris | Check the file extension and run `velaris check` first; refuse to run anything the checker refuses. |
-| A compiler defect | Pin a version, verify the signature of what you install, run the suites (`python run_tests.py`, `check_sandbox.py`, `check_library.py`, `check_refusals.py`, `check_fallible.py`, `check_termination.py`, `check_pool.py`, `check_ratchet.py`, `check_money.py`, `check_secret.py`, `check_platform.py`, `fuzz_native.py`) and `velaris conformance` on the machine that will run untrusted code, and report anything that lies through the private channel in SECURITY.md. |
+| A compiler defect | Pin a version, verify the signature of what you install, run the suites (`python run_tests.py`, `check_sandbox.py`, `check_library.py`, `check_refusals.py`, `check_fallible.py`, `check_termination.py`, `check_pool.py`, `check_ratchet.py`, `check_money.py`, `check_secret.py`, `check_platform.py`, `check_deps.py`, `fuzz_native.py`) and `velaris conformance` on the machine that will run untrusted code, and report anything that lies through the private channel in SECURITY.md. |
 | A single maintainer | Real, and stated in [SUPPORT.md](SUPPORT.md). Fixes to soundness and sandbox reports are promised within a week; nothing else is promised. |
 
 ## What "not a security boundary" means here

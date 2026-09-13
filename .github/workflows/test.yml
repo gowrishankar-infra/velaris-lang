@@ -61,6 +61,8 @@ jobs:
         run: python check_termination.py
       - name: Every widening of the capability surface fails, and nothing else does
         run: python check_ratchet.py
+      - name: An upgrade's gained surface is reported, and unknown is said to be unknown
+        run: python check_deps.py
       - name: This repository needs nothing its velaris.capabilities does not declare
         run: velaris capabilities check .
       - name: velaris-spec's corpus is what these suites say (drift test)

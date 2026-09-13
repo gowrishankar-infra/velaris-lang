@@ -69,7 +69,8 @@ prover could not settle.
 | The capability ratchet | section 17: `_program_capabilities` derives one file's needs (`_needs` for the grants, `_operation_bounds` for the counts), `capability_scan` a tree's, `capabilities_compare` holds a tree to a baseline - never to a previous commit - and `review` compares a git ref with the working tree. velaris-spec section 9 is the text of every rule there |
 | A removed error code | `REMOVED_ERRORS`, beside `ERROR_TABLE`: STABILITY.md rule 3 |
 | Conformance | section 18: `conformance` runs velaris-spec's corpus through the budget parser, the audit, the command line and the baseline writer and check; `build_conformance.py` writes that corpus from the tables of `check_sandbox.py`, `check_library.py` and `check_ratchet.py` |
-| The attestation | section 19, at the end: `attest_statement` wraps `audit()`'s own output in an in-toto Statement, the audited file and its imports as subjects by sha256; `attest` does a file or a directory, `attest_main` is the command. It signs nothing; the release workflow's `attestation` job signs one with cosign and with sigstore-python and verifies both |
+| The attestation | section 19: `attest_statement` wraps `audit()`'s own output in an in-toto Statement, the audited file and its imports as subjects by sha256; `attest` does a file or a directory, `attest_main` is the command. It signs nothing; the release workflow's `attestation` job signs one with cosign and with sigstore-python and verifies both |
+| What an upgrade gained | section 20, at the end: `deps_diff` reads two versions of one dependency (`_read_pypi`, `_read_npm`, `_read_git`, `_read_dir`); `_deps_velaris` runs section 17's `capabilities_compare` with the older version as the baseline; `_hooks_diff` and `_declared_diff` compare install-time scripts and declared dependencies. `deps_review` finds the upgrades in the lockfiles changed since a ref, `sarif_deps_review` places each finding on the lockfile's line, and `deps_comment` edits the one pull-request comment. Nothing there derives an effect from code that is not Velaris, and a change that would have it do so is wrong |
 
 ## The suites, and what each one is for
 
@@ -86,6 +87,7 @@ prover could not settle.
 | `check_money.py` | are amounts exact, kept to one currency, and rounded only where the call says so |
 | `check_secret.py` | can a `Secret` reach anything that emits it, and is `declassify` the only way out |
 | `check_ratchet.py` | does every widening of the capability surface fail, against the declared baseline and not the previous commit, and does every change that does not widen pass |
+| `check_deps.py` | does `deps-diff` report what an upgrade gained - a Velaris library's declared surface; for anything else only its install-time scripts and declared dependencies, with the surface said to be unknown - and is its pull-request comment edited rather than duplicated |
 | `velaris test examples/std_test.vel` | does the standard library behave |
 | `velaris conformance` | does this implementation pass velaris-spec's corpus, at L1, L2 and L3 |
 | `velaris migrate --to 5.0` | the narrowest budget each program needs, now that a run with no `--allow` gets `io` |

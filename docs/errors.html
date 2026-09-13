@@ -105,7 +105,7 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 </style></head><body>
 <nav><div class="in"><a class="brand" href="index.html">
 <span class="dot"></span>Velaris</a><a href="index.html" class="">Home</a><a href="tutorial.html" class="">Tutorial</a><a href="spec.html" class="">Reference</a><a href="library.html" class="">Library</a><a href="errors.html" class="here">Errors</a><a href="floats.html" class="">Floats</a><a href="playground.html" class="">Playground</a>
-<span class="ver">v7.0.0</span></div></nav>
+<span class="ver">v7.1.0</span></div></nav>
 <main class=""><h1>Error reference</h1>
 <p class="lead">Every error Velaris can give, from the error table in the compiler source, which the test suite holds against every code the compiler can raise, so this page cannot go stale. In the message templates, braces are filled with your program&rsquo;s names and values; every error also arrives with numbered fixes, and as JSON with <code>--json</code>.</p><table><tr><th>Code</th><th>What it means</th><th>Message template</th></tr>
 <tr id="E000"><td class="ecode">E000</td><td>a character the lexer cannot read, or a run that stopped without a Velaris error to report</td><td>unexpected character {source[pos]!r}</td></tr>
@@ -194,6 +194,12 @@ footer { border-top:1px solid var(--line); color:var(--mut);
 <tr id="capability-widened"><td class="ecode">capability-widened</td><td>error</td><td>code that needs a grant velaris.capabilities does not give: an effect, a Python module, a path outside the recorded ones, a host, a scoped grant made unscoped, or more fs or net operations in a run than recorded (capabilities check)</td></tr>
 <tr id="capability-effect-gained"><td class="ecode">capability-effect-gained</td><td>error</td><td>a function velaris.capabilities records now declares an effect it did not declare there (capabilities check)</td></tr>
 <tr id="capability-narrowed"><td class="ecode">capability-narrowed</td><td>note</td><td>velaris.capabilities gives more than the code needs now; capabilities init --force records the narrower surface</td></tr>
+<tr id="dependency-capability-widened"><td class="ecode">dependency-capability-widened</td><td>error</td><td>an upgraded Velaris dependency needs a grant its previous version did not: an effect, a Python module, a path, a host, or more fs or net operations in a run (deps-diff)</td></tr>
+<tr id="dependency-effect-gained"><td class="ecode">dependency-effect-gained</td><td>error</td><td>a function of an upgraded Velaris dependency declares an effect it did not declare in the previous version (deps-diff)</td></tr>
+<tr id="dependency-install-script"><td class="ecode">dependency-install-script</td><td>error</td><td>an upgraded dependency runs an install-time script its previous version did not, or a different one; what the script does is not derived (deps-diff)</td></tr>
+<tr id="dependency-surface-unknown"><td class="ecode">dependency-surface-unknown</td><td>note</td><td>an upgraded dependency holds code other than Velaris, or could not be read, so what it can do was not derived; unknown is not safe (deps-diff)</td></tr>
+<tr id="dependency-added"><td class="ecode">dependency-added</td><td>note</td><td>a dependency the upgraded version declares that the previous one did not; its own surface was not examined (deps-diff)</td></tr>
+<tr id="dependency-narrowed"><td class="ecode">dependency-narrowed</td><td>note</td><td>an upgraded Velaris dependency needs less than its previous version did (deps-diff)</td></tr>
 </table>
 <h2>Removed codes</h2>
 <p>None. A code that stops being given is listed here, and is never given again for anything else (STABILITY.md).</p></main>

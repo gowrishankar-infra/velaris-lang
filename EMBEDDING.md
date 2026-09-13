@@ -695,11 +695,12 @@ permissions:
 
 steps:
   - uses: actions/checkout@v5
-  - uses: gowrishankar-infra/velaris-lang@v5.0.1
+  - uses: gowrishankar-infra/velaris-lang@v7.1.0
     with:
       min-proven: "80"
       pr-comment: "true"
       capabilities: "check"   # the default when velaris.capabilities exists
+      deps-diff: "true"       # off by default
 ```
 
 The action installs Velaris with the prover, checks every `.vel` file
@@ -731,6 +732,16 @@ that deletes the file fails too, since that would turn the ratchet off;
 `capabilities: "off"` in the workflow is the way to turn it off, where
 the change is visible. The ratchet's findings go to code scanning
 beside the check's when `sarif` is on.
+
+With `deps-diff: "true"` (7.1), on a pull request the action runs
+`velaris deps-diff --against` the base branch's commit: every dependency
+the pull request upgrades in a lockfile it reads is compared version
+against version, and one comment - its own marker, edited in place like
+the audit's - says what each gained. For a Velaris library that is its
+declared capability surface; for any other package it is the
+install-time scripts and declared dependencies, with the surface said
+to be unknown. The step informs and never fails the job. The README's
+CI section lists the lockfiles it reads and what it cannot see.
 
 ## Holding a repository to its capability surface
 

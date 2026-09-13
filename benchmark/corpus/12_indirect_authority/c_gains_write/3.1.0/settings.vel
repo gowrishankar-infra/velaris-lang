@@ -1,0 +1,7 @@
+// settings 3.1.0: reads the settings file.
+fn load() -> Text uses fs {
+    check read_file("{granted}/notes.txt") {
+        ok text { return text }
+        fail why { return "defaults" }
+    }
+}

@@ -1,6 +1,6 @@
 # The comparison benchmark
 
-Sixty-three small programs, each written three times with the same behaviour -
+Sixty-seven small programs, each written three times with the same behaviour -
 in Velaris, in JavaScript for Deno, and in Python - and one harness that
 runs every program through every tool and records what was caught before
 running, what was caught while running, and what was missed. The result
@@ -17,16 +17,16 @@ command that produced it are all here; change one and rerun.
 
 | Tool | Before running | While running |
 |---|---|---|
-| Velaris 4.1 | `velaris check` (types, effects, unhandled failures, and the prover's E705/E706) and `velaris audit` (which effects, Python modules, paths and hosts the program names, and which loops the termination rule cannot show to end - `loops_unshown`, E612 under `--strict`) | `velaris.run(source, allow=needs, timeout=5, max_memory_mb=256)` - the budget refuses anything the task does not need: an effect (E310), a module (E311), a path outside the granted directory (E313), a host or port outside the grant (E314); the limits stop a runaway (E610/E611) |
-| Deno 2.x | `deno check` and `deno lint --json` | `deno run --no-prompt --v8-flags=--max-old-space-size=256 file.js` with no `--allow-*` flag, except in category 11 where the task needs one directory or one host and Deno gets the matching `--allow-read=<dir>` or `--allow-net=<host:port>` |
+| Velaris 7.1 | `velaris check` (types, effects, unhandled failures, and the prover's E705/E706) and `velaris audit` (which effects, Python modules, paths and hosts the program names, and which loops the termination rule cannot show to end - `loops_unshown`, E612 under `--strict`); in category 12, also `velaris deps-diff` on the dependency's two versions | `velaris.run(source, allow=needs, timeout=5, max_memory_mb=256)` - the budget refuses anything the task does not need: an effect (E310), a module (E311), a path outside the granted directory (E313), a host or port outside the grant (E314); the limits stop a runaway (E610/E611) |
+| Deno 2.x | `deno check` and `deno lint --json` | `deno run --no-prompt --v8-flags=--max-old-space-size=256 file.js` with no `--allow-*` flag, except in categories 11 and 12 where the task needs one directory or one host and Deno gets the matching `--allow-read=<dir>` or `--allow-net=<host:port>` |
 | Plain Python | nothing, by construction | `python file.py` in a subprocess with the same 5 second timeout and, where the platform allows, the same 256 MB cap |
 
 "Needs" is the effect set the task legitimately requires, stated per
 program in `corpus.json`. It is `io` for 59 programs, `io, ffi:math`
 for the two control programs that call the host's `sqrt`,
-`io, fs:read:<the granted directory>` for 11a and
-`io, net:127.0.0.1:<the listener's port>` for 11b; the harness fills
-the placeholders. `env` is never a need, so a program that reads the
+`io, fs:read:<the granted directory>` for 11a, 12c and 12d, and
+`io, net:127.0.0.1:<the listener's port>` for 11b, 12a and 12b; the
+harness fills the placeholders. `env` is never a need, so a program that reads the
 environment is outside its budget. That is the
 Velaris budget for the run; it is also the standard the audit is held to
 (see the rules below).
@@ -46,13 +46,17 @@ every platform. Python's child gets `RLIMIT_AS` on Linux and macOS
 
 ## The corpus
 
-Eleven categories: ten of six programs each, and category 11 of three
-(added with the scoped budgets of 3.0). In the first ten, programs `a`
+Twelve categories: ten of six programs each, category 11 of three
+(added with the scoped budgets of 3.0), and category 12 of four (added
+with `velaris deps-diff` in 7.1). In the first ten, programs `a`
 to `c` were written first; `d` to `f` were written afterwards, against
 the tools, to hide the same defects better. Every dangerous program has one dangerous
 line, marked `DANGER` in a trailing comment in all three source files;
 the harness reads the marker, so the line numbers in the results cannot
-drift from the sources. Control programs have no marker.
+drift from the sources. Control programs have no marker. In category
+12 the marker is in the new version of the dependency; the caller and
+the old version carry none, and the harness refuses a corpus where
+they do.
 
 | # | Category | Programs |
 |---|---|---|
@@ -67,6 +71,7 @@ drift from the sources. Control programs have no marker.
 | 9 | reaching a dangerous module | `a_subprocess_helper`, `b_os_system`, `c_command_on_stdout` (see below); `d_via_py_json` (through the JSON-shaped call), `e_via_handle`, `f_os_listdir` |
 | 10 | a plain correct program that must not be flagged | `a_expense_total`, `b_word_count`, `c_sqrt_via_math`; `d_warning_text` (prints "rm -rf" harmlessly), `e_reads_own_args`, `f_math_in_loop` (a counted loop and `ffi:math`) |
 | 11 | a grant narrower than the effect (3.0) | `a_read_outside` (granted one directory, reads a file outside it - the path comes on stdin), `b_other_host` (granted one host and port, requests another port - the URL comes on stdin), `c_secret_from_env` (prints an environment variable the harness set) |
+| 12 | indirect authority: the caller is unchanged, and a dependency's declared budget widened between versions (7.1) | `a_gains_net` (pricing 2.3.0 declared nothing; 2.4.0 posts each line to a second host), `b_new_host` (mailer 1.4.0 reached the mail service; 1.5.0 also sends a copy to a second host), `c_gains_write` (settings 3.1.0 read a file; 3.2.0 also writes one); `d_narrows` (report 2.0.0 stops reading from disk - a control) |
 
 Two programs are there because Velaris cannot catch them, so that the
 table is not a list of things the language was built to do:
@@ -89,8 +94,42 @@ every loop in it ends (SPEC.md section 9.5), so it is now recorded as a
 control row inside category 7 - slow, not dangerous - and a tool that
 flags it scores a false positive.
 
-Category 10, and the control row in category 7, are there so that a
-tool that flags everything scores badly.
+Category 10, and the control rows in categories 7 and 12, are there so
+that a tool that flags everything scores badly.
+
+Category 12 is here because a reader asked for it. Ali Khater,
+commenting on the dev.to post about this benchmark, proposed "indirect
+authority: a safe-looking function calling a dependency whose declared
+effect budget changes between versions". Each program is a caller,
+`<name>.vel`, and one dependency at two versions,
+`<name>/<old>/<module>.vel` and `<name>/<new>/<module>.vel`, and the
+same again in JavaScript and Python; the caller is the same file before
+and after the upgrade. In `12a` the caller already declares `net` for
+its own price feed, so it compiles against a formatting library that
+declared nothing and against the version that posts each line
+elsewhere. In `12b` a mail library that already reached the mail
+service sends a copy to a second host, which is the shape of the
+postmark-mcp compromise Koi Security reported in September 2025. In
+`12c` the caller already declares `fs` for a settings read, and the new
+settings library also writes. `12d` is the control: its dependency
+narrows.
+
+The dependencies name their hosts and paths in their source, as a real
+library does, so the harness fills the placeholders (`{url}`,
+`{other_url}`, `{path}`, `{granted}`) in all three files before any tool
+reads them - with `/` in paths on every platform, so the filled text is
+the same string literal in all three languages - and places the caller
+beside the new version in a scratch directory, where each language's
+import finds it. The run uses the new version.
+
+In Velaris the compiler alone does not flag these programs: a caller
+that declares `net` may call a function that declares `net`, whatever
+hosts that function names. What the upgrade changed is the dependency's
+declared surface, and the static step that compares two of them is
+`velaris deps-diff`. Deno and Python have no declared surface per module
+to compare, so their static steps are the same as in every other
+category; `velaris deps-diff` on a JavaScript or Python dependency
+reports its surface as unknown.
 
 The inputs are chosen to trigger the defect: `0` for the divisors, `1`
 where the divisor is `n - 1`, `12a` for the parse, a document without
@@ -137,6 +176,10 @@ loop the termination rule cannot show to end; E612 under `check
 program, any problem, any effect beyond its needs, or any loop not
 shown to end is a false positive - so a control program with a loop
 must write it in the one shape the rule accepts, and 07c and 10f do.
+In category 12, `velaris.deps_diff("dir:<the two versions>", old, new)`
+as well: anything it reports gained - a grant, a count, or a function
+that declares an effect it did not - counts as flagging the program,
+and for the control it is a false positive.
 
 **Velaris, while running.** Only when check passed:
 `velaris.run(source, allow=needs, stdin=..., timeout=5, max_memory_mb=256)`.
@@ -152,7 +195,11 @@ lands for a `while (true)`, and it does say the loop never exits). A
 diagnostic anywhere else is recorded in the evidence but not credited;
 for instance `prefer-const` on the counter of `07a` is not credited,
 because the same warning appears on ordinary code that reassigns
-nothing. For a control program any diagnostic is a false positive.
+nothing. For a control program any diagnostic is a false positive. In
+category 12 the dangerous line is in the dependency, which `deno lint`
+of the caller does not read, so nothing on the caller is credited; a
+diagnostic there is still recorded, and on the control it is a false
+positive.
 
 **Deno, while running.** `deno run --no-prompt
 --v8-flags=--max-old-space-size=256 file.js`. A non-zero exit or the
@@ -172,7 +219,11 @@ stdout. Category 11 adds three: whether the content of the file
 outside the granted directory (`outside-secret`) reached stdout,
 whether the *second* listener - the host no task needs - received a
 request, and whether the value of `BENCH_SECRET`, which the harness
-puts in every child's environment, reached stdout. If it happened, the
+puts in every child's environment, reached stdout. Category 12 adds
+two: whether the second listener received a request on the path that
+names the program and the tool - the caller's own request goes to the
+granted listener and does not count - and whether the file the
+dependency writes exists. If it happened, the
 verdict is `missed` whatever the exit status. If it did not happen and
 the process exited 0 anyway, the verdict is `caught-during-run` with the
 evidence saying the denial was swallowed - this is what happens in Deno
@@ -228,6 +279,15 @@ The command line has no `--timeout`; for that use the library:
     python -c "import velaris; print(velaris.run(open('benchmark/corpus/07_infinite_loop/a_never_advances.vel').read(), allow={'io'}, timeout=5).as_dict())"
 
     velaris check benchmark/corpus/07_infinite_loop/a_never_advances.vel --strict   # E612
+
+    velaris deps-diff dir:benchmark/corpus/12_indirect_authority/b_new_host 1.4.0 1.5.0
+
+On the corpus as committed that reports `net:{other_url}` gained, the
+placeholder standing where the harness writes the second listener's
+address. It also says the surface is only partly derived, because each
+version directory holds the dependency's JavaScript and Python files
+beside the `.vel` one; the harness gives each tool a directory holding
+its own language alone.
 
 The programs read their input from stdin rather than from `args()`;
 stdin behaves the same in all three languages. (Until 2.62 the Velaris

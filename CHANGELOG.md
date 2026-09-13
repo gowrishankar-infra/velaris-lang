@@ -1,5 +1,251 @@
 # Velaris changelog
 
+## 7.1 - What an upgrade gained
+
+A dependency can change what it can do between two versions while its
+name, its publisher and its declared dependencies stay the same. Koi
+Security's report on the npm package postmark-mcp describes versions
+1.0.0 to 1.0.15 working as an email tool, and 1.0.16 adding a blind
+copy of every outgoing message to an outside address and nothing else.
+A signature from the same publisher verifies 1.0.16 as readily as
+1.0.15, and an SBOM lists the same dependencies for both. What changed
+was what the package could do. This release compares that where it can
+be compared, and says plainly where it cannot - which, for a package
+that is not Velaris, is nearly everywhere.
+
+**`velaris deps-diff <package> <old> <new>`** reads two versions of one
+dependency - `pypi:NAME`, `npm:NAME`, `git:URL` or a path to a git
+repository (versions are tags, branches or commits), or `dir:PATH` (one
+subdirectory per version) - and reports what the newer one gained.
+
+- **A Velaris library.** Each version's capability surface is derived
+  from its `.vel` files as `capabilities init` derives a tree's, and the
+  newer is held to the older by `capabilities check`'s rules, W1 to W5,
+  with the older standing as the baseline. What it reports gained is
+  what the check reports widened: a new effect; a host, path or Python
+  module inside an effect the older version already had; more `fs` or
+  `net` operations in a run; a function that declares an effect it did
+  not. Each finding names the file, line, function and call that
+  introduced it and the chain of calls that reaches it, in the check's
+  own shape less the edit to `velaris.capabilities`, since there is no
+  such file to edit. A version that narrows, or that only moves text
+  around - functions reordered, locals renamed, a literal moved into a
+  variable - reports nothing gained.
+- **Any other package.** What the registry and the package's archive
+  declare is read, and nothing more: the install-time scripts npm runs
+  (`preinstall`, `install`, `postinstall`, and `node-gyp rebuild` for a
+  package with a `binding.gyp` and neither of the first two), what pip
+  runs when it builds a source distribution (`setup.py`, the build
+  backend and what that requires), a `.pth` file with an `import` line,
+  which Python runs at every start; and the declared dependencies -
+  npm's dependencies, optional and peer dependencies, PyPI's
+  `Requires-Dist`. A script added or changed is reported, including a
+  changed file behind an unchanged command. When a registry's manifest
+  and the `package.json` in the tarball disagree, the scripts of both
+  are reported, each marked with where it was read, because which one
+  npm runs has differed between npm versions and depends on whether it
+  installs from a lockfile; a disagreement about dependencies is named,
+  and the manifest's, from which npm resolves a fresh install, are the
+  ones compared. What a script does is not derived. Nor is
+  what the package's code can do: no effect, host or path is read off
+  Python or JavaScript, and the report says the capability surface is
+  **unknown**. A package holding both Velaris and other code gets the
+  `.vel` surface and a statement that the rest is not in it.
+- **Exit codes.** 0 when both surfaces were derived and nothing was
+  gained; 1 when something was gained - a widening, or an install
+  script added or changed; 3 when nothing visible was gained and the
+  surface was not derived, so that "this could not be seen" is never a
+  0; 2 when a version cannot be read - one that does not exist (the
+  message lists what does), an unpublished npm package, a download
+  whose digest is not the one the registry lists, an archive past
+  64 MB. `--json` is `velaris.deps-diff/1`; `--sarif` reports each
+  finding under six new rules on the errors page:
+  `dependency-capability-widened`, `dependency-effect-gained` and
+  `dependency-install-script` as errors, and
+  `dependency-surface-unknown`, `dependency-added` and
+  `dependency-narrowed` as notes. A bare package name is refused, so an
+  npm package is never read from PyPI, or the reverse, by accident.
+
+**Lockfiles, and the Action.** `velaris deps-diff --against REF [path]`
+finds the lockfiles changed since REF - `package-lock.json`,
+`npm-shrinkwrap.json`, `requirements*.txt` pins, `Pipfile.lock`,
+`poetry.lock`, `uv.lock`, `pdm.lock` and `velaris.lock` - and compares
+every upgraded dependency, up to 30 (`--max`), placing each finding on
+the line of the lockfile that pins the new version. A library
+`velaris.lock` vendors is compared file against file: the file at REF
+against the file in the tree. A lockfile it recognises and does not
+read (`yarn.lock`, `pnpm-lock.yaml`, `Cargo.lock` and others) is listed
+as changed and not read. An entry resolved from git, a path, a link, or
+a registry or index other than the one `deps-diff` reads is listed and
+not read, because the public package of the same name is a different
+package; so is every pin of a `requirements*.txt` that sets
+`--index-url` or `--extra-index-url`. A dependency new in the lockfile
+is listed as added, with nothing to compare it with. `--comment --pr N` puts the
+report in one pull-request comment, found again by its own marker and
+edited in place on later runs, and edits it to say so once no lockfile
+changes any more; `--from FILE` renders a saved `--json` result, so the
+registries are read once. The GitHub Action's new `deps-diff` input,
+off by default, does all of that on a pull request and uploads the
+SARIF when `sarif` is on. It never fails the job: for most packages the
+answer is "unknown", and a gate on that would stop nothing it could
+name. A package name, version or script from a pull request's lockfile
+reaches the comment inside a code span, or with HTML and mentions
+escaped, and a `velaris.lock` entry naming a file outside the
+repository is not read.
+
+The npm wrapper's table of subcommands names `deps-diff` as new in
+7.1.0, so `npx velaris-lang deps-diff` against an older compiler says
+which version it needs instead of the old compiler taking `deps-diff`
+for a file name; `check_library.py`, which holds that table to the
+compiler's own dispatch, found it missing before this release.
+
+**What it does not see**, as THREAT_MODEL.md now says: declared
+surface, not behaviour. For a Velaris library the ratchet's own limits
+apply. For anything else it sees almost nothing, and postmark-mcp is
+the example: by Koi Security's account 1.0.16 changed only the code
+that sent the copy, which adds no install script and no dependency, so
+`deps-diff` would have reported nothing gained and the surface unknown
+- exit 3, not a finding. It would not have caught that case and does
+not claim to. npm has since unpublished every version of the package,
+and asked about it today `deps-diff` reports that the versions cannot
+be read.
+
+**The benchmark: category 12, indirect authority.** Three programs
+whose calling code is the same file before and after an upgrade, and
+whose dependency's declared budget widened between the two versions -
+`12a`, a formatting library that declared nothing and starts posting
+each line to a second host; `12b`, a mail library that already reached
+the mail service and starts sending a copy to a second host; `12c`, a
+settings library that read a file and starts writing one - and a
+control, `12d`, whose dependency narrows. Each caller already declares
+the effect its dependency comes to use, so it compiles against both
+versions and the compiler has nothing to refuse; the Velaris static
+step is `velaris deps-diff` on the two versions, and it flags the three
+before running and not the control. Deno stops all three while
+running, each time with the dependency swallowing the denial and the
+program exiting 0; Python misses all three. The harness gained what
+that needed and nothing tuned per program: a program may import one
+dependency at two versions; the `DANGER` marker is in the new version,
+and the caller and the old version must carry none; placeholders are
+filled in all three source files, with `/` in paths; and two
+observations were added - a request that reached the second listener,
+told apart from the caller's own request to the granted one, and a file
+the dependency wrote. The table is now 67 programs, 59 dangerous and 8
+controls: Velaris 45 caught before running, 12 while running, 2
+missed; Deno 5, 30, 24; Python 0, 28, 31; no false positives anywhere.
+**No existing verdict moved**: the 63 earlier rows have the verdict and
+the evidence they had in 7.0.0's `results.json`, and the verdict they
+had at 4.1.0. The benchmark README's table, the README's, and the
+paper's section 4.1, Table 1, abstract and conclusion carry the new
+figures; the rest of the paper stays pinned to 4.2.1, and its
+reproducibility section says which figures come from 7.1.0.
+
+Also fixed in the harness: `benchmark/run.py --check` on a full run
+compared verdicts with `results.json` after the run had rewritten that
+file, so it could not fail. It now compares before writing. The quick
+run CI makes was never affected, since it writes nothing.
+
+**The README's CI section pinned `gowrishankar-infra/velaris-lang@v5.0.1`
+and `version: "5.0.1"`**, two majors late, and EMBEDDING.md pinned the
+same Action. All three now say 7.1.0, and `run_tests.py`'s version
+check fails when an Action pin or a `version:` in either file is not
+the compiler's `VERSION`, so the pin moves with each release or the
+suite stops.
+
+**`check_deps.py`**, 54 checks, runs on every CI leg and reaches no
+network: it serves PyPI, npm and the GitHub API on 127.0.0.1. A library
+gaining net, a host inside net, a count, a Python module (read from git
+tags) and a function's effect; one narrowing and one rewritten without
+changing its surface, neither flagged; a version, a tag and a release
+that do not exist, an unpublished package, a digest that does not
+match, a package named without its registry; a JavaScript package
+whose new source reaches the network, reported as unknown with no host
+read off it; install scripts added and changed, a changed file behind
+the same command, a registry manifest that hides the tarball's script,
+a Python package gaining `setup.py` and an importing `.pth`; a package
+holding Velaris and JavaScript; a tarball whose paths climb out, are
+absolute or name a drive; the lockfile mode, with an unread lockfile
+listed, a vendored library compared, a `velaris.lock` entry naming a
+file outside the repository refused, and its plain-text report; the
+lockfile formats read directly - a v1 `package-lock.json` whose entries
+from git and from a private registry are left out, a `Pipfile.lock`
+with an entry from another index and two packages pinning one version,
+`poetry.lock` and `uv.lock` entries not from PyPI, `requirements*.txt`
+with extras, markers, hashes and `===`, and one that sets another index
+- and how an upgrade is paired with the version it replaced; a hostile package name and
+error text rendered with no HTML, mention or broken code span; the
+SARIF of both modes, validated; the pull-request comment
+posted once and edited on the second run, edited again when no lockfile
+changes, and never posted for a pull request that changed none; and the
+four programs of category 12, each asserted directly with its unchanged
+caller compiling against both versions.
+
+`velaris.capabilities` is recorded again at 7.1.0: 190 programs, the
+new ones being category 12's callers (which do not compile outside the
+harness, since their dependency is placed beside them only there) and
+its eight dependency versions. The surface is unchanged. velaris-spec
+needs no change: SPEC.md sections 6, 7 and 7.1, the budget grammar and
+the formats it specifies are untouched, and the comparison `deps-diff`
+makes is its section 9.5. The two JSON documents `deps-diff` writes are
+marked provisional in STABILITY.md.
+
+**Verified**, on Windows 11 with Python 3.13, in two fresh virtual
+environments holding this tree - one with `.[full,test]` (z3 5.1.0,
+llvmlite 0.49.0), one with `.[test]` and neither - rather than in this
+machine's global Python, which holds an older Velaris. With the prover:
+`run_tests.py` 97/97, `check_library.py` 240 correct,
+`check_fallible.py` 29, `check_money.py` 81, `check_sandbox.py` 57,
+`check_secret.py` 78, `check_pool.py` 39, `check_platform.py` 15,
+`check_termination.py` 44, `check_ratchet.py` 114, `check_deps.py` 54,
+`check_refusals.py` 25, none wrong; `fuzz_native.py 30` agrees;
+`velaris conformance` passes at L1 (307 cases), L2 (39, and one not run
+because this system would not make a symbolic link) and L3 (109);
+`build_conformance.py --check` matches velaris-spec's 456 cases;
+`benchmark/run.py --quick --check` matches `results.json`; `velaris
+test examples/std_test.vel` 7/7; `examples/edges.vel` 20 passed;
+`velaris fmt --check` is clean; `velaris capabilities check .` passes;
+the playground and the docs build. Without the prover the same list
+passes, with `check_library.py` 229 correct, `check_platform.py` 14 and
+`check_refusals.py` 15 with 10 skipped for needing the prover, the
+other counts as above, and the quick benchmark naming 03a and 04a as
+caught while running, as it does whenever the prover is absent. Eleven
+consecutive full benchmark runs with Deno 2.9.6 - the last after the
+final change to `velaris.py` - wrote byte-identical `RESULTS.md` and
+`results.json`. velaris-spec's `tools/check_sync.py` passes against this
+tree, and its `tools/validate.py --capabilities` accepts the
+re-recorded `velaris.capabilities`. The arXiv package was regenerated
+with pandoc 3.11 and builds to 12 pages. Verifying found three defects
+in this release's own work, each fixed before tagging: inserting
+section 20 had deleted the line `def card()`, which `check_library.py`
+caught; two new module-level tables were not registered with
+`check_pool.py`'s reset scan; and the npm wrapper's table lacked
+`deps-diff`.
+
+**Sources, named** (CONTRIBUTING.md rule). The test category 12 is
+built on was proposed by Ali Khater (dev.to `alikhatersaibreakroom`) in
+a comment of 12 September 2026 on the dev.to post about this benchmark,
+https://dev.to/alikhatersaibreakroom/comment/3elgc: "A next test I would
+love to see is indirect authority: a safe-looking function calling a
+dependency whose declared effect budget changes between versions." The
+postmark-mcp case is from Koi Security, "First Malicious MCP in the
+Wild: The Postmark Backdoor That's Stealing Your Emails" (Idan
+Dardikman, 25 September 2025), read through the Internet Archive's copy
+of that date because the original address now redirects elsewhere; its
+indicators name 1.0.16 and later as malicious. npm's registry record
+lists thirteen version numbers before 1.0.16 (1.0.4 to 1.0.6 were never
+published) and every version unpublished on 25 September 2025. That a
+registry's manifest and a tarball's `package.json` are published
+separately and never checked against each other is from Darcy Clarke,
+"The massive bug at the heart of the npm ecosystem" (vlt blog, 27 June
+2023). npm maintainers have described which copy npm reads in two
+contradicting comments on npm/cli issue 5234, and Arborist's source
+shows the answer changed between npm releases; that is why `deps-diff`
+reports both copies rather than choosing one. npm's default
+`node-gyp rebuild` install script for a package with a `binding.gyp`
+is from npm's scripts documentation. The design of the command - the ratchet's comparison with the older version
+as the baseline, exit 3 for a surface not derived, the comment - was
+specified by the maintainer.
+
 ## 7.0 - A secret you cannot look at
 
 6.0, published this morning, shipped `Secret of T` with a hole in it,

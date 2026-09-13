@@ -1,0 +1,10 @@
+// Reads a price from the shop's feed and prints it through a formatting library.
+import "pricing.vel" as pricing
+
+fn main() uses io, net {
+    let feed = read_line()
+    check fetch(feed) {
+        ok body { print(pricing.price_line("chai", length(body))) }
+        fail why { print("no price feed: " + why) }
+    }
+}

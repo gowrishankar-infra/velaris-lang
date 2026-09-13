@@ -42,6 +42,10 @@ inputs:
     description: "The capability ratchet: 'check' holds every .vel file to the surface declared in velaris.capabilities at the repository root and fails the job if anything widened; 'off' skips it. Default: 'check' when velaris.capabilities exists, otherwise 'off' - except that a pull request which deletes the file fails, since that would turn the ratchet off. Findings go to code scanning with the check's when sarif is true."
     required: false
     default: ""
+  deps-diff:
+    description: "On a pull_request event, compare every dependency the pull request upgrades in a lockfile and post one comment with what each upgraded version gained, edited in place on later runs (true/false). For a Velaris library that is its declared capability surface; for any other package it is only the install-time scripts and declared dependencies, and the comment says the surface is unknown. It reads what is declared, not what code does. Informational: it does not fail the job. Needs pull-requests: write; findings go to code scanning when sarif is true."
+    required: false
+    default: "false"
 
 outputs:
   sarif-file:
@@ -50,6 +54,9 @@ outputs:
   capabilities-sarif-file:
     description: "Where the capability ratchet's SARIF was written, when the ratchet ran and sarif is true."
     value: ${{ steps.ratchet.outputs.sarif-file }}
+  deps-diff-sarif-file:
+    description: "Where deps-diff's SARIF was written, when deps-diff ran and sarif is true."
+    value: ${{ steps.deps.outputs.sarif-file }}
 
 runs:
   using: "composite"
@@ -392,3 +399,49 @@ runs:
             "$API_URL/repos/$REPO/issues/$PR_NUMBER/comments" \
             --data @/tmp/velaris_comment.json
         fi
+
+    # What each dependency a pull request upgrades gained between its two
+    # versions (velaris deps-diff). The comparison runs once and is saved;
+    # the log, the SARIF and the comment are all rendered from that file,
+    # so the registries are read once. The comment is its own - a second
+    # marker - and is edited in place like the audit's. It informs and
+    # never fails the job: for most packages the honest answer is that
+    # the capability surface is unknown, and a gate on that would be a
+    # gate on nothing.
+    - name: What each upgraded dependency gained
+      id: deps
+      if: ${{ !cancelled() && inputs.deps-diff == 'true' && github.event_name == 'pull_request' && steps.install.outcome == 'success' }}
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        SARIF: ${{ inputs.sarif }}
+      run: |
+        if ! git fetch --no-tags --depth=1 origin "$BASE_SHA" >/dev/null 2>&1; then
+          echo "::warning::deps-diff: the base commit could not be fetched, so no lockfile was compared"
+          exit 0
+        fi
+        saved="$RUNNER_TEMP/velaris-deps.json"
+        status=0
+        velaris deps-diff --against "$BASE_SHA" --json > "$saved" || status=$?
+        if [ "$status" = "2" ]; then
+          echo "::warning::deps-diff could not compare the lockfiles"
+          exit 0
+        fi
+        velaris deps-diff --from "$saved" || true
+        if [ "$SARIF" = "true" ]; then
+          sarif="$RUNNER_TEMP/velaris-deps.sarif"
+          velaris deps-diff --from "$saved" --sarif > "$sarif" || true
+          echo "sarif-file=$sarif" >> "$GITHUB_OUTPUT"
+        fi
+        if ! velaris deps-diff --from "$saved" --comment --pr "$PR_NUMBER"; then
+          echo "::warning::deps-diff could not post its comment (a pull request from a fork has a read-only token)"
+        fi
+        exit 0
+
+    - name: Upload deps-diff's findings to code scanning
+      if: ${{ always() && steps.deps.outputs.sarif-file != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+      uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63  # v4.38.0
+      with:
+        sarif_file: ${{ steps.deps.outputs.sarif-file }}

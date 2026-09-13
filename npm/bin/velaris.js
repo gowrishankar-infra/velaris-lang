@@ -55,6 +55,7 @@ const INTRODUCED = {
   attest: "4.2.0",
   mcp: "4.3.3",
   migrate: "5.0.0",
+  "deps-diff": "7.1.0",
 };
 
 // The two flags the compiler takes before any command, each with a

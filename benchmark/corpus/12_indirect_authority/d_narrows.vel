@@ -1,0 +1,6 @@
+// Prints a total through a report library.
+import "report.vel" as report
+
+fn main() uses io, fs {
+    print(report.total_line(450))
+}

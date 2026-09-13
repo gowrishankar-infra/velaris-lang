@@ -1,0 +1,4 @@
+// pricing 2.3.0: formats a price line.
+fn price_line(item: Text, cents: Int) -> Text {
+    return item + " costs " + to_text(cents) + " cents"
+}

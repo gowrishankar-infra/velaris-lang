@@ -1,0 +1,6 @@
+// Prints the app's settings, which a settings library reads from the data directory.
+import "settings.vel" as settings
+
+fn main() uses io, fs {
+    print("settings: " + settings.load())
+}

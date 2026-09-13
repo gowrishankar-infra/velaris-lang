@@ -61,7 +61,12 @@ major version.
   proved.
 - **The canonical style `velaris fmt` writes.** A change to it is named
   in the CHANGELOG, because `fmt --check` in CI will see it.
-- **Anything marked provisional**, in SPEC.md or in velaris-spec.
+- **Anything marked provisional**, in SPEC.md or in velaris-spec. From
+  7.1 that includes `velaris.deps-diff/1` and
+  `velaris.deps-diff-lockfiles/1`, the JSON `velaris deps-diff` writes:
+  their fields may change in a minor release, named in the CHANGELOG,
+  until a release says they are covered. The command, its flags and its
+  exit codes are covered like any other command's.
 
 ## The rules
 

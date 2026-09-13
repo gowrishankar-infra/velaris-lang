@@ -1,7 +1,7 @@
 {
   "schema": "velaris.capabilities/1",
-  "velaris_version": "7.0.0",
-  "date": "2026-09-12",
+  "velaris_version": "7.1.0",
+  "date": "2026-09-13",
   "surface": {
     "grants": [
       "clock",
@@ -659,6 +659,89 @@
       }
     },
     {"file": "benchmark/corpus/11_scoped_budget/c_secret_from_env.vel", "compiles": false},
+    {"file": "benchmark/corpus/12_indirect_authority/a_gains_net.vel", "compiles": false},
+    {
+      "file": "benchmark/corpus/12_indirect_authority/a_gains_net/2.3.0/pricing.vel",
+      "grants": [],
+      "counts": {},
+      "functions": {
+        "price_line": []
+      }
+    },
+    {
+      "file": "benchmark/corpus/12_indirect_authority/a_gains_net/2.4.0/pricing.vel",
+      "grants": [
+        "net:{other_url}"
+      ],
+      "counts": {"net": 1},
+      "functions": {
+        "price_line": ["net"]
+      }
+    },
+    {"file": "benchmark/corpus/12_indirect_authority/b_new_host.vel", "compiles": false},
+    {
+      "file": "benchmark/corpus/12_indirect_authority/b_new_host/1.4.0/mailer.vel",
+      "grants": [
+        "net:{url}"
+      ],
+      "counts": {"net": 1},
+      "functions": {
+        "send": ["net"]
+      }
+    },
+    {
+      "file": "benchmark/corpus/12_indirect_authority/b_new_host/1.5.0/mailer.vel",
+      "grants": [
+        "net:{other_url}",
+        "net:{url}"
+      ],
+      "counts": {"net": 2},
+      "functions": {
+        "send": ["net"]
+      }
+    },
+    {"file": "benchmark/corpus/12_indirect_authority/c_gains_write.vel", "compiles": false},
+    {
+      "file": "benchmark/corpus/12_indirect_authority/c_gains_write/3.1.0/settings.vel",
+      "grants": [
+        "fs:read:{granted}/notes.txt"
+      ],
+      "counts": {"fs": 1},
+      "functions": {
+        "load": ["fs"]
+      }
+    },
+    {
+      "file": "benchmark/corpus/12_indirect_authority/c_gains_write/3.2.0/settings.vel",
+      "grants": [
+        "fs:read:{granted}/notes.txt",
+        "fs:write:{path}"
+      ],
+      "counts": {"fs": 2},
+      "functions": {
+        "load": ["fs"]
+      }
+    },
+    {"file": "benchmark/corpus/12_indirect_authority/d_narrows.vel", "compiles": false},
+    {
+      "file": "benchmark/corpus/12_indirect_authority/d_narrows/1.0.0/report.vel",
+      "grants": [
+        "fs:read:{granted}/notes.txt"
+      ],
+      "counts": {"fs": 1},
+      "functions": {
+        "label": ["fs"],
+        "total_line": ["fs"]
+      }
+    },
+    {
+      "file": "benchmark/corpus/12_indirect_authority/d_narrows/2.0.0/report.vel",
+      "grants": [],
+      "counts": {},
+      "functions": {
+        "total_line": []
+      }
+    },
     {
       "file": "examples/avg_bad.vel",
       "grants": [

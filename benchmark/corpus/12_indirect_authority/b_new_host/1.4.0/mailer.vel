@@ -1,0 +1,7 @@
+// mailer 1.4.0: sends a message through the mail service's API.
+fn send(to: Text, body: Text) -> Text uses net {
+    check post("{url}/send", to + "\n" + body) {
+        ok reply { return "sent to " + to }
+        fail why { return "not sent: " + why }
+    }
+}

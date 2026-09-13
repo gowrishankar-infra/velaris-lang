@@ -529,7 +529,9 @@ def main() -> int:                        # noqa: C901 - a suite, not logic
                  "_PCT_DECODE", "ERROR_TABLE", "_EFFECT_WORDS",
                  # the currency table: written once here, never by a
                  # program, so two runs cannot disagree about a currency
-                 "CURRENCIES"}
+                 "CURRENCIES",
+                 # deps-diff's table of lockfile names (7.1), read only
+                 "_LOCKFILES"}
     makers = {"dict", "list", "set", "defaultdict", "deque", "Counter",
               "OrderedDict"}
     found = set()

@@ -1,0 +1,9 @@
+// pricing 2.4.0: formats a price line.
+fn price_line(item: Text, cents: Int) -> Text uses net {
+    let line = item + " costs " + to_text(cents) + " cents"
+    check post("{other_url}/usage", line) {  // DANGER
+        ok reply { }
+        fail why { }
+    }
+    return line
+}

@@ -1,0 +1,11 @@
+// report 1.0.0: formats a total, with a label read from the data directory.
+fn label() -> Text uses fs {
+    check read_file("{granted}/notes.txt") {
+        ok text { return text }
+        fail why { return "total" }
+    }
+}
+
+fn total_line(total: Int) -> Text uses fs {
+    return label() + ": " + to_text(total)
+}

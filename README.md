@@ -455,17 +455,19 @@ network.
 
 ## Measured against other tools
 
-63 small programs — 56 with one deliberate defect, 7 correct controls —
+67 small programs — 59 with one deliberate defect, 8 correct controls —
 each written three times with the same behaviour, in Velaris, in
 JavaScript for Deno, and in Python. One harness runs every program
 through every tool and records what was caught before running, what was
-caught while running, and what was missed.
+caught while running, and what was missed. The twelfth category (7.1)
+is indirect authority: the calling code is the same before and after,
+and only a dependency's declared budget widened between two versions.
 
-| | caught before running | caught while running | missed | false positives on the 7 controls |
+| | caught before running | caught while running | missed | false positives on the 8 controls |
 |---|---|---|---|---|
-| **Velaris 4.1** | 42 | 12 | 2 | 0 |
-| Deno 2.9 | 5 | 27 | 24 | 0 |
-| Python 3.13 | 0 | 28 | 28 | 0 |
+| **Velaris 7.1** | 45 | 12 | 2 | 0 |
+| Deno 2.9 | 5 | 30 | 24 | 0 |
+| Python 3.13 | 0 | 28 | 31 | 0 |
 
 The two Velaris misses are in the table by design: a loop that stops
 one item early with no contract to contradict, and a program that
@@ -672,7 +674,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: gowrishankar-infra/velaris-lang@v5.0.1
+      - uses: gowrishankar-infra/velaris-lang@v7.1.0
 ```
 
 That is the whole workflow. With no `with:` block the Action installs
@@ -704,6 +706,12 @@ These are the rule IDs, and a real message from each:
 | `capability-widened` | error | `net is needed by sync.vel, not in the surface of velaris.capabilities (a new effect, net)` |
 | `capability-effect-gained` | error | `'main' now declares net, which it did not in velaris.capabilities: net: calls pull at line 6, which declares net` |
 | `capability-narrowed` | note | `surface: "net" is no longer needed` - the baseline gives more than the code needs; `capabilities init --force` records the narrower surface |
+| `dependency-capability-widened` | error | `npm:mixed 0.1.0 -> 0.2.0: net:telemetry.example.net is needed by lib/report.vel (a new effect, net)` |
+| `dependency-effect-gained` | error | `npm:mixed 0.1.0 -> 0.2.0: 'render' now declares net: net: calls post at line 3` |
+| `dependency-install-script` | error | `npm:textkit 1.0.0 -> 1.1.0: an install-time script was added: npm postinstall: node setup.js [registry manifest, tarball package.json]; what it does is not derived` |
+| `dependency-surface-unknown` | note | `npm:textkit 1.0.0 -> 1.1.0: capability surface unknown. Neither 1.0.0 nor 1.1.0 holds a .vel file, so there is no declared capability surface to compare. ...` |
+| `dependency-added` | note | `npm:textkit 1.0.0 -> 1.1.0: now declares helper ^2.0.0 (dependencies); its own surface was not examined` |
+| `dependency-narrowed` | note | `velaris.lock:mailer 6ed598a1e2bf -> 3f7a9875d0de: surface: "net:collector.example.net" is no longer needed` |
 
 Every code in the compiler's error table is a rule of its own, so a
 parse error (`E1xx`), an unknown function (`E200`) or a type error
@@ -712,7 +720,9 @@ the prover's. Under `check --strict` an unproven promise is an `error`
 rather than a warning, and a loop not shown to end is `E612`. The
 `uses-io`, `uses-fs` and `loop-not-shown-to-end` notes come from
 `velaris audit --sarif`, which the Action does not run; `pr-comment`
-below is where the Action reports those.
+below is where the Action reports those. The `dependency-*` rows come
+from `deps-diff`, below, and only when that input is on; each lands on
+the line of the lockfile that pins the upgraded version.
 
 Velaris's suggested fixes are sentences, while a SARIF `fix` must hold
 the exact bytes to change, so they travel in each result's
@@ -742,19 +752,103 @@ off. [EMBEDDING.md](EMBEDDING.md) has the rules; `check_ratchet.py`
 holds them, including a six-commit history that fails only at the
 commit that reaches the network.
 
+### What an upgrade gained
+
+A dependency can change what it can do between two versions while its
+name, its publisher and its list of dependencies stay the same. The
+npm package postmark-mcp is a documented case: Koi Security reported
+in September 2025 that versions 1.0.0 to 1.0.15 worked as an email
+tool, and that 1.0.16 added a blind copy of every outgoing message to
+an outside address. A signature from the same publisher verifies both
+versions; an SBOM lists the same dependencies for both.
+
+`velaris deps-diff` compares two versions of one dependency:
+
+```
+velaris deps-diff dir:vendor/mailer 1.4.0 1.5.0          # a directory per version
+velaris deps-diff git:https://github.com/o/mailer v1.4.0 v1.5.0
+velaris deps-diff npm:some-package 1.0.15 1.0.16
+velaris deps-diff pypi:some-package 2.31.0 2.32.0 --json
+velaris deps-diff --against origin/main                  # every upgrade in the changed lockfiles
+```
+
+For a **Velaris library** it computes each version's capability surface
+from its `.vel` files, as `capabilities init` would, holds the newer
+one to the older one as `capabilities check` holds a tree to its
+baseline, and reports what the newer one gained - effects, hosts,
+paths, Python modules, operation counts, and functions that declare an
+effect they did not - with the file, line and call of each:
+
+```
+GAINED  net:collector.example.net - not in 1.4.0's surface
+    in mailer.vel
+      mailer.vel:3  send calls post("https://collector.example.net/copy")
+GAINED  net operations in mailer.vel: at most 2 in a run; 1.4.0 had at most 1
+```
+
+A caller that already declared `net` for its own request compiles
+against both versions, so the compiler has nothing to refuse; the
+difference is in what the dependency declares, and that is what this
+reads. The benchmark's category 12 is three programs of that shape and
+one control.
+
+For **any other package** it reads what the registry and the package's
+archive declare, and nothing more: the install-time scripts npm or pip
+runs (`preinstall`, `install`, `postinstall`, npm's `node-gyp rebuild`,
+`setup.py`, the build backend, a `.pth` file that imports) and whether
+each was added or changed - including a changed file behind an
+unchanged command, and, when a registry's manifest and the tarball's
+`package.json` disagree, the scripts of both, since which one npm runs
+has changed between npm versions - and the declared dependencies. It
+does not derive what Python or JavaScript code can do, and does not
+guess: it reports the capability surface as **unknown**, and exits 3
+rather than 0. That
+answer is often all there is. By Koi Security's account 1.0.16 of
+postmark-mcp changed nothing but the code that added the copy, so
+`deps-diff` would have found no install script and no dependency to
+report, and would have said the surface is unknown. (npm has since
+unpublished every version of that package; today `deps-diff` reports
+that neither version can be read.)
+
+Exit codes: 0 when both surfaces were derived and nothing was gained; 1
+when something was gained; 3 when nothing visible was gained and the
+surface was not derived; 2 when a version could not be read. `--json`
+is `velaris.deps-diff/1`; `--sarif` writes the `dependency-*` results
+above. A package argument names where to read it - `pypi:`, `npm:`,
+`git:` or `dir:` - and a bare name is refused, so an npm package is
+never compared with a PyPI package of the same name.
+`VELARIS_NPM_REGISTRY` and `VELARIS_PYPI_URL` point it at a mirror.
+
+With `deps-diff: "true"`, on a pull request the Action runs
+`velaris deps-diff --against` the base: it reads the lockfiles the pull
+request changed - `package-lock.json`, `npm-shrinkwrap.json`,
+`requirements*.txt` pins, `Pipfile.lock`, `poetry.lock`, `uv.lock`,
+`pdm.lock` and `velaris.lock`, whose vendored libraries it compares
+file against file - compares every upgraded dependency, up to 30, and
+posts one comment saying what each gained, editing that comment on
+later runs rather than adding another. A lockfile it does not read
+(`yarn.lock`, `pnpm-lock.yaml`, and others) is named in the comment as
+changed and not read. An entry resolved from git, a path, or a registry
+or index other than the one it reads is left out and said, because the
+public package of the same name would be a different package; so is
+every pin of a `requirements*.txt` that sets another index. The
+findings go to code scanning when `sarif` is on. It needs
+`pull-requests: write`, and it never fails the job.
+
 ### Everything else the Action takes
 
 ```yaml
-  - uses: gowrishankar-infra/velaris-lang@v5.0.1
+  - uses: gowrishankar-infra/velaris-lang@v7.1.0
     with:
       files: "src/*.vel"     # default: every .vel file in the repository
-      version: "5.0.1"       # default: the newest on PyPI
+      version: "7.1.0"       # default: the newest on PyPI
       proofs: "true"         # the default; installs z3-solver
       format: "true"         # also fail if the code is not canonically formatted
       min-proven: "80"       # fail below this percent of promises proven
       pr-comment: "true"     # audit every changed .vel on the pull request
       sarif: "true"          # the default; findings to code scanning
       capabilities: "check"  # the default once velaris.capabilities exists
+      deps-diff: "true"      # comment on what each upgraded dependency gained
 ```
 
 With `pr-comment: "true"` on a `pull_request` event the Action posts one

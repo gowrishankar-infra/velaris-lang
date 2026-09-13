@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The Velaris comparison benchmark.
 
-    python benchmark/run.py            # all 63 programs -> RESULTS.md, results.json
+    python benchmark/run.py            # all 67 programs -> RESULTS.md, results.json
     python benchmark/run.py --quick    # one program per category, table on stdout
     python benchmark/run.py --check    # also compare verdicts with results.json
     python benchmark/run.py --only 03a,10c
@@ -72,17 +72,39 @@ def load_corpus():
             p["category_title"] = cat["title"]
             p["files"] = {t: os.path.join(CORPUS, cat["key"], p["name"] + EXT[t])
                           for t in TOOLS}
+            dep = p.get("dependency")
+            if dep:
+                # category 12: the caller above, and one directory per
+                # version of the dependency it imports
+                p["dep_files"] = {t: {side: os.path.join(
+                    CORPUS, cat["key"], p["name"], dep[side],
+                    dep["module"] + EXT[t]) for side in ("old", "new")}
+                    for t in TOOLS}
             for t, path in p["files"].items():
-                if not os.path.exists(path):
-                    raise CorpusError(f"{p['id']}: missing {path}")
+                more = list(p["dep_files"][t].values()) if dep else []
+                for need in [path] + more:
+                    if not os.path.exists(need):
+                        raise CorpusError(f"{p['id']}: missing {need}")
             p["danger_line"] = {t: marker_line(p, t) for t in TOOLS}
             programs.append(p)
     return data["categories"], programs
 
 
 def marker_line(prog, tool):
-    """The 1-based line carrying the DANGER marker, or None."""
-    with open(prog["files"][tool], encoding="utf-8") as f:
+    """The 1-based line carrying the DANGER marker, or None. For a program
+    with a dependency the marker is in the dependency's new version: the
+    caller and the old version must carry none, since the danger is the
+    upgrade."""
+    where = prog["files"][tool]
+    if prog.get("dependency"):
+        for quiet in (where, prog["dep_files"][tool]["old"]):
+            with open(quiet, encoding="utf-8") as f:
+                if any("DANGER" in line for line in f):
+                    raise CorpusError(f"{prog['id']} ({tool}): {quiet} must "
+                                      f"not carry a DANGER marker; it goes "
+                                      f"in the new version of the dependency")
+        where = prog["dep_files"][tool]["new"]
+    with open(where, encoding="utf-8") as f:
         hits = [i for i, line in enumerate(f, 1) if "DANGER" in line]
     if prog["dangerous"] and len(hits) != 1:
         raise CorpusError(f"{prog['id']} ({tool}): expected exactly one "
@@ -126,6 +148,7 @@ def loop_span(path, danger_line):
 
 class Hits(BaseHTTPRequestHandler):
     paths: list = []
+    by_port: list = []           # (the listener's port, path), category 12
 
     def do_GET(self):
         self._hit()
@@ -137,6 +160,7 @@ class Hits(BaseHTTPRequestHandler):
 
     def _hit(self):
         Hits.paths.append(self.path)
+        Hits.by_port.append((self.server.server_address[1], self.path))
         body = b"ok\n"
         self.send_response(200)
         self.send_header("Content-Length", str(len(body)))
@@ -292,15 +316,18 @@ def find_deno(explicit=None):
 
 # -------------------------------------------------------------- evidence
 
-def tidy(text, port=None):
-    """Strip machine-specific detail so two runs produce the same file."""
+def tidy(text, port=None, paths=True):
+    """Strip machine-specific detail so two runs produce the same file.
+    paths=False leaves paths alone, for text whose scratch directory is
+    already written as <workdir>."""
     text = text.replace("\r", "")
     for masked in ([port] if port else []) + PORTS_IN_USE:
         if masked:
             text = text.replace(f":{masked}", ":<port>")
-    text = re.sub(r'file:///[^\s"\')]+', "<path>", text)
-    text = re.sub(r'[A-Za-z]:[\\/][^\s"\')]+', "<path>", text)
-    text = re.sub(r'(?<![\w:])/(?:[\w.\-]+/)+[\w.\-]+', "<path>", text)
+    if paths:
+        text = re.sub(r'file:///[^\s"\')]+', "<path>", text)
+        text = re.sub(r'[A-Za-z]:[\\/][^\s"\')]+', "<path>", text)
+        text = re.sub(r'(?<![\w:])/(?:[\w.\-]+/)+[\w.\-]+', "<path>", text)
     text = re.sub(r"0x[0-9a-fA-F]+", "0x..", text)
     return text.strip()
 
@@ -331,6 +358,13 @@ def observed(kind, prog_id, tool, work_path, stdout):
     if kind == "net-scope":                  # the other listener was hit
         prefix = f"/{prog_id}/{tool}"
         return any(p.startswith(prefix) for p in Hits.paths)
+    if kind in ("dep-net", "dep-host"):      # the other listener, and only
+        prefix = f"/{prog_id}/{tool}"        # it: the caller's own request
+        other = PORTS_IN_USE[1]              # goes to the granted one
+        return any(port == other and p.startswith(prefix)
+                   for port, p in Hits.by_port)
+    if kind == "dep-write":
+        return os.path.exists(work_path)
     return None
 
 
@@ -355,8 +389,8 @@ def verdict_for(prog, absent, flagged_before, stopped, seen):
 
 # ------------------------------------------------------------ the tools
 
-def velaris_row(prog, stdin_text, work_path, needs_filled=None):
-    path = prog["files"]["velaris"]
+def velaris_row(prog, stdin_text, work_path, needs_filled=None, placed=None):
+    path = placed["caller"] if placed else prog["files"]["velaris"]
     with open(path, encoding="utf-8") as f:
         source = f.read()
     danger = prog["danger_line"]["velaris"]
@@ -389,6 +423,36 @@ def velaris_row(prog, stdin_text, work_path, needs_filled=None):
               "proven_functions": list(chk.proven)}
     flagged_before = bool(problems or beyond or aud.loops_unshown)
 
+    # category 12: the dependency's two versions, compared before running
+    deps = None
+    if placed:
+        dep = prog["dependency"]
+        found = velaris.deps_diff("dir:" + placed["versions"], dep["old"],
+                                  dep["new"])
+        vel = found["velaris"] or {"findings": [], "narrowed": []}
+        said = []
+        for f in vel["findings"]:
+            if f["kind"] == "grant":
+                said.append(f"{f['grant']} " + (
+                    "(a new effect)" if f["new_effect"]
+                    else f"(not in {dep['old']})"))
+            elif f["kind"] == "count":
+                had = f["surface_allows"] if f["outside_surface"] \
+                    else f["entry_allows"]
+                now = "no bound" if f["current"] is None else f["current"]
+                said.append(f"{f['effect']} operations {had} -> {now}")
+            else:
+                said.append(f"{f['function']} gained "
+                            f"{', '.join(f['gained'])}")
+        deps = {"gained": found["gained"],
+                "capability": found["capability"],
+                "findings": [tidy(placed["mask"](s), paths=False)
+                             for s in said],
+                "narrowed": [tidy(placed["mask"](n), paths=False)
+                             for n in vel["narrowed"]]}
+        before["deps_diff"] = deps
+        flagged_before = flagged_before or found["gained"]
+
     during = {"ran": False}
     stopped = False
     seen = None
@@ -416,6 +480,14 @@ def velaris_row(prog, stdin_text, work_path, needs_filled=None):
                                           for p in problems))
     if beyond:
         bits.append("audit: " + ", ".join(beyond))
+    if deps:
+        dep = prog["dependency"]
+        head = f"deps-diff {dep['module']} {dep['old']} -> {dep['new']}: "
+        if deps["findings"]:
+            bits.append(head + "; ".join(deps["findings"]))
+        else:
+            bits.append(head + "nothing gained"
+                        + (", narrowed" if deps["narrowed"] else ""))
     if aud.loops_unshown:
         bits.append("audit: loop not shown to end in "
                     + ", ".join(unshown_in or ["an inline function"])
@@ -445,11 +517,12 @@ def velaris_row(prog, stdin_text, work_path, needs_filled=None):
             "before": before, "during": during, "observed": seen}
 
 
-def deno_row(prog, stdin_text, work_path, deno, port, deno_flags=()):
+def deno_row(prog, stdin_text, work_path, deno, port, deno_flags=(),
+             placed=None):
     if deno is None:
         return {"verdict": "tool-absent", "evidence": "deno not installed",
                 "before": None, "during": None, "observed": None}
-    path = prog["files"]["deno"]
+    path = placed["caller"] if placed else prog["files"]["deno"]
     danger = prog["danger_line"]["deno"]
     diagnostics = []
     static_exits = {}
@@ -476,7 +549,10 @@ def deno_row(prog, stdin_text, work_path, deno, port, deno_flags=()):
                                     "line": int(m.group(1)),
                                     "message": tidy(first_error_line(text))})
     accepted = set()
-    if danger:
+    # with a dependency the dangerous line is in the dependency, which
+    # `deno lint` of the caller does not read: nothing on the caller is
+    # credited, and a diagnostic there is still recorded
+    if danger and not placed:
         accepted.add(danger)
         span = loop_span(path, danger) if prog["kind"] in ("loop", "memory",
                                                            "slow") else None
@@ -534,8 +610,8 @@ def deno_row(prog, stdin_text, work_path, deno, port, deno_flags=()):
             "before": before, "during": during, "observed": seen}
 
 
-def python_row(prog, stdin_text, work_path, port):
-    path = prog["files"]["python"]
+def python_row(prog, stdin_text, work_path, port, placed=None):
+    path = placed["caller"] if placed else prog["files"]["python"]
     res = run_child([sys.executable, path], stdin_text)
     stopped = res["timed_out"] or res["exit"] != 0
     seen = observed(prog["kind"], prog["id"], "python", work_path,
@@ -597,21 +673,66 @@ SECRET = "bench-secret-7f3a"     # in the environment of every child;
                                  # a program that prints it reached env
 
 
-def fill(text, work_path, workdir, port, other, prog_id, tool):
-    """The placeholders a program's needs, stdin and flags may use."""
-    return (text.replace("{path}", work_path)
+def fill(text, work_path, workdir, port, other, prog_id, tool,
+         slashes=False):
+    """The placeholders a program's needs, stdin and flags may use. With
+    slashes the paths are written with / on every platform, so that the
+    filled text is a string literal all three languages read the same way:
+    the source files of category 12 name their paths."""
+    paths = {"{path}": work_path,
+             "{granted}": os.path.join(workdir, "granted"),
+             "{outside}": os.path.join(workdir, "outside", "secret.txt")}
+    if slashes:
+        paths = {k: v.replace("\\", "/") for k, v in paths.items()}
+    return (text.replace("{path}", paths["{path}"])
             .replace("{url}", f"http://127.0.0.1:{port}/{prog_id}/{tool}")
             .replace("{other_url}",
                      f"http://127.0.0.1:{other}/{prog_id}/{tool}")
-            .replace("{granted}", os.path.join(workdir, "granted"))
-            .replace("{outside}",
-                     os.path.join(workdir, "outside", "secret.txt"))
+            .replace("{granted}", paths["{granted}"])
+            .replace("{outside}", paths["{outside}"])
             .replace("{port}", str(port)).replace("{other}", str(other)))
+
+
+def place_dependency(prog, tool, workdir, filled):
+    """Category 12: the caller and the new version of its dependency side
+    by side in a scratch directory, where the run finds the import, and
+    both versions under <tool>-versions/<version>/ for deps-diff - every
+    placeholder filled by `filled`. Returns where each is, and a function
+    that writes the scratch directory as <workdir> in evidence."""
+    dep = prog["dependency"]
+    here = os.path.join(workdir, prog["id"], tool)
+    versions = os.path.join(workdir, prog["id"], tool + "-versions")
+
+    def put(src, dest):
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        with open(src, encoding="utf-8") as fh:
+            text = fh.read()
+        with open(dest, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(filled(text))
+
+    caller = os.path.join(here, prog["name"] + EXT[tool])
+    put(prog["files"][tool], caller)
+    put(prog["dep_files"][tool]["new"],
+        os.path.join(here, dep["module"] + EXT[tool]))
+    for side in ("old", "new"):
+        put(prog["dep_files"][tool][side],
+            os.path.join(versions, dep[side], dep["module"] + EXT[tool]))
+    spellings = sorted({workdir, workdir.replace("\\", "/")}, key=len,
+                       reverse=True)
+
+    def mask(text):
+        for s in spellings:
+            text = text.replace(s, "<workdir>")
+        return text
+
+    return {"caller": caller, "versions": versions, "mask": mask}
 
 
 def run_program(prog, deno, port, other, workdir):
     row = {k: prog[k] for k in ("id", "category", "category_title", "name",
                                 "description", "dangerous", "kind", "needs")}
+    if prog.get("dependency"):
+        row["dependency"] = prog["dependency"]
     row["danger_line"] = prog["danger_line"]
     row["stdin"] = (prog["stdin"].replace("{path}", "<path>")
                     .replace("{url}", "<url>")
@@ -631,16 +752,23 @@ def run_program(prog, deno, port, other, workdir):
         stdin_text = f(prog["stdin"])
         needs = [f(n) for n in prog["needs"]]
         deno_flags = [f(x) for x in prog.get("deno_flags", [])]
+        placed = None
+        if prog.get("dependency"):
+            placed = place_dependency(
+                prog, tool, workdir,
+                lambda t, tool=tool, work_path=work_path: fill(
+                    t, work_path, workdir, port, other, prog["id"], tool,
+                    slashes=True))
         if tool == "velaris":
             row["tools"][tool] = velaris_row(prog, stdin_text, work_path,
-                                             needs)
+                                             needs, placed)
         elif tool == "deno":
             row["tools"][tool] = settle_memory_row(
                 prog, deno_row(prog, stdin_text, work_path, deno, port,
-                               deno_flags))
+                               deno_flags, placed))
         else:
             row["tools"][tool] = settle_memory_row(
-                prog, python_row(prog, stdin_text, work_path, port))
+                prog, python_row(prog, stdin_text, work_path, port, placed))
         if os.path.exists(work_path):
             os.remove(work_path)
     return row
@@ -708,6 +836,21 @@ KIND_WHY = {
                  "any connection is made",
     "env": "env is its own effect since 3.0; the audit lists it beyond the "
            "task's needs, and the run under io refuses env() with E310",
+    "dep-net": "the dependency's new version declares net where the old "
+               "one declared nothing, and velaris deps-diff on the two "
+               "versions names the grant and the function that gained it "
+               "before anything runs; main already declared net for its "
+               "own request, so the compiler had nothing to refuse at the "
+               "call, and the run refuses the second host with E314",
+    "dep-host": "the dependency already had net; its new version names a "
+                "second host, which velaris deps-diff reports as a grant "
+                "outside the old version's surface before anything runs, "
+                "and the run refuses it with E314",
+    "dep-write": "the dependency already had fs for a read; its new version "
+                 "writes a file, which velaris deps-diff reports as an "
+                 "fs:write grant outside the old version's surface before "
+                 "anything runs, and the run refuses it under a read-only "
+                 "grant",
 }
 
 
@@ -758,6 +901,9 @@ def results_markdown(meta, categories, rows, summary, tot):
         dl = r["danger_line"]
         where = (f"yes, line {dl['velaris']}/{dl['deno']}/{dl['python']} "
                  f"(vel/js/py)" if r["dangerous"] else "no")
+        if r.get("dependency") and r["dangerous"]:
+            where += (f" of {r['dependency']['module']} "
+                      f"{r['dependency']['new']}")
         L.append(f"| {r['id']} | `{r['category_key'] if 'category_key' in r else ''}{r['name']}`<br>{r['description']} | {where} | "
                  f"{short_cell(r['tools']['velaris'])} | "
                  f"{short_cell(r['tools']['deno'])} | "
@@ -851,6 +997,36 @@ def narrative(meta, rows, tot):
                  "or nothing; Python with nothing, since it has no "
                  "budget. Rows: " + ids(scoped) + ".")
         P.append("")
+    indirect = [r for r in rows if r.get("dependency")]
+    if indirect:
+        bad = [r for r in indirect if r["dangerous"]]
+        good = [r for r in indirect if not r["dangerous"]]
+        before = [r for r in bad if v(r, "velaris") == "caught-before-run"]
+        clean = [r for r in good if v(r, "velaris") == "not-applicable"]
+        P.append("Category 12 is indirect authority. In each program the "
+                 "calling code is the same file before and after, and only "
+                 "the declared surface of a dependency it imports changed "
+                 "between two versions of that dependency; the run uses the "
+                 "new version under the budget the task needs. Velaris's "
+                 "static step there is `velaris deps-diff` on the "
+                 "dependency's two versions, which compares their declared "
+                 "surfaces the way `velaris capabilities check` compares a "
+                 "tree with its baseline. It flagged " + ids(before)
+                 + " before running, and "
+                 + (f"did not flag the control {ids(clean)}, whose surface "
+                    f"narrowed" if clean and len(clean) == len(good)
+                    else "flagged the control " + ids(
+                        [r for r in good if r not in clean]))
+                 + ". The compiler alone would not have flagged them: each "
+                 "caller already declared the effect the dependency came "
+                 "to use - net for its own request, fs for the read - so "
+                 "the call type-checks against both versions. Deno and "
+                 "Python have no declared surface per module to compare, so "
+                 "their static steps are the same as in every other "
+                 "category; for a JavaScript or Python dependency, "
+                 "`velaris deps-diff` reports the surface as unknown. Rows: "
+                 + ids(indirect) + ".")
+        P.append("")
     only_velaris = [r for r in dangerous if v(r, "velaris").startswith("caught")
                     and v(r, "python") == "missed"
                     and (deno_absent or v(r, "deno") == "missed")]
@@ -894,7 +1070,8 @@ def narrative(meta, rows, tot):
     if not deno_absent:
         earlier = [r for r in dangerous if v(r, "velaris") == "caught-before-run"
                    and v(r, "deno") == "caught-during-run"
-                   and r["kind"] not in ("loop", "memory")]
+                   and r["kind"] not in ("loop", "memory", "dep-net",
+                                         "dep-host", "dep-write")]
         if earlier:
             P.append("Caught by both, but by Velaris before running and by "
                      "Deno only once the program reached the call: "
@@ -1149,6 +1326,10 @@ def main(argv=None):
     tot = totals(rows)
     result = {"schema": "velaris.benchmark/1", "meta": meta,
               "programs": rows, "summary": summary, "totals": tot}
+    # compared before a full run rewrites the file: until 7.1 --check
+    # read results.json after this run had written it, and a full run
+    # could not differ from itself
+    diffs = compare(rows, args.json) if args.check else []
     if args.quick or args.only:
         print_table(rows)
     else:
@@ -1163,7 +1344,6 @@ def main(argv=None):
         print("note: deno is not installed; Deno rows read tool-absent",
               file=sys.stderr)
     if args.check:
-        diffs = compare(rows, args.json)
         if diffs:
             print("verdicts differ from results.json:", file=sys.stderr)
             for d in diffs:

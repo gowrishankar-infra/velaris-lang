@@ -192,6 +192,25 @@ def check_versions() -> None:
                   f"the MCP registry manifest says {said}")
             raise SystemExit(1)
 
+    # the Action a reader copies out of the README pins a release, and so
+    # does the version it installs. 7.0.0 still showed v5.0.1 in both, two
+    # majors late; every pin in the README and EMBEDDING.md must be this
+    # release.
+    for doc in ("README.md", "EMBEDDING.md"):
+        text = (root / doc).read_text(encoding="utf-8")
+        pins = _re.findall(r"gowrishankar-infra/velaris-lang@v([\w.]+)", text)
+        installs = _re.findall(r'^\s*version:\s*"([^"]*)"', text, _re.M)
+        if doc == "README.md" and not pins:
+            print("VERSION MISMATCH: README.md no longer pins the Action "
+                  "(gowrishankar-infra/velaris-lang@v...), which this "
+                  "check reads")
+            raise SystemExit(1)
+        wrong = sorted({v for v in pins + installs if v != a})
+        if wrong:
+            print(f"VERSION MISMATCH: velaris.py says {a}, {doc} pins the "
+                  f"Action or its version at {', '.join(wrong)}")
+            raise SystemExit(1)
+
     # and what the compiler says it is when it is run with no arguments.
     # Until 4.4 that line was frozen at the version its docstring was
     # written in, and said 2.36 however old that became.
