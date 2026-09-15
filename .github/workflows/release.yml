@@ -172,7 +172,7 @@ jobs:
           sha256sum *.whl *.tar.gz *.cdx.json velaris-mcp-tools-*.json > SHA256SUMS
           cat SHA256SUMS
       - name: Keep what PyPI gets
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: pypi-dist
           path: |
@@ -180,7 +180,7 @@ jobs:
             dist/*.tar.gz
           if-no-files-found: error
       - name: Keep what the GitHub release gets
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: release-dist
           path: |
@@ -249,7 +249,7 @@ jobs:
             --output-certificate velaris.mcpb.pem \
             --bundle velaris.mcpb.sigstore.json
           sha256sum velaris.mcpb > velaris.mcpb.sha256
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: bundle
           path: velaris.mcpb*
@@ -322,7 +322,7 @@ jobs:
             --bundle "${{ matrix.asset }}.sigstore.json"
           sha256sum "${{ matrix.asset }}" > "${{ matrix.asset }}.sha256"
           ls
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: binary-${{ matrix.asset }}
           path: dist/${{ matrix.asset }}*
@@ -473,7 +473,7 @@ jobs:
           print("sigstore-python: the receipt verified, as", identity)
           EOF
       - name: Keep them
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: attestation
           path: |
@@ -986,7 +986,7 @@ jobs:
             python3 release_checks.py advisory-commands "$file" --tag "$TAG" \
               --annotate --summary "$GITHUB_STEP_SUMMARY"
           done <<< "$found"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         if: hashFiles('advisory-requests/*.json') != ''
         with:
           name: advisory-requests
