@@ -32,7 +32,7 @@ jobs:
           - {os: ubuntu-latest, python: "3.14", deps: minimal, experimental: true}
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
@@ -51,7 +51,7 @@ jobs:
       # suite holds audits and attestations to. It holds no .vel file, so
       # the capability check below still sees this repository alone.
       - name: velaris-spec, for its corpus and schemas
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: gowrishankar-infra/velaris-spec
           path: velaris-spec
@@ -167,7 +167,7 @@ jobs:
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -182,7 +182,7 @@ jobs:
     name: mypy --strict and ruff, and the complexity report
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -199,14 +199,14 @@ jobs:
     name: suites run twice at once, from one checkout
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Install (full)
         run: pip install -c requirements/ci.txt ".[full,test]"
       - name: velaris-spec, for the schemas
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: gowrishankar-infra/velaris-spec
           path: velaris-spec
